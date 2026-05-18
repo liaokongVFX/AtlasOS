@@ -1,0 +1,12 @@
+node_modules
+out
+dist
+release
+.vite
+.electron-cache
+.electron-gyp
+.atlasos-dev
+.idea
+.vscode
+*.log
+*.tsbuildinfo
