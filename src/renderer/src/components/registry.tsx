@@ -13,6 +13,8 @@ export type AtlasComponentRendererProps = {
   updateConfig: (patch: Record<string, unknown>, immediate?: boolean) => void
   updateState: (patch: Record<string, unknown>, immediate?: boolean) => void
   setTitle: (title: string) => void
+  isCanvasInteracting?: boolean
+  isNodeSelected?: boolean
 }
 
 export type AtlasComponentDefinition = ComponentDefinitionMeta & {

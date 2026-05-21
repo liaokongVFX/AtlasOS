@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { clipboard, contextBridge, ipcRenderer } from 'electron'
 import type { AtlasAppState, CanvasDocument } from '@shared/schema'
 
 type Listener<T> = (payload: T) => void
@@ -47,6 +47,7 @@ const atlasApi = {
     write: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', { sessionId, data }),
     resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { sessionId, cols, rows }),
     close: (sessionId: string) => ipcRenderer.invoke('terminal:close', { sessionId }),
+    closeComponent: (componentId: string) => ipcRenderer.invoke('terminal:close-component', { componentId }),
     onData: (sessionId: string, listener: Listener<string>) =>
       on<{ sessionId: string; data: string }>('terminal:data', (payload) => {
         if (payload.sessionId === sessionId) listener(payload.data)
@@ -54,7 +55,15 @@ const atlasApi = {
     onExit: (sessionId: string, listener: Listener<{ exitCode: number; signal?: number }>) =>
       on<{ sessionId: string; exitCode: number; signal?: number }>('terminal:exit', (payload) => {
         if (payload.sessionId === sessionId) listener(payload)
+      }),
+    onCwd: (sessionId: string, listener: Listener<string>) =>
+      on<{ sessionId: string; cwd: string }>('terminal:cwd', (payload) => {
+        if (payload.sessionId === sessionId) listener(payload.cwd)
       })
+  },
+  clipboard: {
+    readText: () => clipboard.readText(),
+    writeText: (text: string) => clipboard.writeText(text)
   },
   browser: {
     createTab: (input: { componentId: string; url: string; partition?: string }) => ipcRenderer.invoke('browser:create-tab', input),

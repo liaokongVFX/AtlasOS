@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { BrowserWindow, WebContentsView, session, shell } from 'electron'
+import { BrowserWindow, WebContentsView, shell, type WebContents } from 'electron'
 import {
   browserBoundsInputSchema,
   browserClickInputSchema,
@@ -140,9 +140,10 @@ export class BrowserService {
   }
 
   dispose(): void {
-    for (const tabId of this.tabs.keys()) {
+    for (const tabId of [...this.tabs.keys()]) {
       this.close(tabId)
     }
+    this.tabs.clear()
   }
 
   private getTab(tabId: string): BrowserTab {
@@ -156,14 +157,45 @@ export class BrowserService {
   private close(tabId: string): void {
     const tab = this.tabs.get(tabId)
     if (!tab) return
-    this.window.contentView.removeChildView(tab.view)
-    tab.view.webContents.close()
     this.tabs.delete(tabId)
+
+    if (!this.window.isDestroyed()) {
+      try {
+        this.window.contentView.removeChildView(tab.view)
+      } catch (error) {
+        if (!this.window.isDestroyed()) {
+          console.warn(`Failed to detach browser tab ${tabId}:`, error)
+        }
+      }
+    }
+
+    const webContents = this.getLiveWebContents(tab)
+    if (!webContents) return
+
+    try {
+      webContents.close()
+    } catch (error) {
+      if (!webContents.isDestroyed()) {
+        console.warn(`Failed to close browser tab ${tabId}:`, error)
+      }
+    }
+  }
+
+  private getLiveWebContents(tab: BrowserTab): WebContents | null {
+    try {
+      const webContents = tab.view.webContents
+      return webContents.isDestroyed() ? null : webContents
+    } catch {
+      return null
+    }
   }
 
   private emitUpdate(tabId: string, patch: Record<string, unknown>): void {
-    if (!this.window.webContents.isDestroyed()) {
-      this.window.webContents.send('browser:tab-updated', { tabId, patch })
+    if (this.window.isDestroyed()) return
+
+    const webContents = this.window.webContents
+    if (!webContents.isDestroyed()) {
+      webContents.send('browser:tab-updated', { tabId, patch })
     }
   }
 }

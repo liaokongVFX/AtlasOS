@@ -228,6 +228,11 @@ export const useCanvasStore = create<CanvasStore>()(
     },
 
     removeComponent(canvasId, componentId) {
+      const component = get().canvases[canvasId]?.components.find((item) => item.id === componentId)
+      if (component?.type === 'terminal') {
+        void window.atlas.terminal.closeComponent(componentId)
+      }
+
       get().updateCanvas(
         canvasId,
         (canvas) => {

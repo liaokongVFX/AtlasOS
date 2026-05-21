@@ -1,14 +1,33 @@
 import { nanoid } from 'nanoid'
 import { ArrowLeft, ArrowRight, Bug, Camera, Plus, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { subscribeCanvasViewportSync } from '../../lib/canvas-viewport-sync'
 import { asString, normalizeUrl } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
+
+type BrowserBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+type BrowserBoundsState = {
+  visible: boolean
+  bounds: BrowserBounds
+}
 
 type BrowserTabState = {
   localId: string
   title: string
   url: string
   partition?: string
+}
+
+const HIDDEN_BOUNDS: BrowserBounds = { x: 0, y: 0, width: 0, height: 0 }
+
+function boundsEqual(left: BrowserBounds, right: BrowserBounds): boolean {
+  return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height
 }
 
 function readTabs(state: Record<string, unknown>): BrowserTabState[] {
@@ -22,9 +41,12 @@ function readTabs(state: Record<string, unknown>): BrowserTabState[] {
     .filter((tab): tab is BrowserTabState => Boolean(tab.localId && tab.url))
 }
 
-export function BrowserComponent({ component, updateState }: AtlasComponentRendererProps): JSX.Element {
+export function BrowserComponent({ component, updateState, isCanvasInteracting = false }: AtlasComponentRendererProps): JSX.Element {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const runtimeTabsRef = useRef(new Map<string, string>())
+  const lastBoundsRef = useRef(new Map<string, BrowserBoundsState>())
+  const syncFrameRef = useRef<number | null>(null)
+  const interactionFrameRef = useRef<number | null>(null)
   const [address, setAddress] = useState('')
   const [snapshot, setSnapshot] = useState<string | null>(null)
 
@@ -38,6 +60,54 @@ export function BrowserComponent({ component, updateState }: AtlasComponentRende
     },
     [activeLocalId, updateState]
   )
+
+  const setRuntimeBounds = useCallback((tabId: string, visible: boolean, bounds: BrowserBounds) => {
+    const nextBounds = visible ? bounds : HIDDEN_BOUNDS
+    const previous = lastBoundsRef.current.get(tabId)
+
+    if (previous?.visible === visible && boundsEqual(previous.bounds, nextBounds)) {
+      return
+    }
+
+    lastBoundsRef.current.set(tabId, { visible, bounds: nextBounds })
+    void window.atlas.browser.setBounds({ tabId, visible, bounds: nextBounds })
+  }, [])
+
+  const syncBoundsNow = useCallback(() => {
+    const activeRuntimeId = activeTab ? runtimeTabsRef.current.get(activeTab.localId) : null
+
+    for (const runtimeId of runtimeTabsRef.current.values()) {
+      if (runtimeId !== activeRuntimeId) {
+        setRuntimeBounds(runtimeId, false, HIDDEN_BOUNDS)
+      }
+    }
+
+    if (!activeRuntimeId) return
+
+    const rect = viewportRef.current?.getBoundingClientRect()
+    if (!rect) {
+      setRuntimeBounds(activeRuntimeId, false, HIDDEN_BOUNDS)
+      return
+    }
+
+    const bounds = {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    }
+
+    setRuntimeBounds(activeRuntimeId, bounds.width > 20 && bounds.height > 20, bounds)
+  }, [activeTab, setRuntimeBounds])
+
+  const scheduleBoundsSync = useCallback(() => {
+    if (syncFrameRef.current !== null) return
+
+    syncFrameRef.current = window.requestAnimationFrame(() => {
+      syncFrameRef.current = null
+      syncBoundsNow()
+    })
+  }, [syncBoundsNow])
 
   useEffect(() => {
     if (!component.state.tabs) {
@@ -61,6 +131,7 @@ export function BrowserComponent({ component, updateState }: AtlasComponentRende
           return
         }
         runtimeTabsRef.current.set(tab.localId, runtime.tabId)
+        scheduleBoundsSync()
       }
     }
 
@@ -69,7 +140,7 @@ export function BrowserComponent({ component, updateState }: AtlasComponentRende
     return () => {
       cancelled = true
     }
-  }, [component.id, tabs])
+  }, [component.id, scheduleBoundsSync, tabs])
 
   useEffect(() => {
     const dispose = window.atlas.browser.onTabUpdated(({ tabId, patch }) => {
@@ -95,51 +166,57 @@ export function BrowserComponent({ component, updateState }: AtlasComponentRende
     setAddress(activeTab?.url ?? '')
   }, [activeTab?.url])
 
+  useEffect(() => subscribeCanvasViewportSync(scheduleBoundsSync), [scheduleBoundsSync])
+
   useEffect(() => {
-    const syncBounds = () => {
-      for (const runtimeId of runtimeTabsRef.current.values()) {
-        void window.atlas.browser.setBounds({
-          tabId: runtimeId,
-          visible: false,
-          bounds: { x: 0, y: 0, width: 0, height: 0 }
-        })
-      }
-
-      const runtimeId = activeTab ? runtimeTabsRef.current.get(activeTab.localId) : null
-      const rect = viewportRef.current?.getBoundingClientRect()
-      if (!runtimeId || !rect) return
-
-      void window.atlas.browser.setBounds({
-        tabId: runtimeId,
-        visible: rect.width > 20 && rect.height > 20,
-        bounds: {
-          x: Math.round(rect.left),
-          y: Math.round(rect.top),
-          width: Math.round(rect.width),
-          height: Math.round(rect.height)
-        }
-      })
-    }
-
-    syncBounds()
-    const observer = new ResizeObserver(syncBounds)
+    scheduleBoundsSync()
+    const observer = new ResizeObserver(scheduleBoundsSync)
     if (viewportRef.current) observer.observe(viewportRef.current)
-    window.addEventListener('resize', syncBounds)
-    window.addEventListener('scroll', syncBounds, true)
+    window.addEventListener('resize', scheduleBoundsSync)
+    window.addEventListener('scroll', scheduleBoundsSync, true)
 
     return () => {
       observer.disconnect()
-      window.removeEventListener('resize', syncBounds)
-      window.removeEventListener('scroll', syncBounds, true)
+      window.removeEventListener('resize', scheduleBoundsSync)
+      window.removeEventListener('scroll', scheduleBoundsSync, true)
+      if (syncFrameRef.current !== null) {
+        window.cancelAnimationFrame(syncFrameRef.current)
+        syncFrameRef.current = null
+      }
     }
-  }, [activeTab, component.frame.height, component.frame.width, component.frame.x, component.frame.y])
+  }, [component.frame.height, component.frame.width, component.frame.x, component.frame.y, scheduleBoundsSync])
+
+  useEffect(() => {
+    if (!isCanvasInteracting) {
+      scheduleBoundsSync()
+      return undefined
+    }
+
+    const syncWhileInteracting = () => {
+      syncBoundsNow()
+      interactionFrameRef.current = window.requestAnimationFrame(syncWhileInteracting)
+    }
+
+    interactionFrameRef.current = window.requestAnimationFrame(syncWhileInteracting)
+
+    return () => {
+      if (interactionFrameRef.current !== null) {
+        window.cancelAnimationFrame(interactionFrameRef.current)
+        interactionFrameRef.current = null
+      }
+      scheduleBoundsSync()
+    }
+  }, [isCanvasInteracting, scheduleBoundsSync, syncBoundsNow])
 
   useEffect(() => {
     return () => {
+      if (syncFrameRef.current !== null) window.cancelAnimationFrame(syncFrameRef.current)
+      if (interactionFrameRef.current !== null) window.cancelAnimationFrame(interactionFrameRef.current)
       for (const runtimeId of runtimeTabsRef.current.values()) {
         void window.atlas.browser.closeTab(runtimeId)
       }
       runtimeTabsRef.current.clear()
+      lastBoundsRef.current.clear()
     }
   }, [])
 
@@ -163,6 +240,7 @@ export function BrowserComponent({ component, updateState }: AtlasComponentRende
     const runtimeId = runtimeTabsRef.current.get(localId)
     if (runtimeId) await window.atlas.browser.closeTab(runtimeId)
     runtimeTabsRef.current.delete(localId)
+    if (runtimeId) lastBoundsRef.current.delete(runtimeId)
     const nextTabs = tabs.filter((tab) => tab.localId !== localId)
     const fallbackTab = { localId: nanoid(), title: 'Example', url: 'https://example.com' }
     const finalTabs = nextTabs.length ? nextTabs : [fallbackTab]

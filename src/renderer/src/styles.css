@@ -165,6 +165,10 @@ button {
   overflow: hidden;
 }
 
+.canvas-board {
+  isolation: isolate;
+}
+
 .canvas-background-image {
   position: absolute;
   inset: 0;
@@ -173,19 +177,117 @@ button {
   pointer-events: none;
 }
 
-.react-flow {
+.canvas-board .canvas-flow {
   z-index: 1;
+  background: transparent;
+  color: #e6edf3;
 }
 
-.react-flow__pane {
+.canvas-board .react-flow__background {
+  background-color: transparent;
+}
+
+.canvas-board .react-flow__pane {
   cursor: grab;
 }
 
-.react-flow__pane:active {
+.canvas-board .react-flow__pane:active {
   cursor: grabbing;
 }
 
+.canvas-board .canvas-minimap {
+  overflow: hidden;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  background: #0d1117f5;
+  box-shadow: 0 16px 48px #0008;
+}
+
+.canvas-board .canvas-minimap .react-flow__minimap-svg {
+  display: block;
+}
+
+.canvas-board .canvas-minimap-toggle {
+  display: inline-flex;
+}
+
+.canvas-board .canvas-minimap-toggle--overlaid .canvas-panel-button {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.canvas-board .canvas-minimap-toggle--overlaid .canvas-panel-button:hover {
+  border-color: transparent;
+  background: transparent;
+  color: #f0f6fc;
+}
+
+.canvas-board .canvas-minimap-toggle--overlaid .canvas-panel-button:focus-visible {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: 0 0 0 2px #58a6ff66;
+}
+
+.canvas-board .canvas-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 4px;
+  background: #0d1117f0;
+  color: #e6edf3;
+  box-shadow: 0 16px 48px #0008;
+}
+
+.canvas-board .canvas-panel-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  color: #c9d1d9;
+  cursor: pointer;
+}
+
+.canvas-board .canvas-panel-button:hover {
+  border-color: #3d4654;
+  background: #26313d;
+  color: #f0f6fc;
+}
+
+.canvas-board .canvas-panel-button:focus-visible {
+  outline: 0;
+  border-color: #58a6ff99;
+  box-shadow: 0 0 0 2px #58a6ff33;
+}
+
+.canvas-board .canvas-panel-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.canvas-board .canvas-zoom-level {
+  min-width: 48px;
+  padding: 0 8px;
+  color: #9be9a8;
+  font-family: "JetBrains Mono", Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 32px;
+  text-align: center;
+}
+
 .component-node {
+  --component-node-selected-border: #58a6ff88;
+  --component-node-selected-handle: #79c0ffb3;
+  --component-node-selected-ring: #58a6ff24;
+
   display: grid;
   grid-template-rows: 36px 1fr;
   width: 100%;
@@ -195,13 +297,29 @@ button {
   border-radius: 8px;
   background: #0d1117;
   box-shadow: 0 18px 60px #0007;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.component-node--terminal {
+  grid-template-rows: 36px 1fr;
 }
 
 .component-node--selected {
-  border-color: #58a6ff;
+  border-color: var(--component-node-selected-border);
   box-shadow:
-    0 0 0 1px #58a6ff66,
-    0 18px 70px #0009;
+    0 0 0 1px var(--component-node-selected-ring),
+    0 18px 60px #0007;
+}
+
+.component-node__resize-line {
+  opacity: 0.64;
+}
+
+.component-node__resize-handle {
+  border-color: #0d1117;
+  box-shadow: 0 0 0 1px var(--component-node-selected-ring);
 }
 
 .component-node__header {
@@ -215,6 +333,11 @@ button {
   background: #161b22;
 }
 
+.component-node__header--terminal {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .component-node__title {
   display: flex;
   align-items: center;
@@ -222,6 +345,24 @@ button {
   min-width: 0;
   flex: 1;
   color: #9be9a8;
+}
+
+.component-node__header--terminal .component-node__title {
+  align-items: center;
+}
+
+.component-node__title-stack {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.component-node__title-stack--terminal {
+  align-items: center;
+  flex-direction: row;
+  gap: 6px;
 }
 
 .component-node__title input {
@@ -233,9 +374,55 @@ button {
   color: #e6edf3;
 }
 
+.component-node__title-input--terminal {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 84px;
+  max-width: 180px;
+}
+
+.component-node__subtitle {
+  overflow: hidden;
+  color: #8b949e;
+  font-family: JetBrains Mono, Consolas, "Cascadia Mono", monospace;
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.component-node__subtitle--inline {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.component-node__action--ghost {
+  border-color: transparent;
+  background: transparent;
+}
+
+.component-node__action--ghost:hover {
+  border-color: transparent;
+  background: transparent;
+  color: #f0f6fc;
+}
+
+.component-node__action--ghost:focus-visible {
+  border-color: #58a6ff80;
+  box-shadow: 0 0 0 1px #58a6ff33;
+}
+
 .component-node__body {
+  position: relative;
   min-height: 0;
   overflow: hidden;
+}
+
+.component-node__interaction-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: transparent;
 }
 
 .tooltip-content,
@@ -320,25 +507,23 @@ button {
 }
 
 .terminal-module {
-  grid-template-rows: 1fr 24px;
+  grid-template-rows: 1fr;
 }
 
 .terminal-module__screen {
   min-height: 0;
-  padding: 8px;
   overflow: hidden;
 }
 
-.terminal-module__status {
-  display: flex;
-  align-items: center;
-  border-top: 1px solid #30363d;
-  padding: 0 8px;
-  overflow: hidden;
-  color: #8b949e;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.terminal-module__screen .xterm {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 0 0 8px 8px;
+}
+
+.terminal-module__screen .xterm * {
+  box-sizing: content-box;
 }
 
 .file-tree-module {
@@ -570,18 +755,4 @@ button {
   color: #f0c6c2;
   font-family: "JetBrains Mono", Consolas, monospace;
   font-size: 12px;
-}
-
-.zoom-indicator {
-  position: absolute;
-  right: 60px;
-  bottom: 18px;
-  z-index: 10;
-  border: 1px solid #30363d;
-  border-radius: 6px;
-  padding: 4px 8px;
-  background: #161b22cc;
-  color: #c9d1d9;
-  font-size: 12px;
-  pointer-events: none;
 }

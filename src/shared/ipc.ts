@@ -60,6 +60,10 @@ export const terminalCloseInputSchema = z.object({
   sessionId: z.string().min(1)
 })
 
+export const terminalCloseComponentInputSchema = z.object({
+  componentId: z.string().min(1)
+})
+
 export const browserCreateTabInputSchema = z.object({
   componentId: z.string().min(1),
   url: z.string().url().default('https://example.com'),
