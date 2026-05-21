@@ -111,6 +111,24 @@ export class CanvasPersistence {
     return nextState
   }
 
+  async reorderCanvases(canvasOrder: string[]): Promise<AtlasAppState> {
+    const appState = await this.readAppState()
+    const knownCanvasIds = new Set(appState.canvasOrder)
+    const nextOrder = [...new Set(canvasOrder)]
+
+    if (nextOrder.length !== appState.canvasOrder.length || nextOrder.some((canvasId) => !knownCanvasIds.has(canvasId))) {
+      throw new Error('Canvas order does not match existing canvases')
+    }
+
+    const nextState = {
+      ...appState,
+      canvasOrder: nextOrder,
+      updatedAt: nowIso()
+    }
+    await this.writeAppState(nextState)
+    return nextState
+  }
+
   async deleteCanvas(canvasId: string): Promise<AtlasAppState> {
     const appState = await this.readAppState()
     const nextOrder = appState.canvasOrder.filter((id) => id !== canvasId)

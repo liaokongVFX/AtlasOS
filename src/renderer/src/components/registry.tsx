@@ -1,5 +1,5 @@
 import { FileCode, FolderTree, Globe2, StickyNote, TerminalSquare } from 'lucide-react'
-import type { ComponentType, CanvasComponent } from '@shared/schema'
+import type { ComponentType, CanvasComponent, Frame } from '@shared/schema'
 import { BrowserComponent } from './modules/browser-component'
 import { FilePreviewComponent } from './modules/file-preview-component'
 import { FileTreeComponent } from './modules/file-tree-component'
@@ -12,6 +12,7 @@ export type AtlasComponentRendererProps = {
   component: CanvasComponent
   updateConfig: (patch: Record<string, unknown>, immediate?: boolean) => void
   updateState: (patch: Record<string, unknown>, immediate?: boolean) => void
+  updateFrame?: (patch: Partial<Frame>, immediate?: boolean) => void
   setTitle: (title: string) => void
   isCanvasInteracting?: boolean
   isNodeSelected?: boolean

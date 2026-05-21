@@ -3,6 +3,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { readClipboardText, writeClipboardText } from '../../lib/clipboard'
 import { asString } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
 
@@ -18,11 +19,6 @@ type XtermMouseEvent = {
 type XtermMouseService = {
   getCoords: (event: XtermMouseEvent, element: HTMLElement, ...args: unknown[]) => unknown
   getMouseReportCoords?: (event: MouseEvent, element: HTMLElement) => unknown
-}
-
-type ClipboardApi = {
-  readText?: () => string | Promise<string>
-  writeText?: (text: string) => void | Promise<void>
 }
 
 const MIN_TRANSFORM_SCALE_DELTA = 0.001
@@ -74,61 +70,6 @@ function installTransformedCanvasMouseFix(terminal: Terminal): Disposable {
   }
 }
 
-function getClipboardApi(): ClipboardApi | undefined {
-  return (window as unknown as { atlas?: { clipboard?: ClipboardApi } }).atlas?.clipboard
-}
-
-function copyTextWithTextArea(text: string): boolean {
-  if (typeof document.execCommand !== 'function') return false
-
-  const previousActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-  const textArea = document.createElement('textarea')
-  textArea.value = text
-  textArea.setAttribute('readonly', 'true')
-  textArea.style.position = 'fixed'
-  textArea.style.left = '-9999px'
-  textArea.style.top = '0'
-  document.body.appendChild(textArea)
-  textArea.focus()
-  textArea.select()
-
-  try {
-    return document.execCommand('copy')
-  } catch {
-    return false
-  } finally {
-    textArea.remove()
-    previousActiveElement?.focus({ preventScroll: true })
-  }
-}
-
-function writeClipboardText(text: string): boolean {
-  const writeText = getClipboardApi()?.writeText
-
-  if (typeof writeText === 'function') {
-    try {
-      void Promise.resolve(writeText(text)).catch(() => undefined)
-      return true
-    } catch {
-      return copyTextWithTextArea(text)
-    }
-  }
-
-  return copyTextWithTextArea(text)
-}
-
-function readClipboardText(): Promise<string> | undefined {
-  const readText = getClipboardApi()?.readText
-
-  if (typeof readText !== 'function') return undefined
-
-  try {
-    return Promise.resolve(readText())
-  } catch {
-    return undefined
-  }
-}
-
 function installTerminalClipboardShortcuts(terminal: Terminal): void {
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown' || event.altKey || (!event.ctrlKey && !event.metaKey)) {
@@ -140,7 +81,7 @@ function installTerminalClipboardShortcuts(terminal: Terminal): void {
     if (key === 'c' && terminal.hasSelection()) {
       event.preventDefault()
       event.stopPropagation()
-      writeClipboardText(terminal.getSelection())
+      void writeClipboardText(terminal.getSelection()).catch(() => undefined)
       return false
     }
 
@@ -272,10 +213,10 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
         fontFamily: 'JetBrains Mono, Consolas, "Cascadia Mono", monospace',
         fontSize: 13,
         theme: {
-          background: '#0a0f1a',
-          foreground: '#e6edf3',
-          cursor: '#58a6ff',
-          selectionBackground: '#58a6ff44'
+          background: '#010102',
+          foreground: '#f7f8f8',
+          cursor: '#828fff',
+          selectionBackground: '#5e6ad24d'
         }
       })
 

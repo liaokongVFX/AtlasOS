@@ -7,6 +7,8 @@ export type ComponentDefinitionMeta = {
   permissions: string[]
 }
 
+export const CREATABLE_COMPONENT_TYPES = ['terminal', 'file-tree', 'browser', 'markdown-note'] as const satisfies readonly ComponentType[]
+
 export const COMPONENT_DEFINITIONS: Record<ComponentType, ComponentDefinitionMeta> = {
   terminal: {
     type: 'terminal',

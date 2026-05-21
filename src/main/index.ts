@@ -6,6 +6,7 @@ import { FileSystemService } from './services/ipc-filesystem'
 import { PtyService } from './services/pty-service'
 import { BrowserService } from './services/browser-service'
 import { WorkspaceDocumentService } from './services/workspace-document-service'
+import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services/local-asset-protocol'
 
 let mainWindow: BrowserWindow | null = null
 let mainWindowCreation: Promise<void> | null = null
@@ -167,8 +168,8 @@ function installSecurityDefaults(): void {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           isDev
-            ? "default-src 'self' http://localhost:* ws://localhost:* data: blob:; script-src 'self' 'unsafe-inline' http://localhost:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: file: https:;"
-            : "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: file: https:;"
+            ? "default-src 'self' http://localhost:* ws://localhost:* data: blob:; script-src 'self' 'unsafe-inline' http://localhost:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: atlas-file: https:; media-src 'self' data: blob: atlas-file:;"
+            : "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: atlas-file: https:; media-src 'self' data: blob: atlas-file:;"
         ]
       }
     })
@@ -243,9 +244,11 @@ async function createWindow(): Promise<void> {
 }
 
 configureAppRuntime()
+registerLocalAssetScheme()
 
 app.whenReady().then(async () => {
   installSecurityDefaults()
+  registerLocalAssetProtocol()
   await createWindow()
   ensureTray()
 

@@ -24,10 +24,94 @@ type BrowserTabState = {
   partition?: string
 }
 
+type RectLike = Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom' | 'width' | 'height'>
+
 const HIDDEN_BOUNDS: BrowserBounds = { x: 0, y: 0, width: 0, height: 0 }
+const COMPONENT_NODE_SELECTOR = '.component-node'
+const OCCLUSION_SAMPLE_INSET = 1
 
 function boundsEqual(left: BrowserBounds, right: BrowserBounds): boolean {
   return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height
+}
+
+function rectsOverlap(left: RectLike, right: RectLike): boolean {
+  return left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top
+}
+
+function getVisibleRect(rect: DOMRect): RectLike | null {
+  const left = Math.max(0, rect.left)
+  const top = Math.max(0, rect.top)
+  const right = Math.min(window.innerWidth, rect.right)
+  const bottom = Math.min(window.innerHeight, rect.bottom)
+  const width = right - left
+  const height = bottom - top
+
+  if (width <= 0 || height <= 0) return null
+
+  return { left, top, right, bottom, width, height }
+}
+
+function boundsFromVisibleRect(rect: RectLike): BrowserBounds {
+  return {
+    x: Math.round(rect.left),
+    y: Math.round(rect.top),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height)
+  }
+}
+
+function sampleIntersection(left: RectLike, right: RectLike): Array<{ x: number; y: number }> {
+  const x1 = Math.max(left.left, right.left)
+  const y1 = Math.max(left.top, right.top)
+  const x2 = Math.min(left.right, right.right)
+  const y2 = Math.min(left.bottom, right.bottom)
+
+  if (x2 <= x1 || y2 <= y1) return []
+
+  const minX = x1 + OCCLUSION_SAMPLE_INSET
+  const minY = y1 + OCCLUSION_SAMPLE_INSET
+  const maxX = x2 - OCCLUSION_SAMPLE_INSET
+  const maxY = y2 - OCCLUSION_SAMPLE_INSET
+  const center = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
+
+  if (maxX < minX || maxY < minY) return [center]
+
+  return [
+    center,
+    { x: minX, y: minY },
+    { x: maxX, y: minY },
+    { x: minX, y: maxY },
+    { x: maxX, y: maxY }
+  ]
+}
+
+function topComponentNodeAtPoint(x: number, y: number): Element | null {
+  for (const element of document.elementsFromPoint(x, y)) {
+    const componentNode = element.closest(COMPONENT_NODE_SELECTOR)
+    if (componentNode) return componentNode
+  }
+
+  return null
+}
+
+function isBrowserViewportOccluded(root: HTMLElement, visibleViewportRect: RectLike): boolean {
+  const ownerNode = root.closest(COMPONENT_NODE_SELECTOR)
+  if (!ownerNode) return false
+
+  for (const node of document.querySelectorAll(COMPONENT_NODE_SELECTOR)) {
+    if (node === ownerNode) continue
+
+    const nodeRect = node.getBoundingClientRect()
+    if (!rectsOverlap(visibleViewportRect, nodeRect)) continue
+
+    const isNodeAboveBrowser = sampleIntersection(visibleViewportRect, nodeRect).some((point) => {
+      const topNode = topComponentNodeAtPoint(point.x, point.y)
+      return topNode !== null && topNode !== ownerNode
+    })
+    if (isNodeAboveBrowser) return true
+  }
+
+  return false
 }
 
 function readTabs(state: Record<string, unknown>): BrowserTabState[] {
@@ -42,6 +126,7 @@ function readTabs(state: Record<string, unknown>): BrowserTabState[] {
 }
 
 export function BrowserComponent({ component, updateState, isCanvasInteracting = false }: AtlasComponentRendererProps): JSX.Element {
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const runtimeTabsRef = useRef(new Map<string, string>())
   const lastBoundsRef = useRef(new Map<string, BrowserBoundsState>())
@@ -84,20 +169,22 @@ export function BrowserComponent({ component, updateState, isCanvasInteracting =
 
     if (!activeRuntimeId) return
 
+    const root = rootRef.current
     const rect = viewportRef.current?.getBoundingClientRect()
-    if (!rect) {
+    if (!root || !rect) {
       setRuntimeBounds(activeRuntimeId, false, HIDDEN_BOUNDS)
       return
     }
 
-    const bounds = {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height)
+    const visibleRect = getVisibleRect(rect)
+    if (!visibleRect) {
+      setRuntimeBounds(activeRuntimeId, false, HIDDEN_BOUNDS)
+      return
     }
 
-    setRuntimeBounds(activeRuntimeId, bounds.width > 20 && bounds.height > 20, bounds)
+    const bounds = boundsFromVisibleRect(visibleRect)
+    const isVisible = bounds.width > 20 && bounds.height > 20 && !isBrowserViewportOccluded(root, visibleRect)
+    setRuntimeBounds(activeRuntimeId, isVisible, bounds)
   }, [activeTab, setRuntimeBounds])
 
   const scheduleBoundsSync = useCallback(() => {
@@ -184,7 +271,7 @@ export function BrowserComponent({ component, updateState, isCanvasInteracting =
         syncFrameRef.current = null
       }
     }
-  }, [component.frame.height, component.frame.width, component.frame.x, component.frame.y, scheduleBoundsSync])
+  }, [component.frame.height, component.frame.width, component.frame.x, component.frame.y, component.zIndex, scheduleBoundsSync])
 
   useEffect(() => {
     if (!isCanvasInteracting) {
@@ -250,7 +337,7 @@ export function BrowserComponent({ component, updateState, isCanvasInteracting =
   const activeRuntimeId = activeTab ? runtimeTabsRef.current.get(activeTab.localId) : null
 
   return (
-    <div className="browser-module">
+    <div ref={rootRef} className="browser-module">
       <div className="browser-tabs">
         {tabs.map((tab) => (
           <button

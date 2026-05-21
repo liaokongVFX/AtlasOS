@@ -25,7 +25,3 @@ export function normalizeUrl(value: string): string {
   if (/^\d+\.\d+\.\d+\.\d+(:|\/|$)/.test(trimmed)) return `http://${trimmed}`
   return `https://${trimmed}`
 }
-
-export function fileUrl(path: string): string {
-  return `file:///${path.replace(/\\/g, '/')}`
-}

@@ -9,6 +9,7 @@ import { z } from 'zod'
 import {
   chooseDirectoryInputSchema,
   fileOperationInputSchema,
+  filePathInputSchema,
   listTreeInputSchema,
   moveFileInputSchema,
   searchFilesInputSchema,
@@ -79,6 +80,13 @@ export class FileSystemService {
     handleValidated('filesystem:trash', fileOperationInputSchema, async (_, input) => {
       const targetPath = assertInsideRoot(input.rootPath, input.targetPath)
       await shell.trashItem(targetPath)
+      return { ok: true }
+    })
+
+    handleValidated('filesystem:reveal-in-folder', filePathInputSchema, async (_, input) => {
+      const targetPath = assertInsideRoot(input.rootPath, input.targetPath)
+      await stat(targetPath)
+      shell.showItemInFolder(targetPath)
       return { ok: true }
     })
 

@@ -1,25 +1,48 @@
+import type { Extension } from '@codemirror/state'
+import { oneDark } from '@codemirror/theme-one-dark'
+import CodeMirror from '@uiw/react-codemirror'
 import { FileWarning, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { asString, fileUrl } from '../../lib/utils'
+import { localAssetUrl } from '@shared/local-assets'
+import { codeLanguageDescriptionForFile, loadCodeLanguageForFile } from '../../lib/code-language'
+import { getFilePreviewKind } from '../../lib/file-types'
+import {
+  fitMediaFrameToAspectRatio,
+  mediaAspectRatioFromConfig,
+  mediaAspectRatioFromDimensions,
+  mediaAspectRatiosEqual,
+  type MediaDimensions
+} from '../../lib/media-frame'
+import { asString } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
 
-const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
-const TEXT_EXTENSIONS = new Set(['.txt', '.md', '.json', '.ts', '.tsx', '.js', '.jsx', '.css', '.html', '.yml', '.yaml', '.toml'])
+const MAX_HIGHLIGHTED_TEXT_LENGTH = 1_500_000
 
-function extension(path: string): string {
-  const match = path.toLowerCase().match(/\.[^.\\/]+$/)
-  return match?.[0] ?? ''
-}
-
-export function FilePreviewComponent({ component, updateState }: AtlasComponentRendererProps): JSX.Element {
-  const rootPath = asString(component.bindings.rootPath)
+export function FilePreviewComponent({
+  component,
+  updateConfig,
+  updateFrame = () => undefined,
+  updateState
+}: AtlasComponentRendererProps): JSX.Element {
+  const configuredRootPath = asString(component.bindings.rootPath)
   const path = asString(component.bindings.path)
+  const rootPath = configuredRootPath || path
+  const mimeType = asString(component.config.mimeType)
   const [content, setContent] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const ext = useMemo(() => extension(path), [path])
+  const [mediaError, setMediaError] = useState<string | null>(null)
+  const [languageExtension, setLanguageExtension] = useState<Extension | null>(null)
+  const previewKind = useMemo(() => getFilePreviewKind(path, mimeType), [mimeType, path])
+  const mediaSrc = useMemo(() => (rootPath && path ? localAssetUrl(rootPath, path) : ''), [path, rootPath])
+  const configuredMediaAspectRatio = useMemo(() => mediaAspectRatioFromConfig(component.config), [component.config])
+  const languageDescription = useMemo(
+    () => (previewKind === 'text' ? codeLanguageDescriptionForFile(path, mimeType) : null),
+    [mimeType, path, previewKind]
+  )
+  const editorExtensions = useMemo(() => (languageExtension ? [languageExtension] : []), [languageExtension])
 
   const load = useCallback(async () => {
-    if (!rootPath || !path || IMAGE_EXTENSIONS.has(ext)) return
+    if (!rootPath || !path || previewKind !== 'text') return
     try {
       const text = (await window.atlas.filesystem.readFile(rootPath, path)) as string
       setContent(text)
@@ -29,11 +52,60 @@ export function FilePreviewComponent({ component, updateState }: AtlasComponentR
       setError(readError instanceof Error ? readError.message : 'Failed to read file')
       updateState({ status: 'missing' }, true)
     }
-  }, [ext, path, rootPath, updateState])
+  }, [path, previewKind, rootPath, updateState])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    setMediaError(null)
+  }, [mediaSrc, previewKind])
+
+  useEffect(() => {
+    let cancelled = false
+
+    setLanguageExtension(null)
+
+    if (!path || previewKind !== 'text' || content.length > MAX_HIGHLIGHTED_TEXT_LENGTH) return
+
+    void loadCodeLanguageForFile(path, mimeType)
+      .then((language) => {
+        if (!cancelled) setLanguageExtension(language?.extension ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setLanguageExtension(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [content.length, mimeType, path, previewKind])
+
+  const rememberMediaDimensions = useCallback(
+    (dimensions: MediaDimensions) => {
+      const aspectRatio = mediaAspectRatioFromDimensions(dimensions)
+      updateState({ status: 'live' }, false)
+
+      if (!aspectRatio) return
+
+      if (!mediaAspectRatiosEqual(configuredMediaAspectRatio, aspectRatio)) {
+        updateConfig(
+          {
+            mediaAspectRatio: aspectRatio,
+            mediaWidth: Math.round(dimensions.width),
+            mediaHeight: Math.round(dimensions.height)
+          },
+          false
+        )
+      }
+
+      if (!configuredMediaAspectRatio) {
+        updateFrame(fitMediaFrameToAspectRatio(component.frame, aspectRatio), false)
+      }
+    },
+    [component.frame, configuredMediaAspectRatio, updateConfig, updateFrame, updateState]
+  )
 
   if (!path) {
     return (
@@ -44,15 +116,59 @@ export function FilePreviewComponent({ component, updateState }: AtlasComponentR
     )
   }
 
-  if (IMAGE_EXTENSIONS.has(ext)) {
+  if (previewKind === 'image') {
     return (
-      <div className="file-preview-module">
-        <img src={fileUrl(path)} alt={path} />
+      <div className="file-preview-module file-preview-module--media">
+        {mediaError ? (
+          <div className="module-error">{mediaError}</div>
+        ) : (
+          <img
+            src={mediaSrc}
+            alt={path}
+            onLoad={(event) => {
+              rememberMediaDimensions({
+                width: event.currentTarget.naturalWidth,
+                height: event.currentTarget.naturalHeight
+              })
+            }}
+            onError={() => {
+              setMediaError('Failed to load image preview.')
+              updateState({ status: 'missing' }, true)
+            }}
+          />
+        )}
       </div>
     )
   }
 
-  if (!TEXT_EXTENSIONS.has(ext)) {
+  if (previewKind === 'video') {
+    return (
+      <div className="file-preview-module file-preview-module--media">
+        {mediaError ? (
+          <div className="module-error">{mediaError}</div>
+        ) : (
+          <video
+            src={mediaSrc}
+            controls
+            preload="metadata"
+            playsInline
+            onLoadedMetadata={(event) => {
+              rememberMediaDimensions({
+                width: event.currentTarget.videoWidth,
+                height: event.currentTarget.videoHeight
+              })
+            }}
+            onError={() => {
+              setMediaError('Failed to load video preview.')
+              updateState({ status: 'missing' }, true)
+            }}
+          />
+        )}
+      </div>
+    )
+  }
+
+  if (previewKind !== 'text') {
     return (
       <div className="empty-module">
         <FileWarning size={28} />
@@ -64,12 +180,35 @@ export function FilePreviewComponent({ component, updateState }: AtlasComponentR
   return (
     <div className="file-preview-module">
       <div className="file-preview-toolbar">
-        <span>{path}</span>
+        <div className="file-preview-toolbar__title">
+          <span>{path}</span>
+          {languageDescription && content.length <= MAX_HIGHLIGHTED_TEXT_LENGTH ? <strong>{languageDescription.name}</strong> : null}
+        </div>
         <button className="icon-button" onClick={() => void load()} title="Refresh">
           <RefreshCw size={14} />
         </button>
       </div>
-      {error ? <div className="module-error">{error}</div> : <pre>{content}</pre>}
+      {error ? (
+        <div className="module-error">{error}</div>
+      ) : (
+        <CodeMirror
+          className="file-preview-code"
+          value={content}
+          height="100%"
+          theme={oneDark}
+          editable={false}
+          readOnly
+          extensions={editorExtensions}
+          basicSetup={{
+            autocompletion: false,
+            closeBrackets: false,
+            foldGutter: true,
+            highlightActiveLine: false,
+            highlightActiveLineGutter: false,
+            searchKeymap: true
+          }}
+        />
+      )}
     </div>
   )
 }

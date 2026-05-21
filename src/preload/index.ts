@@ -1,4 +1,4 @@
-import { clipboard, contextBridge, ipcRenderer } from 'electron'
+import { clipboard, contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AtlasAppState, CanvasDocument } from '@shared/schema'
 
 type Listener<T> = (payload: T) => void
@@ -19,9 +19,11 @@ const atlasApi = {
     create: (name?: string) => ipcRenderer.invoke('canvas:create', { name }) as Promise<{ appState: AtlasAppState; canvas: CanvasDocument }>,
     save: (canvas: CanvasDocument) => ipcRenderer.invoke('canvas:save', { canvas }) as Promise<CanvasDocument>,
     setActive: (canvasId: string) => ipcRenderer.invoke('canvas:set-active', { canvasId }) as Promise<AtlasAppState>,
+    reorder: (canvasOrder: string[]) => ipcRenderer.invoke('canvas:reorder', { canvasOrder }) as Promise<AtlasAppState>,
     delete: (canvasId: string) => ipcRenderer.invoke('canvas:delete', { canvasId }) as Promise<AtlasAppState>
   },
   filesystem: {
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
     chooseDirectory: (title?: string) => ipcRenderer.invoke('filesystem:choose-directory', { title }) as Promise<string | null>,
     listTree: (rootPath: string, maxDepth = 4) => ipcRenderer.invoke('filesystem:list-tree', { rootPath, maxDepth }),
     createFile: (rootPath: string, targetPath: string, name: string, contents = '') =>
@@ -33,6 +35,8 @@ const atlasApi = {
     move: (rootPath: string, sourcePath: string, destinationPath: string) =>
       ipcRenderer.invoke('filesystem:move', { rootPath, sourcePath, destinationPath }),
     trash: (rootPath: string, targetPath: string) => ipcRenderer.invoke('filesystem:trash', { rootPath, targetPath }),
+    revealInFolder: (rootPath: string, targetPath: string) =>
+      ipcRenderer.invoke('filesystem:reveal-in-folder', { rootPath, targetPath }) as Promise<{ ok: true }>,
     readFile: (rootPath: string, targetPath: string) => ipcRenderer.invoke('filesystem:read-file', { rootPath, targetPath }),
     writeFile: (rootPath: string, targetPath: string, contents: string) =>
       ipcRenderer.invoke('filesystem:write-file', { rootPath, targetPath, contents }),

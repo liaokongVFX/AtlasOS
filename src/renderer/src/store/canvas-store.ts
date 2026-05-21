@@ -7,6 +7,16 @@ import { COMPONENT_DEFINITIONS } from '../components/component-definitions'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
+type ComponentCreatePatch = Omit<Partial<CanvasComponent>, 'frame'> & {
+  frame?: Partial<Frame>
+}
+
+type ComponentCreateInput = {
+  type: ComponentType
+  position?: { x: number; y: number }
+  patch?: ComponentCreatePatch
+}
+
 type CanvasStore = {
   appState: AtlasAppState | null
   canvases: Record<string, CanvasDocument>
@@ -16,12 +26,17 @@ type CanvasStore = {
   load: () => Promise<void>
   createCanvas: () => Promise<void>
   setActiveCanvas: (canvasId: string) => Promise<void>
+  reorderCanvases: (canvasOrder: string[]) => Promise<void>
+  renameCanvas: (canvasId: string, name: string) => void
   deleteCanvas: (canvasId: string) => Promise<void>
   saveCanvasNow: (canvasId: string) => Promise<void>
   updateCanvas: (canvasId: string, updater: (canvas: CanvasDocument) => void, immediate?: boolean) => void
-  addComponent: (type: ComponentType, position?: { x: number; y: number }, patch?: Partial<CanvasComponent>) => void
+  addComponent: (type: ComponentType, position?: { x: number; y: number }, patch?: ComponentCreatePatch) => void
+  addComponents: (components: ComponentCreateInput[]) => void
+  duplicateComponents: (canvasId: string, componentIds: string[]) => string[]
   updateComponent: (canvasId: string, componentId: string, updater: (component: CanvasComponent) => void, immediate?: boolean) => void
   removeComponent: (canvasId: string, componentId: string) => void
+  removeComponents: (canvasId: string, componentIds: string[]) => void
   bringToFront: (canvasId: string, componentId: string) => void
 }
 
@@ -53,7 +68,15 @@ function nextZIndex(canvas: CanvasDocument): number {
   return canvas.components.reduce((max, component) => Math.max(max, component.zIndex), 0) + 1
 }
 
-function createComponent(type: ComponentType, canvas: CanvasDocument, position?: { x: number; y: number }, patch?: Partial<CanvasComponent>): CanvasComponent {
+function cloneRecord<T extends Record<string, unknown>>(record: T): T {
+  try {
+    return structuredClone(record) as T
+  } catch {
+    return JSON.parse(JSON.stringify(record)) as T
+  }
+}
+
+function createComponent(type: ComponentType, canvas: CanvasDocument, position?: { x: number; y: number }, patch?: ComponentCreatePatch): CanvasComponent {
   const definition = COMPONENT_DEFINITIONS[type]
   const timestamp = nowIso()
   const frame: Frame = {
@@ -145,6 +168,52 @@ export const useCanvasStore = create<CanvasStore>()(
       })
     },
 
+    async reorderCanvases(canvasOrder) {
+      const previousAppState = get().appState
+      if (!previousAppState) return
+
+      const knownCanvasIds = new Set(previousAppState.canvasOrder)
+      const nextOrder = [...new Set(canvasOrder)].filter((canvasId) => knownCanvasIds.has(canvasId))
+      if (nextOrder.length !== previousAppState.canvasOrder.length) return
+
+      set((state) => {
+        if (!state.appState) return
+        state.appState = {
+          ...state.appState,
+          canvasOrder: nextOrder,
+          updatedAt: nowIso()
+        }
+      })
+
+      try {
+        const appState = await window.atlas.canvas.reorder(nextOrder)
+        set((state) => {
+          state.appState = appState
+          state.activeCanvasId = appState.activeCanvasId
+          state.error = null
+        })
+      } catch (error) {
+        set((state) => {
+          state.appState = previousAppState
+          state.activeCanvasId = previousAppState.activeCanvasId
+          state.error = error instanceof Error ? error.message : 'Failed to reorder canvases'
+        })
+      }
+    },
+
+    renameCanvas(canvasId, name) {
+      const nextName = name.trim()
+      if (!nextName) return
+
+      get().updateCanvas(
+        canvasId,
+        (canvas) => {
+          canvas.name = nextName
+        },
+        true
+      )
+    },
+
     async deleteCanvas(canvasId) {
       const appState = await window.atlas.canvas.delete(canvasId)
       const canvases = await window.atlas.canvas.list()
@@ -214,6 +283,65 @@ export const useCanvasStore = create<CanvasStore>()(
       )
     },
 
+    addComponents(components) {
+      const canvasId = get().activeCanvasId
+      if (!canvasId || components.length === 0) return
+
+      get().updateCanvas(
+        canvasId,
+        (canvas) => {
+          for (const component of components) {
+            canvas.components.push(createComponent(component.type, canvas, component.position, component.patch))
+          }
+        },
+        true
+      )
+    },
+
+    duplicateComponents(canvasId, componentIds) {
+      const canvas = get().canvases[canvasId]
+      if (!canvas || componentIds.length === 0) return []
+
+      const sourceIds = new Set(componentIds)
+      const componentsToDuplicate = canvas.components.filter((component) => sourceIds.has(component.id))
+      if (componentsToDuplicate.length === 0) return []
+
+      const duplicatedComponentIds: string[] = []
+
+      get().updateCanvas(
+        canvasId,
+        (draft) => {
+          let zIndex = nextZIndex(draft)
+
+          for (const component of componentsToDuplicate) {
+            const timestamp = nowIso()
+            const duplicatedComponent: CanvasComponent = {
+              ...component,
+              id: nanoid(),
+              frame: {
+                ...component.frame,
+                x: component.frame.x + 32,
+                y: component.frame.y + 32
+              },
+              zIndex,
+              config: cloneRecord(component.config),
+              state: component.type === 'browser' ? {} : cloneRecord(component.state),
+              bindings: cloneRecord(component.bindings),
+              createdAt: timestamp,
+              updatedAt: timestamp
+            }
+
+            zIndex += 1
+            duplicatedComponentIds.push(duplicatedComponent.id)
+            draft.components.push(duplicatedComponent)
+          }
+        },
+        true
+      )
+
+      return duplicatedComponentIds
+    },
+
     updateComponent(canvasId, componentId, updater, immediate = false) {
       get().updateCanvas(
         canvasId,
@@ -228,15 +356,27 @@ export const useCanvasStore = create<CanvasStore>()(
     },
 
     removeComponent(canvasId, componentId) {
-      const component = get().canvases[canvasId]?.components.find((item) => item.id === componentId)
-      if (component?.type === 'terminal') {
-        void window.atlas.terminal.closeComponent(componentId)
+      get().removeComponents(canvasId, [componentId])
+    },
+
+    removeComponents(canvasId, componentIds) {
+      const components = get().canvases[canvasId]?.components ?? []
+      if (componentIds.length === 0 || components.length === 0) return
+
+      const requestedIds = new Set(componentIds)
+      const removableIds = new Set(components.filter((component) => requestedIds.has(component.id)).map((component) => component.id))
+      if (removableIds.size === 0) return
+
+      for (const component of components) {
+        if (removableIds.has(component.id) && component.type === 'terminal') {
+          void window.atlas.terminal.closeComponent(component.id)
+        }
       }
 
       get().updateCanvas(
         canvasId,
         (canvas) => {
-          canvas.components = canvas.components.filter((component) => component.id !== componentId)
+          canvas.components = canvas.components.filter((component) => !removableIds.has(component.id))
         },
         true
       )

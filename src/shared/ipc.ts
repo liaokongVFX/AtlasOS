@@ -9,6 +9,10 @@ export const canvasIdInputSchema = z.object({
   canvasId: z.string().min(1)
 })
 
+export const reorderCanvasesInputSchema = z.object({
+  canvasOrder: z.array(z.string().min(1)).min(1)
+})
+
 export const saveCanvasInputSchema = z.object({
   canvas: canvasDocumentSchema
 })
@@ -27,6 +31,11 @@ export const fileOperationInputSchema = z.object({
   targetPath: z.string().min(1),
   name: z.string().min(1).max(240).optional(),
   contents: z.string().optional()
+})
+
+export const filePathInputSchema = z.object({
+  rootPath: z.string().min(1),
+  targetPath: z.string().min(1)
 })
 
 export const moveFileInputSchema = z.object({
