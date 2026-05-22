@@ -4,13 +4,10 @@ import type { CanvasComponent } from '@shared/schema'
 import { BrowserComponent } from './browser-component'
 
 const browserApi = vi.hoisted(() => ({
-  closeTab: vi.fn(),
-  createTab: vi.fn(),
-  setBounds: vi.fn(),
-  onTabUpdated: vi.fn()
+  onWebviewOpenTabRequested: vi.fn()
 }))
 
-let frameCallbacks: FrameRequestCallback[] = []
+let openTabRequestedListener: ((payload: { sourceWebContentsId: number; url: string }) => void) | null = null
 
 function createBrowserComponent(): CanvasComponent {
   const timestamp = '2026-05-21T00:00:00.000Z'
@@ -32,44 +29,21 @@ function createBrowserComponent(): CanvasComponent {
   } as CanvasComponent
 }
 
-function rect(left: number, top: number, width: number, height: number): DOMRect {
-  return {
-    x: left,
-    y: top,
-    width,
-    height,
-    top,
-    left,
-    right: left + width,
-    bottom: top + height,
-    toJSON: () => ({ x: left, y: top, width, height })
-  } as DOMRect
-}
-
-function mockRect(element: Element, nextRect: DOMRect): void {
-  Object.defineProperty(element, 'getBoundingClientRect', {
-    configurable: true,
-    value: vi.fn(() => nextRect)
-  })
-}
-
-function flushAnimationFrames(): void {
-  const callbacks = frameCallbacks
-  frameCallbacks = []
-  callbacks.forEach((callback) => callback(0))
+function dispatchWebviewEvent(element: Element, type: string, payload: Record<string, unknown>): void {
+  const event = new Event(type)
+  for (const [key, value] of Object.entries(payload)) {
+    Object.defineProperty(event, key, { value })
+  }
+  element.dispatchEvent(event)
 }
 
 describe('BrowserComponent', () => {
   beforeEach(() => {
-    frameCallbacks = []
-    browserApi.closeTab.mockReset()
-    browserApi.createTab.mockResolvedValue({ tabId: 'runtime-tab-1', partition: 'persist:test', url: 'https://example.com' })
-    browserApi.setBounds.mockReset()
-    browserApi.onTabUpdated.mockReturnValue(() => undefined)
-
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 })
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
-    Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: vi.fn(() => []) })
+    openTabRequestedListener = null
+    browserApi.onWebviewOpenTabRequested.mockImplementation((listener) => {
+      openTabRequestedListener = listener
+      return () => undefined
+    })
 
     Object.defineProperty(window, 'atlas', {
       configurable: true,
@@ -77,12 +51,6 @@ describe('BrowserComponent', () => {
         browser: browserApi
       }
     })
-
-    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
-      frameCallbacks.push(callback)
-      return frameCallbacks.length
-    })
-    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
   })
 
   afterEach(() => {
@@ -90,97 +58,183 @@ describe('BrowserComponent', () => {
     vi.restoreAllMocks()
   })
 
-  it('hides the native browser view when another component is visually above the browser viewport', async () => {
+  it('keeps the active browser webview visible but non-interactive while the node is not selected', () => {
+    const component = createBrowserComponent()
+
+    const { container } = render(
+      <BrowserComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={vi.fn()}
+        updateState={vi.fn()}
+        setTitle={vi.fn()}
+      />
+    )
+
+    const webview = container.querySelector('webview')
+
+    expect(webview).toBeInTheDocument()
+    expect(webview).toHaveAttribute('src', 'https://example.com')
+    expect(webview).toHaveStyle({ display: 'flex', pointerEvents: 'none' })
+  })
+
+  it('makes the active browser webview interactive when the node is selected', () => {
+    const component = createBrowserComponent()
+
+    const { container } = render(
+      <BrowserComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={vi.fn()}
+        updateState={vi.fn()}
+        setTitle={vi.fn()}
+        isNodeSelected
+      />
+    )
+
+    const webview = container.querySelector('webview')
+
+    expect(webview).toHaveStyle({ display: 'flex', pointerEvents: 'auto' })
+  })
+
+  it('does not hide browser content when a selected browser node becomes unselected', () => {
+    const component = createBrowserComponent()
+    const renderBrowser = (isNodeSelected: boolean) => (
+      <BrowserComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={vi.fn()}
+        updateState={vi.fn()}
+        setTitle={vi.fn()}
+        isNodeSelected={isNodeSelected}
+      />
+    )
+
+    const { container, rerender } = render(renderBrowser(true))
+    const webview = container.querySelector('webview')
+
+    expect(webview).toHaveStyle({ display: 'flex', pointerEvents: 'auto' })
+
+    rerender(renderBrowser(false))
+
+    expect(webview).toHaveStyle({ display: 'flex', pointerEvents: 'none' })
+  })
+
+  it('defers saved inactive tabs until they are selected', async () => {
+    const component = createBrowserComponent()
+    component.state = {
+      activeTabId: 'tab-1',
+      tabs: [
+        { localId: 'tab-1', title: 'Example', url: 'https://example.com' },
+        { localId: 'tab-2', title: 'Later', url: 'https://example.com/later' }
+      ]
+    }
+    const updateState = vi.fn()
+    const renderBrowser = (nextComponent: CanvasComponent) => (
+      <BrowserComponent
+        canvasId="canvas-1"
+        component={nextComponent}
+        updateConfig={vi.fn()}
+        updateState={updateState}
+        setTitle={vi.fn()}
+      />
+    )
+
+    const { container, rerender } = render(renderBrowser(component))
+
+    expect(container.querySelectorAll('webview')).toHaveLength(1)
+    expect(container.querySelector('webview')).toHaveAttribute('src', 'https://example.com')
+
+    rerender(
+      renderBrowser({
+        ...component,
+        state: { ...component.state, activeTabId: 'tab-2' }
+      })
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const webviews = Array.from(container.querySelectorAll('webview'))
+    expect(webviews).toHaveLength(2)
+    expect(webviews.map((webview) => webview.getAttribute('src'))).toEqual(['https://example.com', 'https://example.com/later'])
+  })
+
+  it('updates tab metadata from webview navigation events', () => {
     const component = createBrowserComponent()
     const updateState = vi.fn()
 
     const { container } = render(
-      <div>
-        <section className="component-node" data-testid="browser-node">
-          <BrowserComponent
-            canvasId="canvas-1"
-            component={component}
-            updateConfig={vi.fn()}
-            updateState={updateState}
-            setTitle={vi.fn()}
-          />
-        </section>
-        <section className="component-node" data-testid="overlay-node" />
-      </div>
+      <BrowserComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={vi.fn()}
+        updateState={updateState}
+        setTitle={vi.fn()}
+        isNodeSelected
+      />
     )
 
-    const browserNode = container.querySelector('[data-testid="browser-node"]')!
-    const overlayNode = container.querySelector('[data-testid="overlay-node"]')!
-    const viewport = container.querySelector('.browser-viewport')!
+    const webview = container.querySelector('webview')!
 
-    mockRect(browserNode, rect(80, 80, 420, 320))
-    mockRect(viewport, rect(100, 140, 360, 240))
-    mockRect(overlayNode, rect(160, 180, 180, 120))
+    act(() => {
+      dispatchWebviewEvent(webview, 'page-title-updated', { title: 'Example Domain' })
+    })
+    expect(updateState).toHaveBeenLastCalledWith(
+      {
+        tabs: [{ localId: 'tab-1', title: 'Example Domain', url: 'https://example.com' }]
+      },
+      false
+    )
 
-    Object.defineProperty(document, 'elementsFromPoint', {
-      configurable: true,
-      value: vi.fn((x: number, y: number) => {
-        const overlayRect = overlayNode.getBoundingClientRect()
-        if (x >= overlayRect.left && x <= overlayRect.right && y >= overlayRect.top && y <= overlayRect.bottom) {
-          return [overlayNode, viewport, browserNode]
-        }
+    act(() => {
+      dispatchWebviewEvent(webview, 'did-navigate', { url: 'https://example.com/docs' })
+    })
+    expect(updateState).toHaveBeenLastCalledWith(
+      {
+        tabs: [{ localId: 'tab-1', title: 'Example', url: 'https://example.com/docs' }]
+      },
+      false
+    )
+  })
 
-        return [viewport, browserNode]
+  it('adds an active browser tab for matching webview new-window requests', async () => {
+    const component = createBrowserComponent()
+    const updateState = vi.fn()
+
+    const { container } = render(
+      <BrowserComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={vi.fn()}
+        updateState={updateState}
+        setTitle={vi.fn()}
+        isNodeSelected
+      />
+    )
+
+    const webview = container.querySelector('webview') as Electron.WebviewTag
+    Object.defineProperty(webview, 'getWebContentsId', { value: () => 42 })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    act(() => {
+      openTabRequestedListener?.({
+        sourceWebContentsId: 42,
+        url: 'https://example.com/new-window'
       })
     })
 
-    await act(async () => {
-      await Promise.resolve()
-    })
-    act(() => flushAnimationFrames())
+    const tabPatch = updateState.mock.calls.find(([, immediate]) => immediate === true)?.[0] as {
+      activeTabId: string
+      tabs: Array<{ localId: string; title: string; url: string }>
+    }
+    const requestedTab = tabPatch.tabs.find((tab) => tab.url === 'https://example.com/new-window')
 
-    expect(browserApi.setBounds).toHaveBeenCalledWith({
-      tabId: 'runtime-tab-1',
-      visible: false,
-      bounds: { x: 0, y: 0, width: 0, height: 0 }
-    })
-  })
-
-  it('keeps a large browser view visible when another node only overlaps outside the window', async () => {
-    const component = createBrowserComponent()
-
-    const { container } = render(
-      <div>
-        <section className="component-node" data-testid="browser-node">
-          <BrowserComponent
-            canvasId="canvas-1"
-            component={component}
-            updateConfig={vi.fn()}
-            updateState={vi.fn()}
-            setTitle={vi.fn()}
-          />
-        </section>
-        <section className="component-node" data-testid="offscreen-node" />
-      </div>
-    )
-
-    const browserNode = container.querySelector('[data-testid="browser-node"]')!
-    const offscreenNode = container.querySelector('[data-testid="offscreen-node"]')!
-    const viewport = container.querySelector('.browser-viewport')!
-
-    mockRect(browserNode, rect(40, 80, 1800, 980))
-    mockRect(viewport, rect(40, 120, 1800, 940))
-    mockRect(offscreenNode, rect(1200, 200, 240, 180))
-
-    Object.defineProperty(document, 'elementsFromPoint', {
-      configurable: true,
-      value: vi.fn(() => [viewport, browserNode])
-    })
-
-    await act(async () => {
-      await Promise.resolve()
-    })
-    act(() => flushAnimationFrames())
-
-    expect(browserApi.setBounds).toHaveBeenLastCalledWith({
-      tabId: 'runtime-tab-1',
-      visible: true,
-      bounds: { x: 40, y: 120, width: 760, height: 480 }
-    })
+    expect(requestedTab).toEqual(expect.objectContaining({ title: 'New tab', url: 'https://example.com/new-window' }))
+    expect(tabPatch.activeTabId).toBe(requestedTab?.localId)
   })
 })

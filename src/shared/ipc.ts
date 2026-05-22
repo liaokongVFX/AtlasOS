@@ -23,7 +23,8 @@ export const chooseDirectoryInputSchema = z.object({
 
 export const listTreeInputSchema = z.object({
   rootPath: z.string().min(1),
-  maxDepth: z.number().int().min(0).max(8).default(4)
+  targetPath: z.string().min(1).optional(),
+  maxDepth: z.number().int().min(0).max(64).default(1)
 })
 
 export const fileOperationInputSchema = z.object({

@@ -17,6 +17,11 @@ type ComponentCreateInput = {
   patch?: ComponentCreatePatch
 }
 
+type ComponentFrameUpdate = {
+  componentId: string
+  frame: Partial<Frame>
+}
+
 type CanvasStore = {
   appState: AtlasAppState | null
   canvases: Record<string, CanvasDocument>
@@ -35,6 +40,7 @@ type CanvasStore = {
   addComponents: (components: ComponentCreateInput[]) => void
   duplicateComponents: (canvasId: string, componentIds: string[]) => string[]
   updateComponent: (canvasId: string, componentId: string, updater: (component: CanvasComponent) => void, immediate?: boolean) => void
+  updateComponentFrames: (canvasId: string, updates: ComponentFrameUpdate[], immediate?: boolean) => void
   removeComponent: (canvasId: string, componentId: string) => void
   removeComponents: (canvasId: string, componentIds: string[]) => void
   bringToFront: (canvasId: string, componentId: string) => void
@@ -350,6 +356,32 @@ export const useCanvasStore = create<CanvasStore>()(
           if (!component) return
           updater(component)
           component.updatedAt = nowIso()
+        },
+        immediate
+      )
+    },
+
+    updateComponentFrames(canvasId, updates, immediate = false) {
+      if (updates.length === 0) return
+
+      const currentCanvas = get().canvases[canvasId]
+      if (!currentCanvas) return
+
+      const updatesById = new Map(updates.map((update) => [update.componentId, update.frame]))
+      if (!currentCanvas.components.some((component) => updatesById.has(component.id))) return
+
+      get().updateCanvas(
+        canvasId,
+        (canvas) => {
+          const updatedAt = nowIso()
+
+          for (const component of canvas.components) {
+            const frame = updatesById.get(component.id)
+            if (!frame) continue
+
+            component.frame = { ...component.frame, ...frame }
+            component.updatedAt = updatedAt
+          }
         },
         immediate
       )

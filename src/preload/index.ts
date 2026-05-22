@@ -25,7 +25,11 @@ const atlasApi = {
   filesystem: {
     getPathForFile: (file: File) => webUtils.getPathForFile(file),
     chooseDirectory: (title?: string) => ipcRenderer.invoke('filesystem:choose-directory', { title }) as Promise<string | null>,
-    listTree: (rootPath: string, maxDepth = 4) => ipcRenderer.invoke('filesystem:list-tree', { rootPath, maxDepth }),
+    listTree: (rootPath: string, targetPathOrMaxDepth: string | number = rootPath, maxDepth = 1) => {
+      const targetPath = typeof targetPathOrMaxDepth === 'number' ? rootPath : targetPathOrMaxDepth
+      const depth = typeof targetPathOrMaxDepth === 'number' ? targetPathOrMaxDepth : maxDepth
+      return ipcRenderer.invoke('filesystem:list-tree', { rootPath, targetPath, maxDepth: depth })
+    },
     createFile: (rootPath: string, targetPath: string, name: string, contents = '') =>
       ipcRenderer.invoke('filesystem:create-file', { rootPath, targetPath, name, contents }),
     createFolder: (rootPath: string, targetPath: string, name: string) =>
@@ -71,8 +75,12 @@ const atlasApi = {
   },
   browser: {
     createTab: (input: { componentId: string; url: string; partition?: string }) => ipcRenderer.invoke('browser:create-tab', input),
-    setBounds: (input: { tabId: string; visible: boolean; bounds: { x: number; y: number; width: number; height: number } }) =>
-      ipcRenderer.invoke('browser:set-bounds', input),
+    setBounds: (input: {
+      tabId: string
+      visible: boolean
+      bounds: { x: number; y: number; width: number; height: number }
+      contentBounds?: { x: number; y: number; width: number; height: number }
+    }) => ipcRenderer.invoke('browser:set-bounds', input),
     navigate: (tabId: string, url: string) => ipcRenderer.invoke('browser:navigate', { tabId, url }),
     back: (tabId: string) => ipcRenderer.invoke('browser:back', { tabId }),
     forward: (tabId: string) => ipcRenderer.invoke('browser:forward', { tabId }),
@@ -83,7 +91,11 @@ const atlasApi = {
     click: (tabId: string, selector: string) => ipcRenderer.invoke('browser:click', { tabId, selector }),
     type: (tabId: string, selector: string, text: string) => ipcRenderer.invoke('browser:type', { tabId, selector, text }),
     closeTab: (tabId: string) => ipcRenderer.invoke('browser:close-tab', { tabId }),
-    onTabUpdated: (listener: Listener<{ tabId: string; patch: Record<string, unknown> }>) => on('browser:tab-updated', listener)
+    onTabUpdated: (listener: Listener<{ tabId: string; patch: Record<string, unknown> }>) => on('browser:tab-updated', listener),
+    onOpenTabRequested: (listener: Listener<{ componentId: string; sourceTabId: string; url: string }>) =>
+      on('browser:open-tab-requested', listener),
+    onWebviewOpenTabRequested: (listener: Listener<{ sourceWebContentsId: number; url: string }>) =>
+      on('browser:webview-open-tab-requested', listener)
   }
 }
 

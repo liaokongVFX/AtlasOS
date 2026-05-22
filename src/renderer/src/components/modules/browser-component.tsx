@@ -1,21 +1,8 @@
 import { nanoid } from 'nanoid'
 import { ArrowLeft, ArrowRight, Bug, Camera, Plus, RefreshCw, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { subscribeCanvasViewportSync } from '../../lib/canvas-viewport-sync'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { asString, normalizeUrl } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
-
-type BrowserBounds = {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-type BrowserBoundsState = {
-  visible: boolean
-  bounds: BrowserBounds
-}
 
 type BrowserTabState = {
   localId: string
@@ -24,100 +11,20 @@ type BrowserTabState = {
   partition?: string
 }
 
-type RectLike = Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom' | 'width' | 'height'>
-
-const HIDDEN_BOUNDS: BrowserBounds = { x: 0, y: 0, width: 0, height: 0 }
-const COMPONENT_NODE_SELECTOR = '.component-node'
-const OCCLUSION_SAMPLE_INSET = 1
-
-function boundsEqual(left: BrowserBounds, right: BrowserBounds): boolean {
-  return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height
+type BrowserWebviewOpenTabRequest = {
+  sourceWebContentsId: number
+  url: string
 }
 
-function rectsOverlap(left: RectLike, right: RectLike): boolean {
-  return left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top
-}
+type BrowserWebviewElement = Electron.WebviewTag
 
-function getVisibleRect(rect: DOMRect): RectLike | null {
-  const left = Math.max(0, rect.left)
-  const top = Math.max(0, rect.top)
-  const right = Math.min(window.innerWidth, rect.right)
-  const bottom = Math.min(window.innerHeight, rect.bottom)
-  const width = right - left
-  const height = bottom - top
-
-  if (width <= 0 || height <= 0) return null
-
-  return { left, top, right, bottom, width, height }
-}
-
-function boundsFromVisibleRect(rect: RectLike): BrowserBounds {
-  return {
-    x: Math.round(rect.left),
-    y: Math.round(rect.top),
-    width: Math.round(rect.width),
-    height: Math.round(rect.height)
-  }
-}
-
-function sampleIntersection(left: RectLike, right: RectLike): Array<{ x: number; y: number }> {
-  const x1 = Math.max(left.left, right.left)
-  const y1 = Math.max(left.top, right.top)
-  const x2 = Math.min(left.right, right.right)
-  const y2 = Math.min(left.bottom, right.bottom)
-
-  if (x2 <= x1 || y2 <= y1) return []
-
-  const minX = x1 + OCCLUSION_SAMPLE_INSET
-  const minY = y1 + OCCLUSION_SAMPLE_INSET
-  const maxX = x2 - OCCLUSION_SAMPLE_INSET
-  const maxY = y2 - OCCLUSION_SAMPLE_INSET
-  const center = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
-
-  if (maxX < minX || maxY < minY) return [center]
-
-  return [
-    center,
-    { x: minX, y: minY },
-    { x: maxX, y: minY },
-    { x: minX, y: maxY },
-    { x: maxX, y: maxY }
-  ]
-}
-
-function topComponentNodeAtPoint(x: number, y: number): Element | null {
-  for (const element of document.elementsFromPoint(x, y)) {
-    const componentNode = element.closest(COMPONENT_NODE_SELECTOR)
-    if (componentNode) return componentNode
-  }
-
-  return null
-}
-
-function isBrowserViewportOccluded(root: HTMLElement, visibleViewportRect: RectLike): boolean {
-  const ownerNode = root.closest(COMPONENT_NODE_SELECTOR)
-  if (!ownerNode) return false
-
-  for (const node of document.querySelectorAll(COMPONENT_NODE_SELECTOR)) {
-    if (node === ownerNode) continue
-
-    const nodeRect = node.getBoundingClientRect()
-    if (!rectsOverlap(visibleViewportRect, nodeRect)) continue
-
-    const isNodeAboveBrowser = sampleIntersection(visibleViewportRect, nodeRect).some((point) => {
-      const topNode = topComponentNodeAtPoint(point.x, point.y)
-      return topNode !== null && topNode !== ownerNode
-    })
-    if (isNodeAboveBrowser) return true
-  }
-
-  return false
-}
+const DEFAULT_BROWSER_URL = 'https://example.com'
+const WEBVIEW_PREFERENCES = 'contextIsolation=yes,sandbox=yes'
 
 function readTabs(state: Record<string, unknown>): BrowserTabState[] {
   const tabs = state.tabs
   if (!Array.isArray(tabs) || tabs.length === 0) {
-    return [{ localId: nanoid(), title: 'Example', url: 'https://example.com' }]
+    return [{ localId: nanoid(), title: 'Example', url: DEFAULT_BROWSER_URL }]
   }
 
   return tabs
@@ -125,19 +32,99 @@ function readTabs(state: Record<string, unknown>): BrowserTabState[] {
     .filter((tab): tab is BrowserTabState => Boolean(tab.localId && tab.url))
 }
 
-export function BrowserComponent({ component, updateState, isCanvasInteracting = false }: AtlasComponentRendererProps): JSX.Element {
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  const viewportRef = useRef<HTMLDivElement | null>(null)
-  const runtimeTabsRef = useRef(new Map<string, string>())
-  const lastBoundsRef = useRef(new Map<string, BrowserBoundsState>())
-  const syncFrameRef = useRef<number | null>(null)
-  const interactionFrameRef = useRef<number | null>(null)
+function createBrowserTab(url = DEFAULT_BROWSER_URL): BrowserTabState {
+  return { localId: nanoid(), title: 'New tab', url }
+}
+
+function partitionForTab(componentId: string, tab: BrowserTabState): string {
+  return tab.partition ?? `persist:atlas-browser-${componentId}-${tab.localId}`
+}
+
+type BrowserWebviewProps = {
+  active: boolean
+  componentId: string
+  interactive: boolean
+  onTitleChange: (localId: string, title: string) => void
+  onUrlChange: (localId: string, url: string) => void
+  registerWebview: (localId: string, webview: BrowserWebviewElement | null) => void
+  tab: BrowserTabState
+}
+
+function BrowserWebview({
+  active,
+  componentId,
+  interactive,
+  onTitleChange,
+  onUrlChange,
+  registerWebview,
+  tab
+}: BrowserWebviewProps): JSX.Element {
+  const webviewRef = useRef<BrowserWebviewElement | null>(null)
+  const style = useMemo<CSSProperties>(
+    () => ({
+      display: active ? 'flex' : 'none',
+      pointerEvents: active && interactive ? 'auto' : 'none'
+    }),
+    [active, interactive]
+  )
+
+  const attachWebview = useCallback(
+    (element: Element | null) => {
+      const webview = element as BrowserWebviewElement | null
+      webviewRef.current = webview
+      registerWebview(tab.localId, webview)
+    },
+    [registerWebview, tab.localId]
+  )
+
+  useEffect(() => {
+    const webview = webviewRef.current
+    if (!webview) return undefined
+
+    const handleTitle = (event: Event) => {
+      const title = (event as Electron.PageTitleUpdatedEvent).title
+      if (title) onTitleChange(tab.localId, title)
+    }
+    const handleNavigate = (event: Event) => {
+      const url = (event as Electron.DidNavigateEvent).url
+      if (url) onUrlChange(tab.localId, url)
+    }
+    const handleNavigateInPage = (event: Event) => {
+      const navigation = event as Electron.DidNavigateInPageEvent
+      if (navigation.isMainFrame !== false && navigation.url) onUrlChange(tab.localId, navigation.url)
+    }
+
+    webview.addEventListener('page-title-updated', handleTitle)
+    webview.addEventListener('did-navigate', handleNavigate)
+    webview.addEventListener('did-navigate-in-page', handleNavigateInPage)
+
+    return () => {
+      webview.removeEventListener('page-title-updated', handleTitle)
+      webview.removeEventListener('did-navigate', handleNavigate)
+      webview.removeEventListener('did-navigate-in-page', handleNavigateInPage)
+    }
+  }, [onTitleChange, onUrlChange, tab.localId])
+
+  return createElement('webview', {
+    allowpopups: '',
+    className: 'browser-webview',
+    partition: partitionForTab(componentId, tab),
+    ref: attachWebview,
+    src: tab.url,
+    style,
+    webpreferences: WEBVIEW_PREFERENCES
+  })
+}
+
+export function BrowserComponent({ component, updateState, isNodeSelected = false }: AtlasComponentRendererProps): JSX.Element {
+  const webviewsRef = useRef(new Map<string, BrowserWebviewElement>())
   const [address, setAddress] = useState('')
   const [snapshot, setSnapshot] = useState<string | null>(null)
 
   const tabs = useMemo(() => readTabs(component.state), [component.state])
   const activeLocalId = asString(component.state.activeTabId, tabs[0]?.localId)
   const activeTab = tabs.find((tab) => tab.localId === activeLocalId) ?? tabs[0]
+  const [loadedTabIds, setLoadedTabIds] = useState<Set<string>>(() => new Set(activeLocalId ? [activeLocalId] : []))
 
   const patchTabs = useCallback(
     (nextTabs: BrowserTabState[], nextActiveId = activeLocalId) => {
@@ -146,55 +133,54 @@ export function BrowserComponent({ component, updateState, isCanvasInteracting =
     [activeLocalId, updateState]
   )
 
-  const setRuntimeBounds = useCallback((tabId: string, visible: boolean, bounds: BrowserBounds) => {
-    const nextBounds = visible ? bounds : HIDDEN_BOUNDS
-    const previous = lastBoundsRef.current.get(tabId)
+  const getActiveWebview = useCallback((): BrowserWebviewElement | null => {
+    if (!activeTab) return null
+    return webviewsRef.current.get(activeTab.localId) ?? null
+  }, [activeTab])
 
-    if (previous?.visible === visible && boundsEqual(previous.bounds, nextBounds)) {
-      return
+  const registerWebview = useCallback((localId: string, webview: BrowserWebviewElement | null) => {
+    if (webview) {
+      webviewsRef.current.set(localId, webview)
+    } else {
+      webviewsRef.current.delete(localId)
     }
-
-    lastBoundsRef.current.set(tabId, { visible, bounds: nextBounds })
-    void window.atlas.browser.setBounds({ tabId, visible, bounds: nextBounds })
   }, [])
 
-  const syncBoundsNow = useCallback(() => {
-    const activeRuntimeId = activeTab ? runtimeTabsRef.current.get(activeTab.localId) : null
+  const patchTab = useCallback(
+    (localId: string, patch: Partial<Pick<BrowserTabState, 'title' | 'url'>>) => {
+      let didChange = false
+      const nextTabs = tabs.map((tab) => {
+        if (tab.localId !== localId) return tab
+        const nextTab = {
+          ...tab,
+          title: asString(patch.title, tab.title),
+          url: asString(patch.url, tab.url)
+        }
+        didChange = nextTab.title !== tab.title || nextTab.url !== tab.url
+        return didChange ? nextTab : tab
+      })
 
-    for (const runtimeId of runtimeTabsRef.current.values()) {
-      if (runtimeId !== activeRuntimeId) {
-        setRuntimeBounds(runtimeId, false, HIDDEN_BOUNDS)
+      if (didChange) updateState({ tabs: nextTabs }, false)
+    },
+    [tabs, updateState]
+  )
+
+  const handleTitleChange = useCallback((localId: string, title: string) => patchTab(localId, { title }), [patchTab])
+  const handleUrlChange = useCallback((localId: string, url: string) => patchTab(localId, { url }), [patchTab])
+
+  const webviewLocalIdForContents = useCallback((sourceWebContentsId: number): string | null => {
+    for (const [localId, webview] of webviewsRef.current) {
+      if (typeof webview.getWebContentsId !== 'function') continue
+
+      try {
+        if (webview.getWebContentsId() === sourceWebContentsId) return localId
+      } catch {
+        continue
       }
     }
 
-    if (!activeRuntimeId) return
-
-    const root = rootRef.current
-    const rect = viewportRef.current?.getBoundingClientRect()
-    if (!root || !rect) {
-      setRuntimeBounds(activeRuntimeId, false, HIDDEN_BOUNDS)
-      return
-    }
-
-    const visibleRect = getVisibleRect(rect)
-    if (!visibleRect) {
-      setRuntimeBounds(activeRuntimeId, false, HIDDEN_BOUNDS)
-      return
-    }
-
-    const bounds = boundsFromVisibleRect(visibleRect)
-    const isVisible = bounds.width > 20 && bounds.height > 20 && !isBrowserViewportOccluded(root, visibleRect)
-    setRuntimeBounds(activeRuntimeId, isVisible, bounds)
-  }, [activeTab, setRuntimeBounds])
-
-  const scheduleBoundsSync = useCallback(() => {
-    if (syncFrameRef.current !== null) return
-
-    syncFrameRef.current = window.requestAnimationFrame(() => {
-      syncFrameRef.current = null
-      syncBoundsNow()
-    })
-  }, [syncBoundsNow])
+    return null
+  }, [])
 
   useEffect(() => {
     if (!component.state.tabs) {
@@ -203,115 +189,48 @@ export function BrowserComponent({ component, updateState, isCanvasInteracting =
   }, [activeLocalId, component.state.tabs, tabs, updateState])
 
   useEffect(() => {
-    let cancelled = false
+    setLoadedTabIds((currentIds) => {
+      const liveTabIds = new Set(tabs.map((tab) => tab.localId))
+      const nextIds = new Set([...currentIds].filter((localId) => liveTabIds.has(localId)))
+      if (activeLocalId) nextIds.add(activeLocalId)
 
-    async function ensureTabs() {
-      for (const tab of tabs) {
-        if (runtimeTabsRef.current.has(tab.localId)) continue
-        const runtime = (await window.atlas.browser.createTab({
-          componentId: component.id,
-          url: tab.url,
-          partition: tab.partition
-        })) as { tabId: string; partition: string; url: string }
-        if (cancelled) {
-          await window.atlas.browser.closeTab(runtime.tabId)
-          return
-        }
-        runtimeTabsRef.current.set(tab.localId, runtime.tabId)
-        scheduleBoundsSync()
+      if (nextIds.size === currentIds.size && [...nextIds].every((localId) => currentIds.has(localId))) {
+        return currentIds
       }
-    }
 
-    void ensureTabs()
-
-    return () => {
-      cancelled = true
-    }
-  }, [component.id, scheduleBoundsSync, tabs])
+      return nextIds
+    })
+  }, [activeLocalId, tabs])
 
   useEffect(() => {
-    const dispose = window.atlas.browser.onTabUpdated(({ tabId, patch }) => {
-      const localId = [...runtimeTabsRef.current.entries()].find(([, runtimeId]) => runtimeId === tabId)?.[0]
-      if (!localId) return
+    const dispose = window.atlas.browser.onWebviewOpenTabRequested((request: BrowserWebviewOpenTabRequest) => {
+      if (!webviewLocalIdForContents(request.sourceWebContentsId)) return
 
-      const nextTabs = tabs.map((tab) =>
-        tab.localId === localId
-          ? {
-              ...tab,
-              title: asString(patch.title, tab.title),
-              url: asString(patch.url, tab.url)
-            }
-          : tab
-      )
-      updateState({ tabs: nextTabs }, false)
+      const next = createBrowserTab(request.url)
+      patchTabs([...tabs, next], next.localId)
     })
 
     return dispose
-  }, [tabs, updateState])
+  }, [patchTabs, tabs, webviewLocalIdForContents])
 
   useEffect(() => {
     setAddress(activeTab?.url ?? '')
   }, [activeTab?.url])
 
-  useEffect(() => subscribeCanvasViewportSync(scheduleBoundsSync), [scheduleBoundsSync])
-
   useEffect(() => {
-    scheduleBoundsSync()
-    const observer = new ResizeObserver(scheduleBoundsSync)
-    if (viewportRef.current) observer.observe(viewportRef.current)
-    window.addEventListener('resize', scheduleBoundsSync)
-    window.addEventListener('scroll', scheduleBoundsSync, true)
+    if (isNodeSelected) setSnapshot(null)
+  }, [isNodeSelected])
 
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', scheduleBoundsSync)
-      window.removeEventListener('scroll', scheduleBoundsSync, true)
-      if (syncFrameRef.current !== null) {
-        window.cancelAnimationFrame(syncFrameRef.current)
-        syncFrameRef.current = null
-      }
-    }
-  }, [component.frame.height, component.frame.width, component.frame.x, component.frame.y, component.zIndex, scheduleBoundsSync])
-
-  useEffect(() => {
-    if (!isCanvasInteracting) {
-      scheduleBoundsSync()
-      return undefined
-    }
-
-    const syncWhileInteracting = () => {
-      syncBoundsNow()
-      interactionFrameRef.current = window.requestAnimationFrame(syncWhileInteracting)
-    }
-
-    interactionFrameRef.current = window.requestAnimationFrame(syncWhileInteracting)
-
-    return () => {
-      if (interactionFrameRef.current !== null) {
-        window.cancelAnimationFrame(interactionFrameRef.current)
-        interactionFrameRef.current = null
-      }
-      scheduleBoundsSync()
-    }
-  }, [isCanvasInteracting, scheduleBoundsSync, syncBoundsNow])
-
-  useEffect(() => {
-    return () => {
-      if (syncFrameRef.current !== null) window.cancelAnimationFrame(syncFrameRef.current)
-      if (interactionFrameRef.current !== null) window.cancelAnimationFrame(interactionFrameRef.current)
-      for (const runtimeId of runtimeTabsRef.current.values()) {
-        void window.atlas.browser.closeTab(runtimeId)
-      }
-      runtimeTabsRef.current.clear()
-      lastBoundsRef.current.clear()
-    }
-  }, [])
-
-  const navigate = async () => {
+  const navigate = () => {
     if (!activeTab) return
+
     const url = normalizeUrl(address)
-    const runtimeId = runtimeTabsRef.current.get(activeTab.localId)
-    if (runtimeId) await window.atlas.browser.navigate(runtimeId, url)
+    const webview = getActiveWebview()
+    if (activeTab.url === url) {
+      void webview?.loadURL(url).catch(() => undefined)
+      return
+    }
+
     patchTabs(
       tabs.map((tab) => (tab.localId === activeTab.localId ? { ...tab, url } : tab)),
       activeTab.localId
@@ -319,25 +238,30 @@ export function BrowserComponent({ component, updateState, isCanvasInteracting =
   }
 
   const addTab = () => {
-    const next = { localId: nanoid(), title: 'New tab', url: 'https://example.com' }
+    const next = createBrowserTab()
     patchTabs([...tabs, next], next.localId)
   }
 
-  const closeTab = async (localId: string) => {
-    const runtimeId = runtimeTabsRef.current.get(localId)
-    if (runtimeId) await window.atlas.browser.closeTab(runtimeId)
-    runtimeTabsRef.current.delete(localId)
-    if (runtimeId) lastBoundsRef.current.delete(runtimeId)
+  const closeTab = (localId: string) => {
+    webviewsRef.current.delete(localId)
     const nextTabs = tabs.filter((tab) => tab.localId !== localId)
-    const fallbackTab = { localId: nanoid(), title: 'Example', url: 'https://example.com' }
+    const fallbackTab = createBrowserTab()
     const finalTabs = nextTabs.length ? nextTabs : [fallbackTab]
     patchTabs(finalTabs, finalTabs[0].localId)
   }
 
-  const activeRuntimeId = activeTab ? runtimeTabsRef.current.get(activeTab.localId) : null
+  const captureActiveTab = async () => {
+    const webview = getActiveWebview()
+    if (!webview) return
+
+    const image = await webview.capturePage()
+    setSnapshot(image.toDataURL())
+  }
+
+  const activeWebviewAvailable = Boolean(activeTab)
 
   return (
-    <div ref={rootRef} className="browser-module">
+    <div className="browser-module">
       <div className="browser-tabs">
         {tabs.map((tab) => (
           <button
@@ -350,7 +274,7 @@ export function BrowserComponent({ component, updateState, isCanvasInteracting =
               size={12}
               onClick={(event) => {
                 event.stopPropagation()
-                void closeTab(tab.localId)
+                closeTab(tab.localId)
               }}
             />
           </button>
@@ -360,35 +284,43 @@ export function BrowserComponent({ component, updateState, isCanvasInteracting =
         </button>
       </div>
       <div className="browser-toolbar">
-        <button className="icon-button" disabled={!activeRuntimeId} onClick={() => activeRuntimeId && window.atlas.browser.back(activeRuntimeId)}>
+        <button className="icon-button" disabled={!activeWebviewAvailable} onClick={() => getActiveWebview()?.goBack()}>
           <ArrowLeft size={15} />
         </button>
-        <button className="icon-button" disabled={!activeRuntimeId} onClick={() => activeRuntimeId && window.atlas.browser.forward(activeRuntimeId)}>
+        <button className="icon-button" disabled={!activeWebviewAvailable} onClick={() => getActiveWebview()?.goForward()}>
           <ArrowRight size={15} />
         </button>
-        <button className="icon-button" disabled={!activeRuntimeId} onClick={() => activeRuntimeId && window.atlas.browser.reload(activeRuntimeId)}>
+        <button className="icon-button" disabled={!activeWebviewAvailable} onClick={() => getActiveWebview()?.reload()}>
           <RefreshCw size={15} />
         </button>
         <form
           onSubmit={(event) => {
             event.preventDefault()
-            void navigate()
+            navigate()
           }}
         >
           <input value={address} onChange={(event) => setAddress(event.target.value)} />
         </form>
-        <button className="icon-button" disabled={!activeRuntimeId} onClick={() => activeRuntimeId && window.atlas.browser.devtools(activeRuntimeId)}>
+        <button className="icon-button" disabled={!activeWebviewAvailable} onClick={() => getActiveWebview()?.openDevTools()}>
           <Bug size={15} />
         </button>
-        <button
-          className="icon-button"
-          disabled={!activeRuntimeId}
-          onClick={async () => activeRuntimeId && setSnapshot(await window.atlas.browser.capture(activeRuntimeId))}
-        >
+        <button className="icon-button" disabled={!activeWebviewAvailable} onClick={() => void captureActiveTab()}>
           <Camera size={15} />
         </button>
       </div>
-      <div ref={viewportRef} className="browser-viewport">
+      <div className="browser-viewport">
+        {tabs.filter((tab) => loadedTabIds.has(tab.localId)).map((tab) => (
+          <BrowserWebview
+            key={tab.localId}
+            active={tab.localId === activeLocalId}
+            componentId={component.id}
+            interactive={isNodeSelected}
+            onTitleChange={handleTitleChange}
+            onUrlChange={handleUrlChange}
+            registerWebview={registerWebview}
+            tab={tab}
+          />
+        ))}
         {snapshot ? <img className="browser-snapshot" src={snapshot} alt="Browser screenshot" onClick={() => setSnapshot(null)} /> : null}
       </div>
     </div>

@@ -22,6 +22,34 @@ const trayIcon16 =
 const trayIcon32 =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAADX0lEQVR4nMVXbUhTYRTe/92ld7q908zK/EoJM9BphSiEECmBH334URklJa36kTSUqLSi+lEEBUWl9AFBPwytJE3DLNEsnc2K8lucTi3Tbc7NDzzxvtOr1zvZvG72woG795zzPM8573b3HoFg3hIKkVREo0siGqkoV+moiEbgCMNYFI0aRTTKxxwCa4sSy5IpV6R3FOniYpCeEsuSOOQiGk07m3yeTTMihEIkXYnKrXRCR1EyiWDmzOE/WR4W0MQXYNfuRGK8u0CjRgHligx8AWpq66G2vgFWiWV8j0GPO8AreW/KQTBPTBHbs/8A7y4I+CS5uHnAF5WaEaBSfyd7KyYg42gWQz5rh44cXxkBYqkX/Gxp4whoaesAN+TlfAGK09kc8lk7ceqMcwVIZN7Q0d3DEH6oqYPqj7XM564eDUg91zlPgDL3Aqvi1PTDkLwvnbV3Nue8cwTIvHxA09vPELV1dAEtWU3eAU3NP5j9Pu0geHr7Ol5A3uVrrEqzlefA59hVYplZJ1m+/CvXHStgre9G+D00zBD8+TsCG+IyIKLSTGxNbCq0d3Yz/qFhHaz3D3acgBu3brMqbG3vhPjSXkZAXGkfNH2bOwZsOMchAvwCQ2BYZ2CBV/ZPEuKt7yyGn/He/JgRgxECgjYvX8C9B4UsYNPEFKTVWUhz1eOQox4nzyl1ZhgbZ78X7t4vWJ6A4JAw0I+aWKBl2rnqf41MQqtuErbNdKFcy+6CwWiCTaFy/gKePnvOAsQVJlbpCJmiegA+fVYRU1QPkr2E93pOFzAGLwHhkVEwZp5ggd2paSNE8rdGcA+OZGLdguQgLx8lvsJGDVu0eQIit8csXcCLktec6qOKughJQO5jTnxg7hPiiy7WgHFBF4qKXy1NQFRMLJjG2edZ8FVrqb7MAOLAME6O2H8L8eGYR80DnD+q6B07rQugrNyIyyuqONVHl2gIuL/y4aLVBCgLLF14qeV0AWNauxkL8BRk66fiFZ9JgMPf6EHsF7poHPbhGByLc+y6lIpolG8r0DM2DSIqxsBXcdMmKI7BsTjHVqyIRhftHkxcPHzsAbQ7lqLRCEV5uM+OZkkrPpq5SBIWzodJ+EvhbHJS+UJyRgQlk+BxiaKlDcsZWDikrsiAMfGZM22fWf8AlzWh1rEzJ7YAAAAASUVORK5CYII='
 
+function isBrowserNavigableUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url)
+}
+
+function isExternalProtocolUrl(url: string): boolean {
+  return /^(mailto|tel):/i.test(url)
+}
+
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() !== 'webview') return
+
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isBrowserNavigableUrl(url)) {
+      const target = mainWindow?.webContents
+      if (target && !target.isDestroyed()) {
+        target.send('browser:webview-open-tab-requested', {
+          sourceWebContentsId: contents.id,
+          url
+        })
+      }
+    } else if (isExternalProtocolUrl(url)) {
+      void shell.openExternal(url)
+    }
+
+    return { action: 'deny' }
+  })
+})
+
 function disposeWindowServices(): void {
   browserService?.dispose()
   fileSystemService?.dispose()
@@ -168,8 +196,8 @@ function installSecurityDefaults(): void {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           isDev
-            ? "default-src 'self' http://localhost:* ws://localhost:* data: blob:; script-src 'self' 'unsafe-inline' http://localhost:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: atlas-file: https:; media-src 'self' data: blob: atlas-file:;"
-            : "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: atlas-file: https:; media-src 'self' data: blob: atlas-file:;"
+            ? "default-src 'self' http://localhost:* ws://localhost:* data: blob:; script-src 'self' 'unsafe-inline' http://localhost:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: atlas-file: https:; media-src 'self' data: blob: atlas-file:; frame-src http: https:;"
+            : "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: atlas-file: https:; media-src 'self' data: blob: atlas-file:; frame-src http: https:;"
         ]
       }
     })
@@ -192,10 +220,26 @@ async function createWindow(): Promise<void> {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      webviewTag: true
     }
   })
   mainWindow = window
+
+  window.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    const src = params.src ?? ''
+    const partition = params.partition ?? ''
+
+    if (!isBrowserNavigableUrl(src) || !partition.startsWith('persist:atlas-browser-')) {
+      event.preventDefault()
+      return
+    }
+
+    delete webPreferences.preload
+    webPreferences.contextIsolation = true
+    webPreferences.nodeIntegration = false
+    webPreferences.sandbox = true
+  })
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)
@@ -244,36 +288,50 @@ async function createWindow(): Promise<void> {
 }
 
 configureAppRuntime()
-registerLocalAssetScheme()
 
-app.whenReady().then(async () => {
-  installSecurityDefaults()
-  registerLocalAssetProtocol()
-  await createWindow()
-  ensureTray()
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
-  app.on('activate', () => {
-    void showMainWindow()
-  })
-}).catch((error) => {
-  console.error('AtlasOS failed to start', error)
-  app.quit()
-})
-
-app.on('window-all-closed', () => {
-  disposeWindowServices()
-
-  if (!isQuitting && process.platform !== 'darwin') {
-    app.quit()
-  }
-})
-
-app.on('before-quit', () => {
+if (!hasSingleInstanceLock) {
   isQuitting = true
-  disposeWindowServices()
-})
+  app.quit()
+} else {
+  registerLocalAssetScheme()
 
-app.on('will-quit', () => {
-  tray?.destroy()
-  tray = null
-})
+  app.on('second-instance', () => {
+    void app.whenReady().then(showMainWindow).catch((error) => {
+      console.error('AtlasOS failed to show the existing window', error)
+    })
+  })
+
+  app.whenReady().then(async () => {
+    installSecurityDefaults()
+    registerLocalAssetProtocol()
+    await createWindow()
+    ensureTray()
+
+    app.on('activate', () => {
+      void showMainWindow()
+    })
+  }).catch((error) => {
+    console.error('AtlasOS failed to start', error)
+    app.quit()
+  })
+
+  app.on('window-all-closed', () => {
+    disposeWindowServices()
+
+    if (!isQuitting && process.platform !== 'darwin') {
+      app.quit()
+    }
+  })
+
+  app.on('before-quit', () => {
+    isQuitting = true
+    disposeWindowServices()
+  })
+
+  app.on('will-quit', () => {
+    tray?.destroy()
+    tray = null
+  })
+}

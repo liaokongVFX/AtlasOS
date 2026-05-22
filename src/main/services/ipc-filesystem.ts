@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, relative } from 'node:path'
+import { lstat, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { dialog, shell, type WebContents } from 'electron'
 import fg from 'fast-glob'
 import chokidar, { type FSWatcher } from 'chokidar'
-import ignore from 'ignore'
 import { z } from 'zod'
 import {
   chooseDirectoryInputSchema,
@@ -19,16 +18,7 @@ import type { FileEntry } from '@shared/schema'
 import { assertInsideRoot, childPath, sanitizeFileName } from './path-safety'
 import { handleValidated } from './ipc-helpers'
 
-const DEFAULT_IGNORES = ['.git', 'node_modules', 'out', 'dist', 'release', '.vite']
-
-function createIgnoreMatcher() {
-  return ignore().add(DEFAULT_IGNORES)
-}
-
-function isIgnored(rootPath: string, targetPath: string): boolean {
-  const rel = relative(rootPath, targetPath).replace(/\\/g, '/')
-  return Boolean(rel) && createIgnoreMatcher().ignores(rel)
-}
+const FILESYSTEM_SCAN_DEPTH = 64
 
 export class FileSystemService {
   private readonly watchers = new Map<string, FSWatcher>()
@@ -45,7 +35,8 @@ export class FileSystemService {
 
     handleValidated('filesystem:list-tree', listTreeInputSchema, async (_, input) => {
       const rootPath = assertInsideRoot(input.rootPath, input.rootPath)
-      return this.readTree(rootPath, rootPath, input.maxDepth)
+      const targetPath = assertInsideRoot(rootPath, input.targetPath ?? rootPath)
+      return this.readTree(rootPath, targetPath, input.maxDepth)
     })
 
     handleValidated('filesystem:create-file', fileOperationInputSchema, async (_, input) => {
@@ -107,8 +98,7 @@ export class FileSystemService {
         cwd: rootPath,
         dot: true,
         onlyFiles: false,
-        ignore: DEFAULT_IGNORES.map((pattern) => `**/${pattern}/**`),
-        deep: 8,
+        deep: FILESYSTEM_SCAN_DEPTH,
         unique: true
       })
       const lowerQuery = input.query.toLowerCase()
@@ -134,8 +124,7 @@ export class FileSystemService {
     const watchId = randomUUID()
     const watcher = chokidar.watch(rootPath, {
       ignoreInitial: true,
-      depth: 8,
-      ignored: (targetPath) => isIgnored(rootPath, targetPath)
+      depth: FILESYSTEM_SCAN_DEPTH
     })
 
     watcher.on('all', (eventName, targetPath) => {
@@ -169,7 +158,7 @@ export class FileSystemService {
 
   private async entryFor(rootPath: string, targetPath: string, depth: number): Promise<FileEntry> {
     const safePath = assertInsideRoot(rootPath, targetPath)
-    const info = await stat(safePath)
+    const info = await lstat(safePath)
     const kind = info.isDirectory() ? 'directory' : 'file'
     const entry: FileEntry = {
       id: safePath,
@@ -181,14 +170,15 @@ export class FileSystemService {
     }
 
     if (kind === 'directory' && depth > 0) {
+      entry.childrenLoaded = true
       const dirents = await readdir(safePath, { withFileTypes: true })
       entry.children = await Promise.all(
         dirents
-          .filter((dirent) => !createIgnoreMatcher().ignores(dirent.name))
           .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
-          .slice(0, 600)
           .map((dirent) => this.entryFor(rootPath, join(safePath, dirent.name), depth - 1))
       )
+    } else if (kind === 'directory') {
+      entry.childrenLoaded = false
     }
 
     return entry

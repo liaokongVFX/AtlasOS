@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { BrowserWindow, WebContentsView, shell, type WebContents } from 'electron'
+import { BrowserWindow, View, WebContentsView, type WebContents } from 'electron'
 import {
   browserBoundsInputSchema,
   browserClickInputSchema,
@@ -14,11 +14,31 @@ import { handleValidated } from './ipc-helpers'
 type BrowserTab = {
   id: string
   componentId: string
+  container: View
+  loadSequence: number
   view: WebContentsView
 }
 
 function jsString(value: string): string {
   return JSON.stringify(value)
+}
+
+type BrowserBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+const HIDDEN_BOUNDS: BrowserBounds = { x: 0, y: 0, width: 0, height: 0 }
+
+function childBoundsForClippedContainer(containerBounds: BrowserBounds, contentBounds: BrowserBounds): BrowserBounds {
+  return {
+    x: contentBounds.x - containerBounds.x,
+    y: contentBounds.y - containerBounds.y,
+    width: contentBounds.width,
+    height: contentBounds.height
+  }
 }
 
 export class BrowserService {
@@ -30,6 +50,7 @@ export class BrowserService {
     handleValidated('browser:create-tab', browserCreateTabInputSchema, async (_, input) => {
       const tabId = randomUUID()
       const partition = input.partition || `persist:atlas-browser-${input.componentId}-${tabId}`
+      const container = new View()
       const view = new WebContentsView({
         webPreferences: {
           partition,
@@ -40,7 +61,11 @@ export class BrowserService {
       })
 
       view.webContents.setWindowOpenHandler(({ url }) => {
-        void shell.openExternal(url)
+        this.emitOpenTabRequested({
+          componentId: input.componentId,
+          sourceTabId: tabId,
+          url
+        })
         return { action: 'deny' }
       })
       view.webContents.on('page-title-updated', (_, title) => this.emitUpdate(tabId, { title }))
@@ -49,23 +74,26 @@ export class BrowserService {
       view.webContents.on('did-finish-load', () => this.emitUpdate(tabId, { isLoading: false }))
       view.webContents.on('did-start-loading', () => this.emitUpdate(tabId, { isLoading: true }))
 
-      this.window.contentView.addChildView(view)
-      view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
-      this.tabs.set(tabId, { id: tabId, componentId: input.componentId, view })
-      await view.webContents.loadURL(input.url)
+      container.addChildView(view)
+      this.window.contentView.addChildView(container)
+      container.setBounds(HIDDEN_BOUNDS)
+      view.setBounds(HIDDEN_BOUNDS)
+      const tab = { id: tabId, componentId: input.componentId, container, loadSequence: 0, view }
+      this.tabs.set(tabId, tab)
+      this.loadTabUrl(tab, input.url)
       return { tabId, partition, url: input.url }
     })
 
     handleValidated('browser:set-bounds', browserBoundsInputSchema, (_, input) => {
       const tab = this.tabs.get(input.tabId)
       if (!tab) return { ok: false }
-      tab.view.setBounds(input.visible ? input.bounds : { x: 0, y: 0, width: 0, height: 0 })
+      this.setTabBounds(tab, input.visible, input.bounds, input.contentBounds ?? input.bounds)
       return { ok: true }
     })
 
     handleValidated('browser:navigate', browserNavigateInputSchema, async (_, input) => {
       const tab = this.getTab(input.tabId)
-      await tab.view.webContents.loadURL(input.url)
+      this.loadTabUrl(tab, input.url)
       return { ok: true }
     })
 
@@ -161,7 +189,8 @@ export class BrowserService {
 
     if (!this.window.isDestroyed()) {
       try {
-        this.window.contentView.removeChildView(tab.view)
+        tab.container.removeChildView(tab.view)
+        this.window.contentView.removeChildView(tab.container)
       } catch (error) {
         if (!this.window.isDestroyed()) {
           console.warn(`Failed to detach browser tab ${tabId}:`, error)
@@ -190,12 +219,45 @@ export class BrowserService {
     }
   }
 
+  private loadTabUrl(tab: BrowserTab, url: string): void {
+    const loadSequence = ++tab.loadSequence
+
+    void tab.view.webContents.loadURL(url).catch((error: unknown) => {
+      if (this.tabs.get(tab.id) !== tab || tab.loadSequence !== loadSequence) return
+
+      this.emitUpdate(tab.id, {
+        isLoading: false,
+        loadError: error instanceof Error ? error.message : String(error)
+      })
+    })
+  }
+
+  private setTabBounds(tab: BrowserTab, visible: boolean, containerBounds: BrowserBounds, contentBounds: BrowserBounds): void {
+    if (!visible) {
+      tab.view.setBounds(HIDDEN_BOUNDS)
+      tab.container.setBounds(HIDDEN_BOUNDS)
+      return
+    }
+
+    tab.container.setBounds(containerBounds)
+    tab.view.setBounds(childBoundsForClippedContainer(containerBounds, contentBounds))
+  }
+
   private emitUpdate(tabId: string, patch: Record<string, unknown>): void {
     if (this.window.isDestroyed()) return
 
     const webContents = this.window.webContents
     if (!webContents.isDestroyed()) {
       webContents.send('browser:tab-updated', { tabId, patch })
+    }
+  }
+
+  private emitOpenTabRequested(payload: { componentId: string; sourceTabId: string; url: string }): void {
+    if (this.window.isDestroyed()) return
+
+    const webContents = this.window.webContents
+    if (!webContents.isDestroyed()) {
+      webContents.send('browser:open-tab-requested', payload)
     }
   }
 }

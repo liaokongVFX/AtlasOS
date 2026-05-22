@@ -10,6 +10,7 @@ import {
   MEDIA_NODE_MIN_WIDTH,
   normalizeMediaResizeFrame
 } from '../lib/media-frame'
+import { notifyCanvasViewportSync } from '../lib/canvas-viewport-sync'
 import { useCanvasStore } from '../store/canvas-store'
 import { ComponentErrorBoundary } from './component-error-boundary'
 import { componentRegistry } from './registry'
@@ -44,7 +45,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
   const Icon = definition.icon
   const Renderer = definition.Renderer
   const isCanvasInteracting = dragging || isResizing
-  const showInteractionShield = !selected && component.type !== 'file-tree'
+  const showInteractionShield = !selected
 
   const updateConfig = useCallback((patch: Record<string, unknown>, immediate = false) => {
     updateComponent(
@@ -159,6 +160,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
     updateComponent(canvasId, component.id, (draft) => {
       draft.frame = normalizedFrame
     })
+    notifyCanvasViewportSync()
   }, [canvasId, component.id, isMediaPreview, mediaAspectRatio, updateComponent])
 
   const markResizing = useCallback(() => {
@@ -222,7 +224,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
           </div>
         </div>
       </header>
-      <div className={cn('component-node__body nodrag', selected && 'nowheel')}>
+      <div className={cn('component-node__body', selected && 'nodrag nowheel')}>
         <ComponentErrorBoundary>
           <Renderer
             canvasId={canvasId}
@@ -235,7 +237,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
             isNodeSelected={selected}
           />
         </ComponentErrorBoundary>
-        {showInteractionShield ? <div className="component-node__interaction-shield nodrag" aria-hidden="true" /> : null}
+        {showInteractionShield ? <div className="component-node__interaction-shield" aria-hidden="true" /> : null}
       </div>
     </section>
   )

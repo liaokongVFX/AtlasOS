@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CanvasComponent } from '@shared/schema'
+import { subscribeCanvasViewportSync } from '../lib/canvas-viewport-sync'
 import { useCanvasStore } from '../store/canvas-store'
 import { ComponentNode } from './component-node'
 
@@ -104,6 +105,44 @@ describe('ComponentNode', () => {
     expect(screen.getByRole('textbox', { name: 'Component title' })).toHaveValue('Note')
   })
 
+  it('uses the full node as a drag surface before selection', () => {
+    renderNode(createComponent(), false)
+
+    const body = document.querySelector('.component-node__body')
+    const shield = document.querySelector('.component-node__interaction-shield')
+
+    expect(body).not.toHaveClass('nodrag')
+    expect(body).not.toHaveClass('nowheel')
+    expect(shield).toBeInTheDocument()
+    expect(shield).not.toHaveClass('nodrag')
+  })
+
+  it('enables module interaction only after selection', () => {
+    renderNode(createComponent(), true)
+
+    const body = document.querySelector('.component-node__body')
+
+    expect(body).toHaveClass('nodrag')
+    expect(body).toHaveClass('nowheel')
+    expect(document.querySelector('.component-node__interaction-shield')).not.toBeInTheDocument()
+  })
+
+  it('also shields unselected file tree nodes from direct editing', () => {
+    renderNode(
+      createComponent({
+        type: 'file-tree',
+        title: 'Files',
+        config: { rootPath: 'D:\\repo' }
+      }),
+      false
+    )
+
+    const shield = document.querySelector('.component-node__interaction-shield')
+
+    expect(shield).toBeInTheDocument()
+    expect(shield).not.toHaveClass('nodrag')
+  })
+
   it('commits a title edit with Enter', () => {
     const component = createComponent()
     let savedTitle = component.title
@@ -181,5 +220,33 @@ describe('ComponentNode', () => {
     })
 
     expect(savedFrame).toEqual({ x: 0, y: 0, width: 640, height: 398 })
+  })
+
+  it('notifies native browser overlays when resize ends', () => {
+    const component = createComponent()
+    const updateComponent = vi.fn((_canvasId: string, _componentId: string, updater: (component: CanvasComponent) => void) => {
+      const draft = structuredClone(component)
+      updater(draft)
+    })
+    const listener = vi.fn()
+    const unsubscribe = subscribeCanvasViewportSync(listener)
+    useCanvasStore.setState({ updateComponent } as Partial<CanvasStoreState>)
+
+    try {
+      renderNode(component)
+
+      act(() => {
+        nodeResizerProps.current?.onResizeEnd?.({} as never, {
+          x: 100,
+          y: 120,
+          width: 460,
+          height: 320
+        })
+      })
+
+      expect(listener).toHaveBeenCalledTimes(1)
+    } finally {
+      unsubscribe()
+    }
   })
 })

@@ -75,6 +75,7 @@ export type FileEntry = {
   kind: 'file' | 'directory'
   size?: number
   modifiedAt?: string
+  childrenLoaded?: boolean
   children?: FileEntry[]
 }
 
@@ -85,18 +86,22 @@ export const fileEntrySchema: z.ZodType<FileEntry> = z.object({
   kind: z.enum(['file', 'directory']),
   size: z.number().optional(),
   modifiedAt: z.string().optional(),
+  childrenLoaded: z.boolean().optional(),
   children: z.array(z.lazy(() => fileEntrySchema)).optional()
+})
+
+const browserRectangleSchema = z.object({
+  x: z.number().int(),
+  y: z.number().int(),
+  width: z.number().int().nonnegative(),
+  height: z.number().int().nonnegative()
 })
 
 export const browserBoundsSchema = z.object({
   tabId: z.string(),
   visible: z.boolean(),
-  bounds: z.object({
-    x: z.number().int(),
-    y: z.number().int(),
-    width: z.number().int().nonnegative(),
-    height: z.number().int().nonnegative()
-  })
+  bounds: browserRectangleSchema,
+  contentBounds: browserRectangleSchema.optional()
 })
 
 export const terminalCreateSchema = z.object({
