@@ -18,14 +18,6 @@ export const viewportSchema = z.object({
 
 export const canvasBackgroundSchema = z.object({
   color: z.string().default(DEFAULT_CANVAS_BACKGROUND.color),
-  grid: z
-    .object({
-      enabled: z.boolean().default(DEFAULT_CANVAS_BACKGROUND.grid.enabled),
-      size: z.number().min(8).max(96).default(DEFAULT_CANVAS_BACKGROUND.grid.size),
-      opacity: z.number().min(0).max(1).default(DEFAULT_CANVAS_BACKGROUND.grid.opacity),
-      variant: z.enum(['dots', 'lines', 'cross']).default(DEFAULT_CANVAS_BACKGROUND.grid.variant)
-    })
-    .default(DEFAULT_CANVAS_BACKGROUND.grid),
   image: z
     .object({
       src: z.string().default(''),

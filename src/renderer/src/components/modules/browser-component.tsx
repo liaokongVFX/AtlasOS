@@ -116,7 +116,12 @@ function BrowserWebview({
   })
 }
 
-export function BrowserComponent({ component, updateState, isNodeSelected = false }: AtlasComponentRendererProps): JSX.Element {
+export function BrowserComponent({
+  component,
+  updateState,
+  isCanvasInteracting = false,
+  isNodeSelected = false
+}: AtlasComponentRendererProps): JSX.Element {
   const webviewsRef = useRef(new Map<string, BrowserWebviewElement>())
   const [address, setAddress] = useState('')
   const [snapshot, setSnapshot] = useState<string | null>(null)
@@ -314,7 +319,7 @@ export function BrowserComponent({ component, updateState, isNodeSelected = fals
             key={tab.localId}
             active={tab.localId === activeLocalId}
             componentId={component.id}
-            interactive={isNodeSelected}
+            interactive={isNodeSelected && !isCanvasInteracting}
             onTitleChange={handleTitleChange}
             onUrlChange={handleUrlChange}
             registerWebview={registerWebview}

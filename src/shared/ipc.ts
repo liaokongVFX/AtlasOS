@@ -1,6 +1,10 @@
 import { z } from 'zod'
 import { browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
 
+export const MAX_TERMINAL_PASTED_ASSET_BASE64_CHARS = 14 * 1024 * 1024
+
+const base64PayloadPattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+
 export const createCanvasInputSchema = z.object({
   name: z.string().min(1).max(80).optional()
 })
@@ -73,6 +77,21 @@ export const terminalCloseInputSchema = z.object({
 export const terminalCloseComponentInputSchema = z.object({
   componentId: z.string().min(1)
 })
+
+export const terminalPersistAssetInputSchema = z.object({
+  dataBase64: z.string().min(1).max(MAX_TERMINAL_PASTED_ASSET_BASE64_CHARS).regex(base64PayloadPattern),
+  mimeType: z
+    .string()
+    .trim()
+    .max(80)
+    .regex(/^image\/[a-z0-9.+-]+$/i)
+    .optional(),
+  sourceName: z.string().min(1).max(240).optional()
+})
+
+export const terminalSaveClipboardImageInputSchema = z.object({})
+
+export const terminalReadClipboardFilesInputSchema = z.object({})
 
 export const browserCreateTabInputSchema = z.object({
   componentId: z.string().min(1),

@@ -3,6 +3,26 @@ import type { AtlasAppState, CanvasDocument } from '@shared/schema'
 
 type Listener<T> = (payload: T) => void
 
+type SavedClipboardImageResult =
+  | {
+      saved: true
+      path: string
+      width: number
+      height: number
+      byteLength: number
+      formats: string[]
+    }
+  | {
+      saved: false
+      reason: 'empty'
+      formats: string[]
+    }
+
+type NativeClipboardFilesResult = {
+  paths: string[]
+  formats: string[]
+}
+
 function on<T>(channel: string, listener: Listener<T>): () => void {
   const wrapped = (_event: Electron.IpcRendererEvent, payload: T) => listener(payload)
   ipcRenderer.on(channel, wrapped)
@@ -56,6 +76,10 @@ const atlasApi = {
     resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { sessionId, cols, rows }),
     close: (sessionId: string) => ipcRenderer.invoke('terminal:close', { sessionId }),
     closeComponent: (componentId: string) => ipcRenderer.invoke('terminal:close-component', { componentId }),
+    savePastedAsset: (input: { dataBase64: string; mimeType?: string; sourceName?: string }) =>
+      ipcRenderer.invoke('terminal:save-pasted-asset', input) as Promise<{ path: string }>,
+    saveClipboardImage: () => ipcRenderer.invoke('terminal:save-clipboard-image', {}) as Promise<SavedClipboardImageResult>,
+    readClipboardFiles: () => ipcRenderer.invoke('terminal:read-clipboard-files', {}) as Promise<NativeClipboardFilesResult>,
     onData: (sessionId: string, listener: Listener<string>) =>
       on<{ sessionId: string; data: string }>('terminal:data', (payload) => {
         if (payload.sessionId === sessionId) listener(payload.data)

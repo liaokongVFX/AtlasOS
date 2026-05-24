@@ -1,24 +1,28 @@
 import { Tree, type NodeRendererProps } from 'react-arborist'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ChevronDown, ChevronRight, Copy, File, FilePlus, Folder, FolderOpen, FolderPlus, RefreshCw, TerminalSquare, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, ExternalLink, File, FilePlus, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, TerminalSquare, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { FileEntry } from '@shared/schema'
 import { useElementSize } from '../../hooks/use-element-size'
 import { writeClipboardText } from '../../lib/clipboard'
+import { componentTypeForFileSource, createFileComponentPatch } from '../../lib/file-component-factory'
 import { asString, cn } from '../../lib/utils'
 import { useCanvasStore } from '../../store/canvas-store'
 import type { AtlasComponentRendererProps } from '../registry'
 
 type FileNodeData = FileEntry
 const FILE_TREE_LOAD_DEPTH = 1
+const FILE_TREE_DESKTOP_OFFSET = 24
 
 type FileTreeRowActions = {
   onContextTarget: (entry: FileEntry) => void
   onCreateEntry: (kind: CreateEntryKind, target: FileEntry) => void
+  onRenameEntry: (target: FileEntry) => void
   onTrashEntry: (target: FileEntry) => void
   onRevealInFolder: (entry: FileEntry) => Promise<void> | void
   onOpenCommandLine: (entry: FileEntry) => Promise<void> | void
+  onOpenOnDesktop: (entry: FileEntry) => Promise<void> | void
   onCopyPath: (entry: FileEntry) => Promise<void> | void
 }
 
@@ -95,6 +99,87 @@ function sortByPathDepth(paths: string[]): string[] {
   return [...paths].sort((first, second) => pathDepth(first) - pathDepth(second))
 }
 
+function normalizeTreePath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+function comparableTreePath(path: string): string {
+  const normalizedPath = normalizeTreePath(path)
+  return /^[A-Za-z]:($|\/)/.test(normalizedPath) ? normalizedPath.toLowerCase() : normalizedPath
+}
+
+function isPathInRoot(rootPath: string, path: string): boolean {
+  const normalizedRoot = comparableTreePath(rootPath)
+  const normalizedPath = comparableTreePath(path)
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`)
+}
+
+function trimTrailingTreeSeparators(path: string): string {
+  return path.replace(/[\\/]+$/, '') || path
+}
+
+function treePathSeparator(rootPath: string, path: string): '\\' | '/' {
+  return rootPath.includes('\\') || path.includes('\\') ? '\\' : '/'
+}
+
+function appendTreePathSegment(basePath: string, separator: '\\' | '/', segment: string): string {
+  if (basePath === separator) return `${separator}${segment}`
+  return `${basePath}${separator}${segment}`
+}
+
+function openPathAncestors(rootPath: string, path: string): string[] {
+  if (!isPathInRoot(rootPath, path)) return []
+
+  const normalizedRoot = normalizeTreePath(rootPath)
+  const normalizedPath = normalizeTreePath(path)
+  const relativePath = normalizedPath.slice(normalizedRoot.length).replace(/^\/+/, '')
+  if (!relativePath) return [rootPath]
+
+  const separator = treePathSeparator(rootPath, path)
+  const ancestors = [rootPath]
+  let currentPath = trimTrailingTreeSeparators(rootPath)
+
+  for (const segment of relativePath.split('/').filter(Boolean)) {
+    currentPath = appendTreePathSegment(currentPath, separator, segment)
+    ancestors.push(currentPath)
+  }
+
+  return ancestors
+}
+
+function rebaseTreePath(oldPath: string, newPath: string, path: string): string {
+  if (!isPathInRoot(oldPath, path)) return path
+
+  const normalizedOldPath = normalizeTreePath(oldPath)
+  const normalizedPath = normalizeTreePath(path)
+  const relativePath = normalizedPath.slice(normalizedOldPath.length).replace(/^\/+/, '')
+  if (!relativePath) return newPath
+
+  const separator = treePathSeparator(newPath, path)
+  return relativePath
+    .split('/')
+    .filter(Boolean)
+    .reduce((currentPath, segment) => appendTreePathSegment(currentPath, separator, segment), trimTrailingTreeSeparators(newPath))
+}
+
+function rebaseOpenPaths(rootPath: string, paths: Iterable<string>, oldPath: string, newPath: string): string[] {
+  return uniqueSortedPaths([...paths].flatMap((path) => openPathAncestors(rootPath, rebaseTreePath(oldPath, newPath, path))))
+}
+
+function uniqueSortedPaths(paths: string[]): string[] {
+  return sortByPathDepth([...new Set(paths)])
+}
+
+function readOpenPaths(rootPath: string, value: unknown): string[] {
+  if (!rootPath) return []
+  if (!Array.isArray(value)) return [rootPath]
+
+  const openPaths = value.flatMap((item) => (typeof item === 'string' ? openPathAncestors(rootPath, item) : []))
+  if (openPaths.length === 0 && value.length > 0) return [rootPath]
+
+  return uniqueSortedPaths(openPaths)
+}
+
 function treeChildren(entry: FileEntry): readonly FileEntry[] | null {
   return canExpandDirectory(entry) ? (entry.children ?? []) : null
 }
@@ -127,6 +212,7 @@ function createRow(rootPath: string, actions: FileTreeRowActions) {
             style={style}
             onDoubleClick={() => {
               if (isExpandable) node.toggle()
+              else if (entry.kind === 'file') void actions.onOpenOnDesktop(entry)
             }}
             draggable
             onDragStart={(event) => {
@@ -178,15 +264,27 @@ function createRow(rootPath: string, actions: FileTreeRowActions) {
               <span>新建文件夹</span>
             </ContextMenu.Item>
             {entry.path !== rootPath ? (
-              <ContextMenu.Item
-                className="menu-item menu-item--danger file-tree-context-menu__item"
-                onSelect={() => actions.onTrashEntry(entry)}
-              >
-                <Trash2 size={14} />
-                <span>{entry.kind === 'directory' ? '删除文件夹' : '删除文件'}</span>
-              </ContextMenu.Item>
+              <>
+                <ContextMenu.Item className="menu-item file-tree-context-menu__item" onSelect={() => actions.onRenameEntry(entry)}>
+                  <Pencil size={14} />
+                  <span>重命名</span>
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="menu-item menu-item--danger file-tree-context-menu__item"
+                  onSelect={() => actions.onTrashEntry(entry)}
+                >
+                  <Trash2 size={14} />
+                  <span>{entry.kind === 'directory' ? '删除文件夹' : '删除文件'}</span>
+                </ContextMenu.Item>
+              </>
             ) : null}
             <ContextMenu.Separator className="menu-separator" />
+            {entry.kind === 'file' ? (
+              <ContextMenu.Item className="menu-item file-tree-context-menu__item" onSelect={() => void actions.onOpenOnDesktop(entry)}>
+                <ExternalLink size={14} />
+                <span>打开到桌面</span>
+              </ContextMenu.Item>
+            ) : null}
             <ContextMenu.Item className="menu-item file-tree-context-menu__item" onSelect={() => void actions.onRevealInFolder(entry)}>
               <FolderOpen size={14} />
               <span>打开文件所在位置</span>
@@ -207,8 +305,9 @@ function createRow(rootPath: string, actions: FileTreeRowActions) {
   }
 }
 
-export function FileTreeComponent({ component, updateConfig }: AtlasComponentRendererProps): JSX.Element {
+export function FileTreeComponent({ component, updateConfig, updateState }: AtlasComponentRendererProps): JSX.Element {
   const rootPath = asString(component.config.rootPath)
+  const persistedOpenPaths = useMemo(() => readOpenPaths(rootPath, component.state.openPaths), [component.state.openPaths, rootPath])
   const containerRef = useRef<HTMLDivElement | null>(null)
   const size = useElementSize(containerRef)
   const addComponent = useCanvasStore((state) => state.addComponent)
@@ -216,14 +315,21 @@ export function FileTreeComponent({ component, updateConfig }: AtlasComponentRen
   const [selected, setSelected] = useState<FileEntry | null>(null)
   const [pendingCreate, setPendingCreate] = useState<PendingCreateEntry | null>(null)
   const [newEntryName, setNewEntryName] = useState('')
+  const [renameTarget, setRenameTarget] = useState<FileEntry | null>(null)
+  const [renameEntryName, setRenameEntryName] = useState('')
   const [trashTarget, setTrashTarget] = useState<FileEntry | null>(null)
   const [error, setError] = useState<string | null>(null)
   const treeRef = useRef<FileEntry | null>(null)
   const loadingPathsRef = useRef(new Set<string>())
+  const openPathsRef = useRef(new Set<string>())
 
   useEffect(() => {
     treeRef.current = tree
   }, [tree])
+
+  useEffect(() => {
+    openPathsRef.current = new Set(persistedOpenPaths)
+  }, [persistedOpenPaths])
 
   const loadTree = useCallback(async () => {
     if (!rootPath) return
@@ -231,7 +337,10 @@ export function FileTreeComponent({ component, updateConfig }: AtlasComponentRen
       const previousTree = treeRef.current?.path === rootPath ? treeRef.current : null
       const root = (await window.atlas.filesystem.listTree(rootPath, rootPath, FILE_TREE_LOAD_DEPTH)) as FileEntry
       let nextTree = root
-      const loadedPaths = sortByPathDepth((previousTree ? collectLoadedDirectoryPaths(previousTree) : []).filter((path) => path !== rootPath))
+      const loadedPaths = uniqueSortedPaths([
+        ...(previousTree ? collectLoadedDirectoryPaths(previousTree) : []),
+        ...openPathsRef.current
+      ]).filter((path) => path !== rootPath && isPathInRoot(rootPath, path))
       const loadedEntries = await Promise.allSettled(
         loadedPaths.map((targetPath) => window.atlas.filesystem.listTree(rootPath, targetPath, FILE_TREE_LOAD_DEPTH) as Promise<FileEntry>)
       )
@@ -281,6 +390,37 @@ export function FileTreeComponent({ component, updateConfig }: AtlasComponentRen
     [rootPath]
   )
 
+  const persistOpenPaths = useCallback(
+    (targetPath: string): boolean => {
+      if (!rootPath || !isPathInRoot(rootPath, targetPath)) return false
+
+      const nextOpenPaths = new Set(openPathsRef.current)
+      const didOpen = !nextOpenPaths.has(targetPath)
+      if (!didOpen) {
+        for (const openPath of nextOpenPaths) {
+          if (isPathInRoot(targetPath, openPath)) nextOpenPaths.delete(openPath)
+        }
+      } else {
+        for (const ancestorPath of openPathAncestors(rootPath, targetPath)) {
+          nextOpenPaths.add(ancestorPath)
+        }
+      }
+
+      const openPaths = uniqueSortedPaths([...nextOpenPaths].flatMap((path) => openPathAncestors(rootPath, path)))
+      openPathsRef.current = new Set(openPaths)
+      updateState({ openPaths }, true)
+      return didOpen
+    },
+    [rootPath, updateState]
+  )
+
+  const toggleDirectory = useCallback(
+    (targetPath: string) => {
+      if (persistOpenPaths(targetPath)) void loadDirectory(targetPath)
+    },
+    [loadDirectory, persistOpenPaths]
+  )
+
   useEffect(() => {
     void loadTree()
   }, [loadTree])
@@ -314,7 +454,10 @@ export function FileTreeComponent({ component, updateConfig }: AtlasComponentRen
   }, [loadDirectory, loadTree, rootPath])
 
   const treeData = useMemo(() => (tree ? [tree] : []), [tree])
-  const initialOpenState = useMemo(() => (rootPath ? { [rootPath]: true } : {}), [rootPath])
+  const initialOpenState = useMemo(
+    () => Object.fromEntries(persistedOpenPaths.map((path) => [path, true])),
+    [persistedOpenPaths]
+  )
 
   const revealInFolder = useCallback(
     async (entry: FileEntry) => {
@@ -346,6 +489,29 @@ export function FileTreeComponent({ component, updateConfig }: AtlasComponentRen
     )
     setError(null)
   }, [addComponent, component.frame.width, component.frame.x, component.frame.y])
+
+  const openOnDesktop = useCallback(
+    async (entry: FileEntry) => {
+      if (!rootPath || entry.kind !== 'file') return
+
+      try {
+        const type = componentTypeForFileSource({ ...entry, rootPath })
+        const patch = await createFileComponentPatch({ ...entry, rootPath }, type)
+        addComponent(
+          type,
+          {
+            x: component.frame.x + component.frame.width + FILE_TREE_DESKTOP_OFFSET,
+            y: component.frame.y
+          },
+          patch
+        )
+        setError(null)
+      } catch (actionError) {
+        setError(errorMessage(actionError, 'Failed to open file on desktop'))
+      }
+    },
+    [addComponent, component.frame.width, component.frame.x, component.frame.y, rootPath]
+  )
 
   const copyPath = useCallback(async (entry: FileEntry) => {
     try {
@@ -392,6 +558,45 @@ export function FileTreeComponent({ component, updateConfig }: AtlasComponentRen
     [closeCreateDialog, loadDirectory, newEntryName, pendingCreate, rootPath]
   )
 
+  const requestRenameEntry = useCallback((target: FileEntry) => {
+    setRenameTarget(target)
+    setRenameEntryName(target.name)
+    setError(null)
+  }, [])
+
+  const closeRenameDialog = useCallback(() => {
+    setRenameTarget(null)
+    setRenameEntryName('')
+  }, [])
+
+  const renameEntry = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault()
+
+      const name = renameEntryName.trim()
+      if (!rootPath || !renameTarget || !name || name === renameTarget.name || renameTarget.path === rootPath) return
+
+      try {
+        const parentPath = parentDirectoryPath(renameTarget.path)
+        const renamedEntry = (await window.atlas.filesystem.rename(rootPath, renameTarget.path, name)) as FileEntry
+
+        if (renameTarget.kind === 'directory') {
+          const openPaths = rebaseOpenPaths(rootPath, openPathsRef.current, renameTarget.path, renamedEntry.path)
+          openPathsRef.current = new Set(openPaths)
+          updateState({ openPaths }, true)
+        }
+
+        closeRenameDialog()
+        setSelected(renamedEntry)
+        await loadDirectory(parentPath, true)
+        setError(null)
+      } catch (renameError) {
+        setError(errorMessage(renameError, 'Failed to rename item'))
+      }
+    },
+    [closeRenameDialog, loadDirectory, renameEntryName, renameTarget, rootPath, updateState]
+  )
+
   const requestTrashEntry = useCallback((target: FileEntry) => {
     setTrashTarget(target)
     setError(null)
@@ -416,18 +621,23 @@ export function FileTreeComponent({ component, updateConfig }: AtlasComponentRen
     () => ({
       onContextTarget: setSelected,
       onCreateEntry: requestCreateEntry,
+      onRenameEntry: requestRenameEntry,
       onTrashEntry: requestTrashEntry,
       onRevealInFolder: revealInFolder,
       onOpenCommandLine: openCommandLine,
+      onOpenOnDesktop: openOnDesktop,
       onCopyPath: copyPath
     }),
-    [copyPath, openCommandLine, requestCreateEntry, requestTrashEntry, revealInFolder]
+    [copyPath, openCommandLine, openOnDesktop, requestCreateEntry, requestRenameEntry, requestTrashEntry, revealInFolder]
   )
   const Row = useMemo(() => createRow(rootPath, rowActions), [rootPath, rowActions])
 
   const chooseDirectory = async () => {
     const directory = await window.atlas.filesystem.chooseDirectory('Bind file tree to folder')
-    if (directory) updateConfig({ rootPath: directory }, true)
+    if (directory) {
+      updateConfig({ rootPath: directory }, true)
+      updateState({ openPaths: [directory] }, true)
+    }
   }
 
   if (!rootPath) {
@@ -465,7 +675,7 @@ export function FileTreeComponent({ component, updateConfig }: AtlasComponentRen
           initialOpenState={initialOpenState}
           selection={selected?.id}
           onSelect={(nodes) => setSelected(nodes[0]?.data ?? null)}
-          onToggle={(id) => void loadDirectory(id)}
+          onToggle={toggleDirectory}
         >
           {Row}
         </Tree>
@@ -498,6 +708,40 @@ export function FileTreeComponent({ component, updateConfig }: AtlasComponentRen
                 <button type="submit" className="tool-button" disabled={!newEntryName.trim()}>
                   {pendingCreate?.kind === 'folder' ? <FolderPlus size={16} /> : <FilePlus size={16} />}
                   <span>创建</span>
+                </button>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      <Dialog.Root open={Boolean(renameTarget)} onOpenChange={(open) => !open && closeRenameDialog()}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="dialog-content">
+            <Dialog.Title className="dialog-title">{renameTarget?.kind === 'directory' ? '重命名文件夹' : '重命名文件'}</Dialog.Title>
+            <Dialog.Description className="dialog-description">
+              修改 {renameTarget ? `"${renameTarget.name}"` : '该项目'} 的名称。
+            </Dialog.Description>
+            <form onSubmit={(event) => void renameEntry(event)}>
+              <div className="field-row">
+                <label htmlFor="file-tree-rename-entry-name">名称</label>
+                <input
+                  id="file-tree-rename-entry-name"
+                  value={renameEntryName}
+                  autoFocus
+                  onChange={(event) => setRenameEntryName(event.target.value)}
+                />
+              </div>
+              <div className="dialog-actions">
+                <Dialog.Close asChild>
+                  <button type="button" className="tool-button">
+                    取消
+                  </button>
+                </Dialog.Close>
+                <button type="submit" className="tool-button" disabled={!renameEntryName.trim() || renameEntryName.trim() === renameTarget?.name}>
+                  <Pencil size={16} />
+                  <span>重命名</span>
                 </button>
               </div>
             </form>

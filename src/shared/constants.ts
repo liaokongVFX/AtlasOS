@@ -1,15 +1,9 @@
 export const ATLAS_SCHEMA_VERSION = 1
 
-export const COMPONENT_TYPES = ['terminal', 'file-tree', 'browser', 'markdown-note', 'file-preview'] as const
+export const COMPONENT_TYPES = ['terminal', 'file-tree', 'browser', 'markdown-note', 'file-preview', 'kanban'] as const
 
 export const DEFAULT_CANVAS_BACKGROUND = {
   color: '#010102',
-  grid: {
-    enabled: true,
-    size: 24,
-    opacity: 0.14,
-    variant: 'dots'
-  },
   image: {
     src: '',
     opacity: 0.35,

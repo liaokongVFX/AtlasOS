@@ -196,7 +196,7 @@ function installSecurityDefaults(): void {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           isDev
-            ? "default-src 'self' http://localhost:* ws://localhost:* data: blob:; script-src 'self' 'unsafe-inline' http://localhost:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: atlas-file: https:; media-src 'self' data: blob: atlas-file:; frame-src http: https:;"
+            ? "default-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* data: blob:; script-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: atlas-file: https:; media-src 'self' data: blob: atlas-file:; frame-src http: https:;"
             : "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: atlas-file: https:; media-src 'self' data: blob: atlas-file:; frame-src http: https:;"
         ]
       }

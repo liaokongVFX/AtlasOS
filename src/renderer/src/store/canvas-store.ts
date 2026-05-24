@@ -61,7 +61,6 @@ function createFallbackCanvas(): CanvasDocument {
     viewport: { ...DEFAULT_VIEWPORT },
     background: {
       color: DEFAULT_CANVAS_BACKGROUND.color,
-      grid: { ...DEFAULT_CANVAS_BACKGROUND.grid },
       image: { ...DEFAULT_CANVAS_BACKGROUND.image }
     },
     components: [],

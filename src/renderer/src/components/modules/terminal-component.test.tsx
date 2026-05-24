@@ -1,11 +1,12 @@
-import { render, act } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, act, fireEvent } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanvasComponent } from '@shared/schema'
 import { TerminalComponent } from './terminal-component'
 
 type MockTerminal = {
   cols: number
   rows: number
+  textarea?: HTMLTextAreaElement
   _core: {
     _mouseService: {
       getCoords: ReturnType<typeof vi.fn>
@@ -31,6 +32,7 @@ type MockTerminal = {
 
 const terminalInstances = vi.hoisted(() => [] as MockTerminal[])
 const terminalOptions = vi.hoisted(() => [] as any[])
+let consoleInfo: ReturnType<typeof vi.spyOn>
 
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class {
@@ -64,7 +66,12 @@ vi.mock('@xterm/xterm', () => ({
       },
       focus: vi.fn(),
       loadAddon: vi.fn(),
-      open: vi.fn(),
+      open: vi.fn((element: HTMLElement) => {
+        const textarea = document.createElement('textarea')
+        textarea.className = 'xterm-helper-textarea'
+        element.appendChild(textarea)
+        instance.textarea = textarea
+      }),
       attachCustomKeyEventHandler: vi.fn(),
       attachCustomWheelEventHandler: vi.fn(),
       hasSelection: vi.fn(() => false),
@@ -109,6 +116,16 @@ function installAtlasMocks(): void {
     resize: vi.fn(),
     close: vi.fn(),
     closeComponent: vi.fn(),
+    savePastedAsset: vi.fn().mockResolvedValue({ path: 'C:\\Temp\\atlas-terminal-clipboard.png' }),
+    saveClipboardImage: vi.fn().mockResolvedValue({
+      saved: false,
+      reason: 'empty',
+      formats: []
+    }),
+    readClipboardFiles: vi.fn().mockResolvedValue({
+      paths: [],
+      formats: []
+    }),
     onData: vi.fn(() => () => undefined),
     onCwd: vi.fn(() => () => undefined),
     onExit: vi.fn(() => () => undefined)
@@ -116,8 +133,11 @@ function installAtlasMocks(): void {
 
   ;(window as any).atlas = {
     terminal: terminalApi,
+    filesystem: {
+      getPathForFile: vi.fn(() => '')
+    },
     clipboard: {
-      readText: vi.fn(() => 'pasted text'),
+      readText: vi.fn(() => ''),
       writeText: vi.fn()
     }
   }
@@ -129,11 +149,61 @@ function installAtlasMocks(): void {
   ;(window as any).cancelAnimationFrame = vi.fn()
 }
 
+function terminalTextarea(): HTMLTextAreaElement {
+  const element = document.querySelector('.xterm-helper-textarea')
+  if (!(element instanceof HTMLTextAreaElement)) {
+    throw new Error('Terminal textarea element not found')
+  }
+
+  return element
+}
+
+function dispatchPasteEvent(
+  target: HTMLElement,
+  clipboardData: {
+    files?: File[]
+    items?: Array<Pick<DataTransferItem, 'kind' | 'type' | 'getAsFile'>>
+    getData?: (type: string) => string
+  }
+): Event {
+  const event = new Event('paste', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'clipboardData', {
+    configurable: true,
+    value: {
+      files: (clipboardData.files ?? []) as unknown as FileList,
+      items: clipboardData.items ?? [],
+      getData: clipboardData.getData ?? (() => ''),
+      types:
+        (clipboardData.files && clipboardData.files.length > 0) || (clipboardData.items && clipboardData.items.length > 0)
+          ? ['Files']
+          : ['text/plain']
+    }
+  })
+
+  fireEvent(target, event)
+  return event
+}
+
+async function advanceShortcutPasteFallback(): Promise<void> {
+  await act(async () => {
+    vi.advanceTimersByTime(100)
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
 describe('TerminalComponent', () => {
   beforeEach(() => {
     terminalInstances.splice(0, terminalInstances.length)
     terminalOptions.splice(0, terminalOptions.length)
+    consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     installAtlasMocks()
+  })
+
+  afterEach(() => {
+    consoleInfo.mockRestore()
+    vi.useRealTimers()
   })
 
   it('uses a thin terminal cursor', async () => {
@@ -354,7 +424,7 @@ describe('TerminalComponent', () => {
     expect(window.atlas.clipboard.writeText).not.toHaveBeenCalled()
   })
 
-  it('pastes clipboard text with Ctrl+V', async () => {
+  it('pastes clipboard text from the native paste event', async () => {
     const updateState = vi.fn()
     const updateConfig = vi.fn()
     const setTitle = vi.fn()
@@ -375,42 +445,501 @@ describe('TerminalComponent', () => {
       await Promise.resolve()
     })
 
-    const keyHandler = terminalInstances[0].attachCustomKeyEventHandler.mock.calls[0][0]
-    const event = {
-      type: 'keydown',
-      key: 'v',
-      ctrlKey: true,
-      metaKey: false,
-      altKey: false,
-      preventDefault: vi.fn(),
-      stopPropagation: vi.fn()
-    } as unknown as KeyboardEvent
+    await act(async () => {
+      dispatchPasteEvent(terminalTextarea(), {
+        getData: (type) => (type === 'text/plain' ? 'pasted text' : '')
+      })
+      await Promise.resolve()
+    })
 
-    expect(keyHandler(event)).toBe(false)
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith('pasted text')
+  })
+
+  it('lets the native paste event win after Ctrl+V and cancels the delayed fallback', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    vi.mocked(window.atlas.clipboard.readText).mockReturnValue('fallback text')
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
 
     await act(async () => {
       await Promise.resolve()
     })
 
-    expect(event.preventDefault).toHaveBeenCalled()
-    expect(event.stopPropagation).toHaveBeenCalled()
-    expect(window.atlas.clipboard.readText).toHaveBeenCalled()
-    expect(terminalInstances[0].paste).toHaveBeenCalledWith('pasted text')
+    vi.useFakeTimers()
+
+    await act(async () => {
+      fireEvent.keyDown(terminalTextarea(), {
+        key: 'v',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false
+      })
+      dispatchPasteEvent(terminalTextarea(), {
+        getData: (type) => (type === 'text/plain' ? 'event text' : '')
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await advanceShortcutPasteFallback()
+
+    expect(terminalInstances[0].paste).toHaveBeenCalledTimes(1)
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith('event text')
+    expect(window.atlas.clipboard.readText).not.toHaveBeenCalled()
   })
 
-  it('lets Ctrl+V use the native paste path when the preload clipboard API is unavailable', async () => {
+  it('pastes copied file paths from the terminal textarea paste event', async () => {
     const updateState = vi.fn()
     const updateConfig = vi.fn()
     const setTitle = vi.fn()
     const component = createTerminalComponent()
-    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const navigatorReadText = vi.fn().mockRejectedValue(new Error('denied'))
-    const previousClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
 
-    ;(window.atlas as any).clipboard = undefined
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const imageFile = new File(['image-bytes'], 'photo.png', { type: 'image/png' })
+    vi.mocked(window.atlas.filesystem.getPathForFile).mockReturnValue('C:\\Users\\xhwz2\\Pictures\\My Shot.png')
+
+    await act(async () => {
+      dispatchPasteEvent(terminalTextarea(), { files: [imageFile] })
+      await Promise.resolve()
+    })
+
+    expect(window.atlas.terminal.savePastedAsset).not.toHaveBeenCalled()
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith('"C:\\Users\\xhwz2\\Pictures\\My Shot.png" ')
+  })
+
+  it('reads screenshot images from clipboard items and inserts their temp path', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const screenshotFile = new File(['screenshot-bytes'], 'clipboard.png', { type: 'image/png' })
+
+    await act(async () => {
+      dispatchPasteEvent(terminalTextarea(), {
+        items: [
+          {
+            kind: 'file',
+            type: 'image/png',
+            getAsFile: () => screenshotFile
+          }
+        ]
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.atlas.terminal.savePastedAsset).toHaveBeenCalledTimes(1)
+    expect(window.atlas.terminal.savePastedAsset).toHaveBeenCalledWith({
+      dataBase64: expect.any(String),
+      mimeType: 'image/png',
+      sourceName: 'clipboard.png'
+    })
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith('C:\\Temp\\atlas-terminal-clipboard.png ')
+  })
+
+  it('infers an image MIME type from pasted clipboard file names', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const screenshotFile = new File(['jpeg-bytes'], 'clipboard.jpeg')
+
+    await act(async () => {
+      dispatchPasteEvent(terminalTextarea(), {
+        items: [
+          {
+            kind: 'file',
+            type: '',
+            getAsFile: () => screenshotFile
+          }
+        ]
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.atlas.terminal.savePastedAsset).toHaveBeenCalledWith({
+      dataBase64: expect.any(String),
+      mimeType: 'image/jpeg',
+      sourceName: 'clipboard.jpeg'
+    })
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith('C:\\Temp\\atlas-terminal-clipboard.png ')
+  })
+
+  it('saves generated clipboard image files when Electron cannot resolve a file path', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    vi.mocked(window.atlas.filesystem.getPathForFile).mockImplementation(() => {
+      throw new Error('No backing file path')
+    })
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const screenshotFile = new File(['wechat-screenshot'], 'wechat.png', { type: 'image/png' })
+
+    await act(async () => {
+      dispatchPasteEvent(terminalTextarea(), {
+        items: [
+          {
+            kind: 'file',
+            type: 'image/png',
+            getAsFile: () => screenshotFile
+          }
+        ]
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.atlas.terminal.savePastedAsset).toHaveBeenCalledWith({
+      dataBase64: expect.any(String),
+      mimeType: 'image/png',
+      sourceName: 'wechat.png'
+    })
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith('C:\\Temp\\atlas-terminal-clipboard.png ')
+  })
+
+  it('does not persist pathless non-image clipboard files', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const documentFile = new File(['not-an-image'], 'report.pdf', { type: 'application/pdf' })
+
+    await act(async () => {
+      dispatchPasteEvent(terminalTextarea(), {
+        items: [
+          {
+            kind: 'file',
+            type: 'application/pdf',
+            getAsFile: () => documentFile
+          }
+        ]
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.atlas.terminal.savePastedAsset).not.toHaveBeenCalled()
+    expect(terminalInstances[0].paste).not.toHaveBeenCalled()
+    expect(document.querySelector('.terminal-module__paste-feedback--error')).not.toBeNull()
+  })
+
+  it('falls back to text when the native clipboard has no image', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    vi.mocked(window.atlas.clipboard.readText).mockReturnValue('plain text')
+    vi.mocked(window.atlas.terminal.saveClipboardImage).mockResolvedValue({
+      saved: false,
+      reason: 'empty',
+      formats: ['CF_UNICODETEXT']
+    })
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    vi.useFakeTimers()
+
+    await act(async () => {
+      fireEvent.keyDown(terminalTextarea(), {
+        key: 'v',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false
+      })
+    })
+
+    await advanceShortcutPasteFallback()
+
+    expect(window.atlas.terminal.saveClipboardImage).toHaveBeenCalled()
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith('plain text')
+  })
+
+  it('pastes native clipboard file paths from Ctrl+V when no paste event exposes files', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    vi.mocked(window.atlas.terminal.readClipboardFiles).mockResolvedValue({
+      paths: ['C:\\Users\\xhwz2\\Desktop\\My File.txt', 'D:\\Projects\\AtlasOS\\README.md'],
+      formats: ['CF_HDROP']
+    })
+    vi.mocked(window.atlas.terminal.saveClipboardImage).mockResolvedValue({
+      saved: true,
+      path: 'C:\\Temp\\atlas-terminal-native.png',
+      width: 800,
+      height: 600,
+      byteLength: 4567,
+      formats: ['CF_DIB']
+    })
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    vi.useFakeTimers()
+
+    await act(async () => {
+      fireEvent.keyDown(terminalTextarea(), {
+        key: 'v',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false
+      })
+    })
+
+    await advanceShortcutPasteFallback()
+
+    expect(window.atlas.terminal.readClipboardFiles).toHaveBeenCalled()
+    expect(window.atlas.terminal.saveClipboardImage).not.toHaveBeenCalled()
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith(
+      '"C:\\Users\\xhwz2\\Desktop\\My File.txt" D:\\Projects\\AtlasOS\\README.md '
+    )
+  })
+
+  it('prefers the native paste image payload over the Ctrl+V fallback', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    vi.useFakeTimers()
+
+    const screenshotFile = new File(['event-screenshot'], 'screenshot.png', { type: 'image/png' })
+
+    await act(async () => {
+      fireEvent.keyDown(terminalTextarea(), {
+        key: 'v',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false
+      })
+      dispatchPasteEvent(terminalTextarea(), {
+        items: [
+          {
+            kind: 'file',
+            type: 'image/png',
+            getAsFile: () => screenshotFile
+          }
+        ]
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await advanceShortcutPasteFallback()
+
+    expect(window.atlas.terminal.saveClipboardImage).not.toHaveBeenCalled()
+    expect(window.atlas.terminal.savePastedAsset).toHaveBeenCalledTimes(1)
+    expect(window.atlas.terminal.savePastedAsset).toHaveBeenCalledWith({
+      dataBase64: expect.any(String),
+      mimeType: 'image/png',
+      sourceName: 'screenshot.png'
+    })
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith('C:\\Temp\\atlas-terminal-clipboard.png ')
+  })
+
+  it('falls back to the native clipboard image when the paste event has no exposed files', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    vi.mocked(window.atlas.terminal.saveClipboardImage).mockResolvedValue({
+      saved: true,
+      path: 'C:\\Temp\\atlas-terminal-wechat.png',
+      width: 1280,
+      height: 720,
+      byteLength: 12345,
+      formats: ['CF_DIB', 'PNG']
+    })
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      dispatchPasteEvent(terminalTextarea(), {
+        getData: () => ''
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.atlas.terminal.saveClipboardImage).toHaveBeenCalled()
+    expect(window.atlas.terminal.savePastedAsset).not.toHaveBeenCalled()
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith('C:\\Temp\\atlas-terminal-wechat.png ')
+  })
+
+  it('reads screenshot images from the standard Clipboard API on Ctrl+V', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+    const previousClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const getType = vi.fn().mockResolvedValue(new Blob(['browser-image'], { type: 'image/png' }))
+    const read = vi.fn().mockResolvedValue([{ types: ['image/png'], getType }])
+
+    vi.mocked(window.atlas.clipboard.readText).mockReturnValue('')
+    vi.mocked(window.atlas.terminal.saveClipboardImage).mockResolvedValue({
+      saved: true,
+      path: 'C:\\Temp\\atlas-terminal-native.png',
+      width: 800,
+      height: 600,
+      byteLength: 4567,
+      formats: ['CF_DIB']
+    })
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
-      value: { readText: navigatorReadText }
+      value: { read }
     })
 
     try {
@@ -429,31 +958,86 @@ describe('TerminalComponent', () => {
         await Promise.resolve()
       })
 
-      const keyHandler = terminalInstances[0].attachCustomKeyEventHandler.mock.calls[0][0]
-      const event = {
-        type: 'keydown',
-        key: 'v',
-        ctrlKey: true,
-        metaKey: false,
-        altKey: false,
-        preventDefault: vi.fn(),
-        stopPropagation: vi.fn()
-      } as unknown as KeyboardEvent
+      vi.useFakeTimers()
 
-      expect(keyHandler(event)).toBe(true)
-      expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(event.stopPropagation).not.toHaveBeenCalled()
-      expect(navigatorReadText).not.toHaveBeenCalled()
-      expect(terminalInstances[0].paste).not.toHaveBeenCalled()
-      expect(consoleWarn).not.toHaveBeenCalled()
+      await act(async () => {
+        fireEvent.keyDown(terminalTextarea(), {
+          key: 'v',
+          ctrlKey: true,
+          metaKey: false,
+          altKey: false,
+          shiftKey: false
+        })
+      })
+
+      await advanceShortcutPasteFallback()
+
+      expect(read).toHaveBeenCalled()
+      expect(getType).toHaveBeenCalledWith('image/png')
+      expect(window.atlas.terminal.saveClipboardImage).not.toHaveBeenCalled()
+      expect(window.atlas.terminal.savePastedAsset).toHaveBeenCalledWith({
+        dataBase64: 'YnJvd3Nlci1pbWFnZQ==',
+        mimeType: 'image/png',
+        sourceName: 'clipboard-image'
+      })
+      expect(terminalInstances[0].paste).toHaveBeenCalledWith('C:\\Temp\\atlas-terminal-clipboard.png ')
     } finally {
       if (previousClipboardDescriptor) {
         Object.defineProperty(navigator, 'clipboard', previousClipboardDescriptor)
       } else {
         delete (navigator as any).clipboard
       }
-      consoleWarn.mockRestore()
     }
+  })
+
+  it('pastes screenshot images from Ctrl+V even when the browser paste event exposes no file payload', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    vi.mocked(window.atlas.clipboard.readText).mockReturnValue('')
+    vi.mocked(window.atlas.terminal.saveClipboardImage).mockResolvedValue({
+      saved: true,
+      path: 'C:\\Temp\\atlas-terminal-wechat.png',
+      width: 1280,
+      height: 720,
+      byteLength: 12345,
+      formats: ['CF_DIB', 'PNG']
+    })
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    vi.useFakeTimers()
+
+    await act(async () => {
+      fireEvent.keyDown(terminalTextarea(), {
+        key: 'v',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false
+      })
+    })
+
+    await advanceShortcutPasteFallback()
+
+    expect(window.atlas.terminal.saveClipboardImage).toHaveBeenCalled()
+    expect(window.atlas.terminal.savePastedAsset).not.toHaveBeenCalled()
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith('C:\\Temp\\atlas-terminal-wechat.png ')
   })
 
   it('focuses the terminal when the node becomes selected', async () => {

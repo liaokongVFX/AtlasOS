@@ -1,8 +1,9 @@
-import { FileCode, FolderTree, Globe2, StickyNote, TerminalSquare } from 'lucide-react'
+import { FileCode, FolderTree, Globe2, Kanban, StickyNote, TerminalSquare } from 'lucide-react'
 import type { ComponentType, CanvasComponent, Frame } from '@shared/schema'
 import { BrowserComponent } from './modules/browser-component'
 import { FilePreviewComponent } from './modules/file-preview-component'
 import { FileTreeComponent } from './modules/file-tree-component'
+import { KanbanComponent } from './modules/kanban-component'
 import { MarkdownNoteComponent } from './modules/markdown-note-component'
 import { TerminalComponent } from './modules/terminal-component'
 import { COMPONENT_DEFINITIONS, type ComponentDefinitionMeta } from './component-definitions'
@@ -48,5 +49,10 @@ export const componentRegistry: Record<ComponentType, AtlasComponentDefinition> 
     ...COMPONENT_DEFINITIONS['file-preview'],
     icon: FileCode,
     Renderer: FilePreviewComponent
+  },
+  kanban: {
+    ...COMPONENT_DEFINITIONS.kanban,
+    icon: Kanban,
+    Renderer: KanbanComponent
   }
 }

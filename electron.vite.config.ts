@@ -3,6 +3,15 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 
+const DEFAULT_RENDERER_DEV_PORT = 14200
+const requestedRendererDevPort = Number.parseInt(process.env.ATLAS_RENDERER_PORT ?? '', 10)
+const rendererDevPort =
+  Number.isInteger(requestedRendererDevPort) &&
+  requestedRendererDevPort > 0 &&
+  requestedRendererDevPort <= 65535
+    ? requestedRendererDevPort
+    : DEFAULT_RENDERER_DEV_PORT
+
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
@@ -41,6 +50,11 @@ export default defineConfig({
   },
   renderer: {
     root: resolve('src/renderer'),
+    server: {
+      host: '127.0.0.1',
+      port: rendererDevPort,
+      strictPort: false
+    },
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src'),

@@ -39,7 +39,8 @@ vi.mock('./registry', async () => {
       'file-tree': { ...definition, type: 'file-tree', title: 'Files' },
       browser: { ...definition, type: 'browser', title: 'Browser' },
       'markdown-note': { ...definition, type: 'markdown-note' },
-      'file-preview': { ...definition, type: 'file-preview', title: 'File Preview' }
+      'file-preview': { ...definition, type: 'file-preview', title: 'File Preview' },
+      kanban: { ...definition, type: 'kanban', title: 'Kanban' }
     }
   }
 })

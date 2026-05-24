@@ -1,39 +1,36 @@
 import {
   applyNodeChanges,
-  Background,
-  BackgroundVariant,
-  MiniMap,
   Panel,
   ReactFlow,
   type OnNodeDrag,
   type OnMove,
+  type OnMoveStart,
   type NodeChange,
   type OnMoveEnd,
   useReactFlow,
-  useViewport
+  useStore
 } from '@xyflow/react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Popover from '@radix-ui/react-popover'
 import { Command } from 'cmdk'
-import { ChevronLeft, Map as MapIcon, Maximize2, Search, ZoomIn, ZoomOut } from 'lucide-react'
+import { Maximize2, Search, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type RefObject } from 'react'
 import type { Measurable } from '@radix-ui/rect'
 import type { CanvasComponent, ComponentType, FileEntry } from '@shared/schema'
 import { notifyCanvasViewportSync } from '../lib/canvas-viewport-sync'
-import { fileName, getFilePreviewKind, isMarkdownFile } from '../lib/file-types'
 import {
-  fitMediaFrameToAspectRatio,
-  mediaAspectRatioFromDimensions,
-  type MediaDimensions
-} from '../lib/media-frame'
+  componentTypeForFileSource,
+  createFileComponentPatch,
+  stackedFileComponentPosition,
+  type CanvasFileSource
+} from '../lib/file-component-factory'
+import { fileName, getFilePreviewKind } from '../lib/file-types'
+import type { MediaDimensions } from '../lib/media-frame'
 import { useCanvasStore } from '../store/canvas-store'
 import { ComponentNode, type AtlasFlowNode } from './component-node'
-import { COMPONENT_DEFINITIONS, CREATABLE_COMPONENT_TYPES } from './component-definitions'
+import { CREATABLE_COMPONENT_TYPES } from './component-definitions'
+import { getKanbanSearchTokens, getKanbanStats, normalizeKanbanState } from './modules/kanban-model'
 import { componentRegistry } from './registry'
-
-type CanvasComponentPatch = Omit<Partial<CanvasComponent>, 'frame'> & {
-  frame?: Partial<CanvasComponent['frame']>
-}
 
 type ComponentNodeCacheEntry = {
   canvasId: string
@@ -46,23 +43,9 @@ const nodeTypes = {
   atlasComponent: ComponentNode
 }
 
-const MINIMAP_PANEL_OFFSET = 15
-const MINIMAP_WIDTH = 224
-const MINIMAP_HEIGHT = 164
-const MINIMAP_BUTTON_SIZE = 32
-const MINIMAP_TOGGLE_INSET = 6
-const DROP_STACK_OFFSET = 32
 const NODE_FOCUS_DURATION = 180
 const NODE_FOCUS_ZOOM = 1.15
 const NODE_FINDER_DEFAULT_BROWSER_URL = 'https://example.com'
-
-const MINIMAP_NODE_COLORS: Record<ComponentType, string> = {
-  terminal: '#5e6ad2',
-  'file-tree': '#828fff',
-  browser: '#7a7fad',
-  'markdown-note': '#9aa3ff',
-  'file-preview': '#4f58b8'
-}
 
 const CANVAS_SHORTCUT_BLOCKLIST_SELECTOR = [
   'input',
@@ -80,10 +63,6 @@ const CANVAS_SHORTCUT_BLOCKLIST_SELECTOR = [
   '.menu-content',
   '.top-bar'
 ].join(',')
-
-function getMiniMapNodeColor(node: AtlasFlowNode): string {
-  return MINIMAP_NODE_COLORS[node.data.component.type]
-}
 
 function componentToNode(canvasId: string, component: CanvasComponent, onRequestSelect?: (componentId: string) => void): AtlasFlowNode {
   return {
@@ -221,14 +200,7 @@ function focusFlowNodeElement(componentId: string): void {
   nodeElement?.focus({ preventScroll: true })
 }
 
-type DroppedCanvasFile = {
-  path: string
-  name: string
-  kind: 'file' | 'directory'
-  rootPath?: string
-  mimeType?: string
-  mediaDimensions?: MediaDimensions
-}
+type DroppedCanvasFile = CanvasFileSource
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -325,74 +297,6 @@ async function droppedFilesFromDataTransfer(dataTransfer: DataTransfer): Promise
   return files.filter((file): file is DroppedCanvasFile => Boolean(file))
 }
 
-function typeForDroppedFile(file: DroppedCanvasFile): ComponentType {
-  if (file.kind === 'directory') return 'file-tree'
-  if (isMarkdownFile(file.name, file.mimeType)) return 'markdown-note'
-  return 'file-preview'
-}
-
-function rootPathForDroppedFile(file: DroppedCanvasFile): string {
-  return file.rootPath ?? file.path
-}
-
-async function createDroppedFilePatch(file: DroppedCanvasFile, type: ComponentType): Promise<CanvasComponentPatch> {
-  const rootPath = rootPathForDroppedFile(file)
-  const config: Record<string, unknown> = file.mimeType ? { mimeType: file.mimeType } : {}
-  const bindings = { rootPath, path: file.path }
-  const mediaAspectRatio = type === 'file-preview' ? mediaAspectRatioFromDimensions(file.mediaDimensions) : null
-
-  if (file.mediaDimensions && mediaAspectRatio) {
-    config.mediaAspectRatio = mediaAspectRatio
-    config.mediaWidth = Math.round(file.mediaDimensions.width)
-    config.mediaHeight = Math.round(file.mediaDimensions.height)
-  }
-
-  if (type === 'file-tree') {
-    return {
-      title: file.name,
-      config: { rootPath: file.path },
-      bindings
-    }
-  }
-
-  if (type === 'markdown-note') {
-    let content = ''
-    let status = 'live'
-
-    try {
-      content = (await window.atlas.filesystem.readFile(rootPath, file.path)) as string
-    } catch {
-      status = 'missing'
-    }
-
-    return {
-      title: file.name,
-      config,
-      bindings,
-      state: { content, status }
-    }
-  }
-
-  const mediaFrame = mediaAspectRatio ? fitMediaFrameToAspectRatio(COMPONENT_DEFINITIONS['file-preview'].defaultFrame, mediaAspectRatio) : null
-
-  return {
-    title: file.name,
-    config,
-    bindings,
-    frame: mediaFrame ? { width: mediaFrame.width, height: mediaFrame.height } : undefined
-  }
-}
-
-function droppedFilePosition(position: { x: number; y: number }, index: number): { x: number; y: number } {
-  const column = index % 4
-  const row = Math.floor(index / 4)
-
-  return {
-    x: Math.round(position.x + column * DROP_STACK_OFFSET),
-    y: Math.round(position.y + row * DROP_STACK_OFFSET)
-  }
-}
-
 type CanvasCreateMenuState = {
   flowPosition: { x: number; y: number }
 }
@@ -480,75 +384,9 @@ function CanvasCreateMenu({
   )
 }
 
-function CanvasMiniMapToggle({
-  expanded,
-  onToggle
-}: {
-  expanded: boolean
-  onToggle: () => void
-}): JSX.Element {
-  const Icon = expanded ? ChevronLeft : MapIcon
-  const toggleStyle = expanded
-    ? {
-        left: MINIMAP_PANEL_OFFSET + MINIMAP_WIDTH - MINIMAP_BUTTON_SIZE - MINIMAP_TOGGLE_INSET,
-        bottom: MINIMAP_PANEL_OFFSET + MINIMAP_HEIGHT - MINIMAP_BUTTON_SIZE - MINIMAP_TOGGLE_INSET,
-        margin: 0
-      }
-    : { left: MINIMAP_PANEL_OFFSET, bottom: MINIMAP_PANEL_OFFSET, margin: 0 }
-
-  return (
-    <Panel
-      position="bottom-left"
-      className={`canvas-minimap-toggle${expanded ? ' canvas-minimap-toggle--overlaid' : ''}`}
-      style={toggleStyle}
-    >
-      <button
-        type="button"
-        className="canvas-panel-button"
-        onClick={(event) => {
-          event.stopPropagation()
-          onToggle()
-        }}
-        aria-label={expanded ? 'Collapse canvas overview' : 'Expand canvas overview'}
-        title={expanded ? 'Collapse canvas overview' : 'Expand canvas overview'}
-      >
-        <Icon size={16} />
-      </button>
-    </Panel>
-  )
-}
-
-function CanvasMiniMap(): JSX.Element {
-  const [expanded, setExpanded] = useState(true)
-
-  return (
-    <>
-      {expanded ? (
-        <MiniMap<AtlasFlowNode>
-          position="bottom-left"
-          className="canvas-minimap"
-          style={{ width: MINIMAP_WIDTH, height: MINIMAP_HEIGHT, left: MINIMAP_PANEL_OFFSET, bottom: MINIMAP_PANEL_OFFSET, margin: 0 }}
-          bgColor="rgba(1, 1, 2, 0.96)"
-          maskColor="rgba(94, 106, 210, 0.18)"
-          maskStrokeColor="rgba(130, 143, 255, 0.56)"
-          maskStrokeWidth={1.25}
-          nodeColor={getMiniMapNodeColor}
-          nodeStrokeColor={() => 'rgba(247, 248, 248, 0.18)'}
-          nodeBorderRadius={2}
-          nodeStrokeWidth={1}
-          pannable
-          zoomable
-          ariaLabel="Canvas overview"
-        />
-      ) : null}
-      <CanvasMiniMapToggle expanded={expanded} onToggle={() => setExpanded((value) => !value)} />
-    </>
-  )
-}
-
 function CanvasZoomControls({ hasNodes }: { hasNodes: boolean }): JSX.Element {
   const reactFlow = useReactFlow<AtlasFlowNode>()
-  const { zoom } = useViewport()
+  const zoom = useStore((state) => state.transform[2])
   const zoomPercent = Math.round(zoom * 100)
 
   const notifyAfterViewportAction = useCallback((action: Promise<boolean>) => {
@@ -595,6 +433,7 @@ function CanvasZoomControls({ hasNodes }: { hasNodes: boolean }): JSX.Element {
 
 function nodeFinderKeywords(component: CanvasComponent, typeLabel: string): string[] {
   const detail = nodeFinderDetail(component)
+  const kanbanTokens = component.type === 'kanban' ? getKanbanSearchTokens(normalizeKanbanState(component.state.kanban)) : []
 
   return [
     component.title,
@@ -605,12 +444,9 @@ function nodeFinderKeywords(component: CanvasComponent, typeLabel: string): stri
     optionalString(component.bindings.rootPath),
     optionalString(component.config.rootPath),
     optionalString(component.config.cwd),
-    optionalString(component.state.cwd)
+    optionalString(component.state.cwd),
+    ...kanbanTokens
   ].filter((value): value is string => Boolean(value))
-}
-
-function nodePositionLabel(component: CanvasComponent): string {
-  return `${Math.round(component.frame.x)}, ${Math.round(component.frame.y)}`
 }
 
 type BrowserFinderTab = {
@@ -654,6 +490,11 @@ function nodeFinderDetail(component: CanvasComponent): string | null {
 
   if (component.type === 'file-preview' || component.type === 'markdown-note') {
     return optionalString(component.bindings.path) ?? optionalString(component.bindings.rootPath) ?? null
+  }
+
+  if (component.type === 'kanban') {
+    const stats = getKanbanStats(normalizeKanbanState(component.state.kanban))
+    return `${stats.columnCount} 列 · ${stats.cardCount} 卡片`
   }
 
   return null
@@ -724,7 +565,6 @@ function CanvasNodeFinder({
                   <span className="node-finder__item-type">{definition.title}</span>
                   {detail ? <span className="node-finder__item-detail">{detail}</span> : null}
                 </span>
-                <span className="node-finder__item-position">{nodePositionLabel(component)}</span>
               </Command.Item>
             )
           })}
@@ -751,6 +591,7 @@ export function CanvasBoard(): JSX.Element {
   const [createMenu, setCreateMenu] = useState<CanvasCreateMenuState | null>(null)
   const [isNodeFinderOpen, setIsNodeFinderOpen] = useState(false)
   const [isFileDragActive, setIsFileDragActive] = useState(false)
+  const [isViewportInteracting, setIsViewportInteracting] = useState(false)
   const createMenuAnchorRef = useRef<Measurable>(createPointAnchor(0, 0))
   const pendingSelectedNodeIdsRef = useRef<Set<string> | null>(null)
   const componentNodeCacheRef = useRef(new Map<string, ComponentNodeCacheEntry>())
@@ -871,6 +712,7 @@ export function CanvasBoard(): JSX.Element {
 
   useEffect(() => {
     setIsNodeFinderOpen(false)
+    setIsViewportInteracting(false)
   }, [activeCanvasId])
 
   const focusComponentNode = useCallback(
@@ -982,20 +824,39 @@ export function CanvasBoard(): JSX.Element {
     return () => window.removeEventListener('keydown', handleCanvasKeyDown, true)
   }, [handleCanvasKeyDown])
 
-  const onMove: OnMove = useCallback(() => {
+  const onMoveStart: OnMoveStart = useCallback(() => {
     closeCreateMenu()
+    setIsViewportInteracting((current) => (current ? current : true))
     notifyCanvasViewportSync()
   }, [closeCreateMenu])
 
+  const onMove: OnMove = useCallback(() => {
+    notifyCanvasViewportSync()
+  }, [])
+
   const onMoveEnd: OnMoveEnd = useCallback(
     (_, viewport) => {
-      if (!activeCanvasId) return
-      updateCanvas(activeCanvasId, (draft) => {
-        draft.viewport = viewport
-      })
+      setIsViewportInteracting((current) => (current ? false : current))
+
+      if (!activeCanvasId) {
+        notifyCanvasViewportSync()
+        return
+      }
+
+      if (
+        !canvas ||
+        canvas.viewport.x !== viewport.x ||
+        canvas.viewport.y !== viewport.y ||
+        canvas.viewport.zoom !== viewport.zoom
+      ) {
+        updateCanvas(activeCanvasId, (draft) => {
+          draft.viewport = viewport
+        })
+      }
+
       notifyCanvasViewportSync()
     },
-    [activeCanvasId, updateCanvas]
+    [activeCanvasId, canvas, updateCanvas]
   )
 
   const openCreateMenuAtPointer = useCallback((event: MouseEvent) => {
@@ -1003,7 +864,7 @@ export function CanvasBoard(): JSX.Element {
     event.preventDefault()
 
     const screenPosition = { x: event.clientX, y: event.clientY }
-    const flowPosition = reactFlow.screenToFlowPosition(screenPosition, { snapToGrid: false })
+    const flowPosition = reactFlow.screenToFlowPosition(screenPosition)
     createMenuAnchorRef.current = createPointAnchor(screenPosition.x, screenPosition.y)
     setCreateMenu({
       flowPosition: { x: Math.round(flowPosition.x), y: Math.round(flowPosition.y) }
@@ -1055,12 +916,12 @@ export function CanvasBoard(): JSX.Element {
       const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
       const plannedComponents = await Promise.all(
         droppedFiles.map(async (droppedFile, index) => {
-          const type = typeForDroppedFile(droppedFile)
+          const type = componentTypeForFileSource(droppedFile)
 
           return {
             type,
-            position: droppedFilePosition(position, index),
-            patch: await createDroppedFilePatch(droppedFile, type)
+            position: stackedFileComponentPosition(position, index),
+            patch: await createFileComponentPatch(droppedFile, type)
           }
         })
       )
@@ -1086,7 +947,16 @@ export function CanvasBoard(): JSX.Element {
     : undefined
 
   return (
-    <main className={`canvas-board${isFileDragActive ? ' canvas-board--file-drag-active' : ''}`} style={{ backgroundColor: canvas.background.color }}>
+    <main
+      className={[
+        'canvas-board',
+        isFileDragActive ? 'canvas-board--file-drag-active' : '',
+        isViewportInteracting ? 'canvas-board--viewport-interacting' : ''
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      style={{ backgroundColor: canvas.background.color }}
+    >
       {backgroundImageStyle ? <div className="canvas-background-image" style={backgroundImageStyle} /> : null}
       <ReactFlow
         className="canvas-flow"
@@ -1098,6 +968,7 @@ export function CanvasBoard(): JSX.Element {
         onNodeClick={handleNodeClick}
         onNodeDragStop={onNodeDragStop}
         onPaneClick={openCreateMenuAtPointer}
+        onMoveStart={onMoveStart}
         onMove={onMove}
         onMoveEnd={onMoveEnd}
         onDragOver={handleDragOver}
@@ -1109,26 +980,10 @@ export function CanvasBoard(): JSX.Element {
         deleteKeyCode={null}
         zoomOnDoubleClick={false}
         selectNodesOnDrag={false}
-        snapToGrid
-        snapGrid={[canvas.background.grid.size, canvas.background.grid.size]}
         fitView={canvas.components.length === 0}
         style={{ backgroundColor: 'transparent' }}
         proOptions={{ hideAttribution: true }}
       >
-        {canvas.background.grid.enabled ? (
-          <Background
-            color={`rgba(208,214,224,${canvas.background.grid.opacity})`}
-            gap={canvas.background.grid.size}
-            variant={
-              canvas.background.grid.variant === 'lines'
-                ? BackgroundVariant.Lines
-                : canvas.background.grid.variant === 'cross'
-                  ? BackgroundVariant.Cross
-                  : BackgroundVariant.Dots
-            }
-          />
-        ) : null}
-        <CanvasMiniMap />
         <CanvasZoomControls hasNodes={canvas.components.length > 0} />
         <CanvasCreateMenu
           anchorRef={createMenuAnchorRef}

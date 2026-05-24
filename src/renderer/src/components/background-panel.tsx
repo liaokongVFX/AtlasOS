@@ -1,6 +1,6 @@
 import * as Popover from '@radix-ui/react-popover'
 import { Image, Palette } from 'lucide-react'
-import { asBoolean, asNumber, asString } from '../lib/utils'
+import { asNumber, asString } from '../lib/utils'
 import { useCanvasStore } from '../store/canvas-store'
 
 export function BackgroundPanel(): JSX.Element {
@@ -35,32 +35,6 @@ export function BackgroundPanel(): JSX.Element {
             onChange={(event) =>
               updateBackground((draft) => {
                 draft.background.color = event.target.value
-              })
-            }
-          />
-        </div>
-        <div className="field-row">
-          <label>Grid</label>
-          <input
-            type="checkbox"
-            checked={asBoolean(background.grid.enabled, true)}
-            onChange={(event) =>
-              updateBackground((draft) => {
-                draft.background.grid.enabled = event.target.checked
-              })
-            }
-          />
-        </div>
-        <div className="field-row">
-          <label>Grid size</label>
-          <input
-            type="range"
-            min="8"
-            max="96"
-            value={asNumber(background.grid.size, 24)}
-            onChange={(event) =>
-              updateBackground((draft) => {
-                draft.background.grid.size = Number(event.target.value)
               })
             }
           />

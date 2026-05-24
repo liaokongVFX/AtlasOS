@@ -7,7 +7,7 @@ export type ComponentDefinitionMeta = {
   permissions: string[]
 }
 
-export const CREATABLE_COMPONENT_TYPES = ['terminal', 'file-tree', 'browser', 'markdown-note'] as const satisfies readonly ComponentType[]
+export const CREATABLE_COMPONENT_TYPES = ['terminal', 'file-tree', 'browser', 'markdown-note', 'kanban'] as const satisfies readonly ComponentType[]
 
 export const COMPONENT_DEFINITIONS: Record<ComponentType, ComponentDefinitionMeta> = {
   terminal: {
@@ -39,5 +39,11 @@ export const COMPONENT_DEFINITIONS: Record<ComponentType, ComponentDefinitionMet
     title: 'File Preview',
     defaultFrame: { x: 300, y: 260, width: 560, height: 420 },
     permissions: ['fs:read']
+  },
+  kanban: {
+    type: 'kanban',
+    title: 'Kanban',
+    defaultFrame: { x: 280, y: 220, width: 920, height: 620 },
+    permissions: ['kanban:edit']
   }
 }

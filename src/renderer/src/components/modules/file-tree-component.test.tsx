@@ -39,12 +39,39 @@ const srcTree: FileEntry = {
   childrenLoaded: true,
   children: [
     {
+      id: 'D:\\repo\\src\\components',
+      name: 'components',
+      path: 'D:\\repo\\src\\components',
+      kind: 'directory',
+      childrenLoaded: false
+    },
+    {
       id: 'D:\\repo\\src\\index.ts',
       name: 'index.ts',
       path: 'D:\\repo\\src\\index.ts',
       kind: 'file'
     }
   ]
+}
+
+const componentsTree: FileEntry = {
+  id: 'D:\\repo\\src\\components',
+  name: 'components',
+  path: 'D:\\repo\\src\\components',
+  kind: 'directory',
+  childrenLoaded: true,
+  children: [
+    {
+      id: 'D:\\repo\\src\\components\\Button.tsx',
+      name: 'Button.tsx',
+      path: 'D:\\repo\\src\\components\\Button.tsx',
+      kind: 'file'
+    }
+  ]
+}
+
+function parentDirectoryPath(path: string): string {
+  return path.replace(/[\\/][^\\/]+$/, '')
 }
 
 function createComponent(): CanvasComponent {
@@ -64,16 +91,31 @@ function createComponent(): CanvasComponent {
   }
 }
 
-function renderFileTree(component = createComponent()): void {
+function renderFileTree(
+  component = createComponent(),
+  overrides: {
+    updateConfig?: (patch: Record<string, unknown>, immediate?: boolean) => void
+    updateState?: (patch: Record<string, unknown>, immediate?: boolean) => void
+    setTitle?: (title: string) => void
+  } = {}
+) {
+  const props = {
+    updateConfig: overrides.updateConfig ?? vi.fn(),
+    updateState: overrides.updateState ?? vi.fn(),
+    setTitle: overrides.setTitle ?? vi.fn()
+  }
+
   render(
     <FileTreeComponent
       canvasId="canvas-1"
       component={component}
-      updateConfig={vi.fn()}
-      updateState={vi.fn()}
-      setTitle={vi.fn()}
+      updateConfig={props.updateConfig}
+      updateState={props.updateState}
+      setTitle={props.setTitle}
     />
   )
+
+  return props
 }
 
 async function expandSrcDirectory(): Promise<void> {
@@ -98,10 +140,18 @@ describe('FileTreeComponent', () => {
           createFolder: vi.fn(async () => undefined),
           listTree: vi.fn(async (_rootPath: string, targetPathOrMaxDepth?: string | number) => {
             const targetPath = typeof targetPathOrMaxDepth === 'string' ? targetPathOrMaxDepth : rootTree.path
+            if (targetPath === componentsTree.path) return componentsTree
             return targetPath === srcTree.path ? srcTree : rootTree
           }),
           onWatchEvent: vi.fn(() => vi.fn()),
+          readFile: vi.fn(async () => '# Project'),
           revealInFolder: vi.fn(),
+          rename: vi.fn(async (_rootPath: string, targetPath: string, name: string) => ({
+            id: `${parentDirectoryPath(targetPath)}\\${name}`,
+            name,
+            path: `${parentDirectoryPath(targetPath)}\\${name}`,
+            kind: targetPath.endsWith('\\src') ? 'directory' : 'file'
+          })),
           trash: vi.fn(async () => undefined),
           unwatch: vi.fn(),
           watch: vi.fn(async () => ({ watchId: 'watch-1' }))
@@ -126,7 +176,9 @@ describe('FileTreeComponent', () => {
 
     expect(await screen.findByRole('menuitem', { name: '新建文件' })).toBeVisible()
     expect(await screen.findByRole('menuitem', { name: '新建文件夹' })).toBeVisible()
+    expect(await screen.findByRole('menuitem', { name: '重命名' })).toBeVisible()
     expect(await screen.findByRole('menuitem', { name: '删除文件' })).toBeVisible()
+    expect(await screen.findByRole('menuitem', { name: '打开到桌面' })).toBeVisible()
     expect(await screen.findByRole('menuitem', { name: '复制文件路径' })).toBeVisible()
     expect(fileName.closest('.file-tree-row')).toHaveClass('file-tree-row--selected')
   })
@@ -155,6 +207,146 @@ describe('FileTreeComponent', () => {
 
     expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src', 1)
     expect(await screen.findByText('index.ts')).toBeVisible()
+  })
+
+  it('persists directory open paths when a folder is expanded', async () => {
+    const updateState = vi.fn()
+    renderFileTree(createComponent(), { updateState })
+
+    await expandSrcDirectory()
+
+    expect(updateState).toHaveBeenCalledWith({ openPaths: ['D:\\repo', 'D:\\repo\\src'] }, true)
+  })
+
+  it('restores persisted open paths and lazy-loads those directories on mount', async () => {
+    const component = createComponent()
+    component.state = { openPaths: ['D:\\repo', 'D:\\repo\\src'] }
+
+    renderFileTree(component)
+
+    expect(await screen.findByText('index.ts')).toBeVisible()
+    expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo', 1)
+    expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src', 1)
+
+    const folderName = await screen.findByText('src')
+    const folderRow = folderName.closest('.file-tree-row')
+    if (!folderRow) throw new Error('Expected src row to be rendered')
+    expect(within(folderRow as HTMLElement).getByRole('button', { name: 'Collapse folder' })).toBeVisible()
+  })
+
+  it('restores nested open paths without loading unrelated closed branches', async () => {
+    const component = createComponent()
+    component.state = { openPaths: ['D:\\repo\\src\\components', 'D:\\repo', 'D:\\repo\\src'] }
+
+    renderFileTree(component)
+
+    expect(await screen.findByText('Button.tsx')).toBeVisible()
+
+    expect(vi.mocked(window.atlas.filesystem.listTree).mock.calls).toEqual([
+      ['D:\\repo', 'D:\\repo', 1],
+      ['D:\\repo', 'D:\\repo\\src', 1],
+      ['D:\\repo', 'D:\\repo\\src\\components', 1]
+    ])
+  })
+
+  it('restores missing ancestor directories from persisted descendant paths', async () => {
+    const component = createComponent()
+    component.state = { openPaths: ['D:\\repo', 'D:\\repo\\src\\components'] }
+
+    renderFileTree(component)
+
+    expect(await screen.findByText('Button.tsx')).toBeVisible()
+
+    const folderName = await screen.findByText('src')
+    const folderRow = folderName.closest('.file-tree-row')
+    if (!folderRow) throw new Error('Expected src row to be rendered')
+    expect(within(folderRow as HTMLElement).getByRole('button', { name: 'Collapse folder' })).toBeVisible()
+    expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src', 1)
+    expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src\\components', 1)
+  })
+
+  it('persists a collapsed restored directory', async () => {
+    const updateState = vi.fn()
+    const component = createComponent()
+    component.state = { openPaths: ['D:\\repo', 'D:\\repo\\src', 'D:\\repo\\src\\components'] }
+    renderFileTree(component, { updateState })
+
+    const folderName = await screen.findByText('src')
+    const folderRow = folderName.closest('.file-tree-row')
+    if (!folderRow) throw new Error('Expected src row to be rendered')
+
+    await act(async () => {
+      fireEvent.click(within(folderRow as HTMLElement).getByRole('button', { name: 'Collapse folder' }))
+    })
+
+    expect(updateState).toHaveBeenCalledWith({ openPaths: ['D:\\repo'] }, true)
+    expect(screen.queryByText('Button.tsx')).not.toBeInTheDocument()
+  })
+
+  it('resets persisted open paths when binding a new root folder', async () => {
+    const updateConfig = vi.fn()
+    const updateState = vi.fn()
+    vi.mocked(window.atlas.filesystem.chooseDirectory).mockResolvedValue('D:\\workspace')
+    renderFileTree(createComponent(), { updateConfig, updateState })
+    await screen.findByText('src')
+
+    await act(async () => {
+      fireEvent.click(await screen.findByTitle('Choose folder'))
+    })
+
+    expect(updateConfig).toHaveBeenCalledWith({ rootPath: 'D:\\workspace' }, true)
+    expect(updateState).toHaveBeenCalledWith({ openPaths: ['D:\\workspace'] }, true)
+  })
+
+  it('opens a markdown file as a desktop node when double-clicked', async () => {
+    const addComponent = vi.fn()
+    useCanvasStore.setState({ addComponent } as Partial<CanvasStoreState>)
+    renderFileTree()
+
+    const fileName = await screen.findByText('README.md')
+    await act(async () => {
+      fireEvent.doubleClick(fileName)
+    })
+
+    await waitFor(() => {
+      expect(window.atlas.filesystem.readFile).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\README.md')
+      expect(addComponent).toHaveBeenCalledWith(
+        'markdown-note',
+        { x: 504, y: 80 },
+        expect.objectContaining({
+          title: 'README.md',
+          bindings: { rootPath: 'D:\\repo', path: 'D:\\repo\\README.md' },
+          state: { content: '# Project', status: 'live' }
+        })
+      )
+    })
+  })
+
+  it('opens a file preview desktop node from the context menu', async () => {
+    const addComponent = vi.fn()
+    useCanvasStore.setState({ addComponent } as Partial<CanvasStoreState>)
+    renderFileTree()
+    await expandSrcDirectory()
+
+    const fileName = await screen.findByText('index.ts')
+    await act(async () => {
+      fireEvent.contextMenu(fileName, { button: 2, clientX: 64, clientY: 96 })
+    })
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('menuitem', { name: '打开到桌面' }))
+    })
+
+    await waitFor(() => {
+      expect(addComponent).toHaveBeenCalledWith(
+        'file-preview',
+        { x: 504, y: 80 },
+        expect.objectContaining({
+          title: 'index.ts',
+          bindings: { rootPath: 'D:\\repo', path: 'D:\\repo\\src\\index.ts' }
+        })
+      )
+    })
   })
 
   it('creates a terminal next to the file tree with the selected file directory as cwd', async () => {
@@ -227,6 +419,64 @@ describe('FileTreeComponent', () => {
 
     await waitFor(() => {
       expect(window.atlas.filesystem.createFolder).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src', 'components')
+    })
+  })
+
+  it('renames a file from the context menu and refreshes its parent directory', async () => {
+    renderFileTree()
+    await expandSrcDirectory()
+
+    const fileName = await screen.findByText('index.ts')
+    await act(async () => {
+      fireEvent.contextMenu(fileName, { button: 2, clientX: 64, clientY: 96 })
+    })
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    })
+
+    const nameInput = await screen.findByLabelText('名称')
+    expect(nameInput).toHaveValue('index.ts')
+
+    fireEvent.change(nameInput, { target: { value: 'main.ts' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '重命名' }))
+    })
+
+    await waitFor(() => {
+      expect(window.atlas.filesystem.rename).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src\\index.ts', 'main.ts')
+      expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src', 1)
+    })
+  })
+
+  it('rebases persisted open paths when renaming an expanded directory', async () => {
+    const updateState = vi.fn()
+    const component = createComponent()
+    component.state = { openPaths: ['D:\\repo', 'D:\\repo\\src', 'D:\\repo\\src\\components'] }
+    renderFileTree(component, { updateState })
+
+    const folderName = await screen.findByText('src')
+    await act(async () => {
+      fireEvent.contextMenu(folderName, { button: 2, clientX: 64, clientY: 96 })
+    })
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    })
+
+    const nameInput = await screen.findByLabelText('名称')
+    fireEvent.change(nameInput, { target: { value: 'app' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '重命名' }))
+    })
+
+    await waitFor(() => {
+      expect(window.atlas.filesystem.rename).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src', 'app')
+      expect(updateState).toHaveBeenCalledWith(
+        { openPaths: ['D:\\repo', 'D:\\repo\\app', 'D:\\repo\\app\\components'] },
+        true
+      )
+      expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo', 1)
     })
   })
 

@@ -97,6 +97,26 @@ describe('BrowserComponent', () => {
     expect(webview).toHaveStyle({ display: 'flex', pointerEvents: 'auto' })
   })
 
+  it('keeps the active browser webview non-interactive during canvas interactions', () => {
+    const component = createBrowserComponent()
+
+    const { container } = render(
+      <BrowserComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={vi.fn()}
+        updateState={vi.fn()}
+        setTitle={vi.fn()}
+        isCanvasInteracting
+        isNodeSelected
+      />
+    )
+
+    const webview = container.querySelector('webview')
+
+    expect(webview).toHaveStyle({ display: 'flex', pointerEvents: 'none' })
+  })
+
   it('does not hide browser content when a selected browser node becomes unselected', () => {
     const component = createBrowserComponent()
     const renderBrowser = (isNodeSelected: boolean) => (

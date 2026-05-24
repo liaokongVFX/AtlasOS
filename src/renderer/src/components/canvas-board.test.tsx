@@ -15,9 +15,13 @@ type CapturedReactFlowProps = {
   onDragOver?: (event: ReactDragEvent) => void
   onDrop?: (event: ReactDragEvent) => void | Promise<void>
   onMove?: (event: MouseEvent | TouchEvent | null, viewport: { x: number; y: number; zoom: number }) => void
+  onMoveEnd?: (event: MouseEvent | TouchEvent | null, viewport: { x: number; y: number; zoom: number }) => void
+  onMoveStart?: (event: MouseEvent | TouchEvent | null, viewport: { x: number; y: number; zoom: number }) => void
   onNodeDragStop?: (event: ReactMouseEvent, node: AtlasFlowNode, nodes: AtlasFlowNode[]) => void
   onPaneClick?: (event: ReactMouseEvent) => void
   selectNodesOnDrag?: boolean
+  snapGrid?: [number, number]
+  snapToGrid?: boolean
   zoomOnDoubleClick?: boolean
 }
 
@@ -33,6 +37,12 @@ const reactFlowMock = vi.hoisted(() => ({
   setCenter: vi.fn(() => Promise.resolve(true)),
   zoomIn: vi.fn(() => Promise.resolve(true)),
   zoomOut: vi.fn(() => Promise.resolve(true))
+}))
+
+const reactFlowStoreState = vi.hoisted(() => ({
+  current: {
+    transform: [0, 0, 1] as [number, number, number]
+  }
 }))
 
 vi.mock('@xyflow/react', async () => {
@@ -58,13 +68,6 @@ vi.mock('@xyflow/react', async () => {
 
       return nextNodes
     }),
-    Background: () => null,
-    BackgroundVariant: {
-      Cross: 'cross',
-      Dots: 'dots',
-      Lines: 'lines'
-    },
-    MiniMap: () => null,
     NodeResizer: () => null,
     Panel: ({ children }: { children?: React.ReactNode }) => React.createElement('div', null, children),
     ReactFlow: (props: CapturedReactFlowProps & { children?: React.ReactNode }) => {
@@ -72,7 +75,7 @@ vi.mock('@xyflow/react', async () => {
       return React.createElement('div', { 'data-testid': 'canvas-flow' }, props.children)
     },
     useReactFlow: () => reactFlowMock,
-    useViewport: () => ({ zoom: 1 })
+    useStore: (selector: (state: typeof reactFlowStoreState.current) => unknown) => selector(reactFlowStoreState.current)
   }
 })
 
@@ -104,7 +107,6 @@ function createCanvas(): CanvasDocument {
     viewport: { ...DEFAULT_VIEWPORT },
     background: {
       color: DEFAULT_CANVAS_BACKGROUND.color,
-      grid: { ...DEFAULT_CANVAS_BACKGROUND.grid },
       image: { ...DEFAULT_CANVAS_BACKGROUND.image }
     },
     components: [],
@@ -224,6 +226,32 @@ describe('CanvasBoard', () => {
 
     expect(listener).toHaveBeenCalledTimes(2)
     unsubscribe()
+  })
+
+  it('leaves canvas component positions unconstrained by grid snapping', () => {
+    render(<CanvasBoard />)
+
+    expect(reactFlowProps.current?.snapToGrid).toBeUndefined()
+    expect(reactFlowProps.current?.snapGrid).toBeUndefined()
+  })
+
+  it('disables browser webview hit testing while the viewport is being dragged', () => {
+    const { container } = render(<CanvasBoard />)
+
+    const board = container.querySelector('.canvas-board')
+    expect(board).not.toHaveClass('canvas-board--viewport-interacting')
+
+    act(() => {
+      reactFlowProps.current?.onMoveStart?.(null, { x: 120, y: 80, zoom: 1 })
+    })
+
+    expect(board).toHaveClass('canvas-board--viewport-interacting')
+
+    act(() => {
+      reactFlowProps.current?.onMoveEnd?.(null, DEFAULT_VIEWPORT)
+    })
+
+    expect(board).not.toHaveClass('canvas-board--viewport-interacting')
   })
 
   it('does not persist or notify native browser overlays during node position changes', () => {
@@ -355,18 +383,19 @@ describe('CanvasBoard', () => {
 
     const terminalItem = await screen.findByRole('menuitem', { name: 'Terminal' })
     const browserItem = await screen.findByRole('menuitem', { name: 'Browser' })
+    const kanbanItem = await screen.findByRole('menuitem', { name: 'Kanban' })
 
     expect(terminalItem).toHaveClass('menu-item--active')
     fireEvent.mouseEnter(browserItem)
     expect(browserItem).toHaveClass('menu-item--active')
     expect(terminalItem).not.toHaveClass('menu-item--active')
 
-    fireEvent.click(browserItem)
+    fireEvent.click(kanbanItem)
 
     const components = useCanvasStore.getState().canvases['canvas-1'].components
     expect(components).toHaveLength(1)
     expect(components[0]).toMatchObject({
-      type: 'browser',
+      type: 'kanban',
       frame: {
         x: 320,
         y: 240
@@ -640,6 +669,47 @@ describe('CanvasBoard', () => {
             createComponent('markdown-1', {
               title: 'Readme',
               bindings: { rootPath: 'D:\\workspace', path: 'D:\\workspace\\README.md' }
+            }),
+            createComponent('kanban-1', {
+              type: 'kanban',
+              title: 'Roadmap',
+              state: {
+                kanban: {
+                  schemaVersion: 1,
+                  columns: [
+                    {
+                      id: 'backlog',
+                      title: 'Backlog',
+                      cardIds: ['card-1'],
+                      wipLimit: null,
+                      createdAt: '2026-05-21T00:00:00.000Z',
+                      updatedAt: '2026-05-21T00:00:00.000Z'
+                    },
+                    {
+                      id: 'done',
+                      title: 'Done',
+                      cardIds: [],
+                      wipLimit: null,
+                      createdAt: '2026-05-21T00:00:00.000Z',
+                      updatedAt: '2026-05-21T00:00:00.000Z'
+                    }
+                  ],
+                  cards: {
+                    'card-1': {
+                      id: 'card-1',
+                      title: 'Ship kanban',
+                      description: '',
+                      labels: ['planning'],
+                      priority: 'high',
+                      assignee: 'Ada',
+                      dueDate: '',
+                      createdAt: '2026-05-21T00:00:00.000Z',
+                      updatedAt: '2026-05-21T00:00:00.000Z'
+                    }
+                  },
+                  view: { search: '', labels: [], assignees: [], priorities: [] }
+                }
+              }
             })
           ]
         }
@@ -657,6 +727,64 @@ describe('CanvasBoard', () => {
     expect(screen.getByText('D:\\workspace')).toBeInTheDocument()
     expect(screen.getByText('D:\\workspace\\src\\app.ts')).toBeInTheDocument()
     expect(screen.getByText('D:\\workspace\\README.md')).toBeInTheDocument()
+    expect(screen.getByText('2 列 · 1 卡片')).toBeInTheDocument()
+  })
+
+  it('searches kanban card metadata in the node finder', async () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('kanban-1', {
+              type: 'kanban',
+              title: 'Roadmap',
+              state: {
+                kanban: {
+                  schemaVersion: 1,
+                  columns: [
+                    {
+                      id: 'backlog',
+                      title: 'Backlog',
+                      cardIds: ['card-1'],
+                      wipLimit: null,
+                      createdAt: '2026-05-21T00:00:00.000Z',
+                      updatedAt: '2026-05-21T00:00:00.000Z'
+                    }
+                  ],
+                  cards: {
+                    'card-1': {
+                      id: 'card-1',
+                      title: 'Hidden launch token',
+                      description: '',
+                      labels: ['launch-plan'],
+                      priority: 'medium',
+                      assignee: 'Ada',
+                      dueDate: '',
+                      createdAt: '2026-05-21T00:00:00.000Z',
+                      updatedAt: '2026-05-21T00:00:00.000Z'
+                    }
+                  },
+                  view: { search: '', labels: [], assignees: [], priorities: [] }
+                }
+              }
+            })
+          ]
+        }
+      }
+    }))
+
+    render(<CanvasBoard />)
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+
+    const input = await screen.findByRole('combobox', { name: 'Find canvas node' })
+    fireEvent.change(input, { target: { value: 'launch-plan' } })
+
+    await waitFor(() => expect(screen.getByRole('option', { name: /Roadmap/ })).toBeInTheDocument())
   })
 
   it('selects and raises a component when it requests context-menu selection', () => {
