@@ -1,0 +1,37 @@
+{
+  "id": "atlas.calculator",
+  "name": "Calculator",
+  "version": "1.0.0",
+  "atlasApiVersion": 1,
+  "description": "A compact calculator node for arithmetic directly on the canvas.",
+  "renderer": {
+    "entry": "dist/renderer.js"
+  },
+  "permissions": [],
+  "configuration": [
+    {
+      "id": "precision",
+      "label": "Display precision",
+      "description": "Significant digits used when formatting calculated results.",
+      "type": "number",
+      "default": 12,
+      "min": 4,
+      "max": 16,
+      "step": 1
+    }
+  ],
+  "nodes": [
+    {
+      "id": "calculator",
+      "title": "Calculator",
+      "defaultFrame": {
+        "x": 160,
+        "y": 160,
+        "width": 320,
+        "height": 430
+      },
+      "permissions": [],
+      "creatable": true
+    }
+  ]
+}

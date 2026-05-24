@@ -3,7 +3,8 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
-import { appStateSchema, canvasDocumentSchema, type AtlasAppState, type CanvasDocument } from '@shared/schema'
+import { appSettingsSchema, appStateSchema, canvasDocumentSchema, type AtlasAppState, type AppSettings, type CanvasDocument } from '@shared/schema'
+import { translateShared } from '@shared/locale-text'
 
 const APP_STATE_FILE = 'app-state.json'
 const CANVASES_DIR = 'canvases'
@@ -18,7 +19,7 @@ async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> 
   await rename(tmpPath, filePath)
 }
 
-function createCanvasDocument(name = 'Untitled Canvas'): CanvasDocument {
+function createCanvasDocument(name: string): CanvasDocument {
   const timestamp = nowIso()
 
   return {
@@ -41,13 +42,25 @@ export class CanvasPersistence {
   private readonly canvasDir = join(this.rootDir, CANVASES_DIR)
   private readonly appStatePath = join(this.rootDir, APP_STATE_FILE)
 
+  constructor(private readonly readSettings: () => Promise<AppSettings> = async () => appSettingsSchema.parse({})) {}
+
+  private async homeCanvasName(): Promise<string> {
+    const settings = await this.readSettings()
+    return translateShared(settings.locale, 'canvas.homeName')
+  }
+
+  private async newCanvasName(index: number): Promise<string> {
+    const settings = await this.readSettings()
+    return translateShared(settings.locale, 'canvas.newCanvasName', { index })
+  }
+
   async initialize(): Promise<void> {
     await mkdir(this.canvasDir, { recursive: true })
 
     try {
       await this.readAppState()
     } catch {
-      const canvas = createCanvasDocument('Home')
+      const canvas = createCanvasDocument(await this.homeCanvasName())
       await this.writeCanvas(canvas)
       await this.writeAppState({
         schemaVersion: ATLAS_SCHEMA_VERSION,
@@ -77,7 +90,7 @@ export class CanvasPersistence {
 
   async createCanvas(name?: string): Promise<{ appState: AtlasAppState; canvas: CanvasDocument }> {
     const appState = await this.readAppState()
-    const canvas = createCanvasDocument(name?.trim() || `Canvas ${appState.canvasOrder.length + 1}`)
+    const canvas = createCanvasDocument(name?.trim() || (await this.newCanvasName(appState.canvasOrder.length + 1)))
 
     await this.writeCanvas(canvas)
     const nextState = {
@@ -133,7 +146,7 @@ export class CanvasPersistence {
     const nextOrder = appState.canvasOrder.filter((id) => id !== canvasId)
 
     if (nextOrder.length === 0) {
-      const replacement = createCanvasDocument('Home')
+      const replacement = createCanvasDocument(await this.homeCanvasName())
       await this.writeCanvas(replacement)
       nextOrder.push(replacement.id)
     }

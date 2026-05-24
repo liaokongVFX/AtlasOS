@@ -9,6 +9,10 @@ const nodeResizerProps = vi.hoisted(() => ({
   current: null as Record<string, any> | null
 }))
 
+const rendererContextMenu = vi.hoisted(() => ({
+  current: vi.fn()
+}))
+
 vi.mock('@xyflow/react', async () => {
   const actual = await vi.importActual<typeof import('@xyflow/react')>('@xyflow/react')
 
@@ -23,8 +27,14 @@ vi.mock('@xyflow/react', async () => {
 
 vi.mock('./registry', async () => {
   const React = await vi.importActual<typeof import('react')>('react')
+  const mediaFrame = await vi.importActual<typeof import('../lib/media-frame')>('../lib/media-frame')
   const Icon = () => React.createElement('svg', { 'aria-hidden': true })
-  const Renderer = () => React.createElement('div', null, 'Renderer')
+  const Renderer = () =>
+    React.createElement(
+      'div',
+      { 'data-component-context-menu-trigger': '', 'data-testid': 'renderer-target', onContextMenu: rendererContextMenu.current },
+      'Renderer'
+    )
   const definition = {
     title: 'Markdown Note',
     defaultFrame: { x: 0, y: 0, width: 320, height: 240 },
@@ -33,15 +43,39 @@ vi.mock('./registry', async () => {
     Renderer
   }
 
-  return {
-    componentRegistry: {
+  const componentRegistry = {
       terminal: { ...definition, type: 'terminal', title: 'Terminal' },
       'file-tree': { ...definition, type: 'file-tree', title: 'Files' },
       browser: { ...definition, type: 'browser', title: 'Browser' },
       'markdown-note': { ...definition, type: 'markdown-note' },
-      'file-preview': { ...definition, type: 'file-preview', title: 'File Preview' },
+      'file-preview': {
+        ...definition,
+        type: 'file-preview',
+        title: 'File Preview',
+        getResizeBehavior: (component: CanvasComponent) => {
+          const mediaAspectRatio = Number(component.config.mediaAspectRatio)
+          return {
+            keepAspectRatio: true,
+            minWidth: mediaFrame.MEDIA_NODE_MIN_WIDTH,
+            minHeight: mediaFrame.fitMediaFrameToAspectRatio(component.frame, mediaAspectRatio, mediaFrame.MEDIA_NODE_MIN_WIDTH).height,
+            normalizeFrame: (params: any, context: { direction: readonly number[] | null }) =>
+              mediaFrame.normalizeMediaResizeFrame(params, mediaAspectRatio, context.direction)
+          }
+        }
+      },
       kanban: { ...definition, type: 'kanban', title: 'Kanban' }
     }
+
+  return {
+    componentRegistry,
+    componentDefinitionTitle: (definition: { title: string }) => definition.title,
+    getComponentDefinition: (type: string) =>
+      componentRegistry[type as keyof typeof componentRegistry] ?? {
+        ...definition,
+        type,
+        title: 'Missing plugin',
+        Renderer: ({ component }: { component: CanvasComponent }) => React.createElement('div', null, `Plugin unavailable: ${component.type}`)
+      }
   }
 })
 
@@ -84,6 +118,7 @@ function renderNode(component = createComponent(), selected = true): void {
 describe('ComponentNode', () => {
   afterEach(() => {
     nodeResizerProps.current = null
+    rendererContextMenu.current.mockClear()
     cleanup()
     useCanvasStore.setState(initialStore, true)
   })
@@ -94,16 +129,16 @@ describe('ComponentNode', () => {
 
     renderNode()
 
-    expect(screen.queryByRole('textbox', { name: 'Component title' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: '组件标题' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByText('Note'))
 
     expect(updateComponent).not.toHaveBeenCalled()
-    expect(screen.queryByRole('textbox', { name: 'Component title' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: '组件标题' })).not.toBeInTheDocument()
 
     fireEvent.doubleClick(screen.getByText('Note'))
 
-    expect(screen.getByRole('textbox', { name: 'Component title' })).toHaveValue('Note')
+    expect(screen.getByRole('textbox', { name: '组件标题' })).toHaveValue('Note')
   })
 
   it('uses the full node as a drag surface before selection', () => {
@@ -128,6 +163,12 @@ describe('ComponentNode', () => {
     expect(document.querySelector('.component-node__interaction-shield')).not.toBeInTheDocument()
   })
 
+  it('renders a missing plugin placeholder for unknown component types', () => {
+    renderNode(createComponent({ type: 'acme.tools/timer' }))
+
+    expect(screen.getByText('Plugin unavailable: acme.tools/timer')).toBeInTheDocument()
+  })
+
   it('also shields unselected file tree nodes from direct editing', () => {
     renderNode(
       createComponent({
@@ -144,6 +185,43 @@ describe('ComponentNode', () => {
     expect(shield).not.toHaveClass('nodrag')
   })
 
+  it('forwards right-clicks through the unselected interaction shield', () => {
+    const onRequestSelect = vi.fn()
+    const component = createComponent({
+      type: 'file-tree',
+      title: 'Files',
+      config: { rootPath: 'D:\\repo' }
+    })
+
+    render(
+      <ComponentNode
+        {...({
+          data: { canvasId: 'canvas-1', component, onRequestSelect },
+          selected: false,
+          dragging: false,
+          width: component.frame.width,
+          height: component.frame.height
+        } as unknown as Parameters<typeof ComponentNode>[0])}
+      />
+    )
+
+    const shield = document.querySelector<HTMLElement>('.component-node__interaction-shield')
+    const target = screen.getByTestId('renderer-target')
+    if (!shield) throw new Error('Expected unselected node to render an interaction shield')
+
+    const originalElementsFromPoint = document.elementsFromPoint
+    document.elementsFromPoint = vi.fn(() => [shield, target])
+
+    try {
+      fireEvent.contextMenu(shield, { button: 2, clientX: 64, clientY: 96 })
+    } finally {
+      document.elementsFromPoint = originalElementsFromPoint
+    }
+
+    expect(onRequestSelect).toHaveBeenCalledWith('component-1')
+    expect(rendererContextMenu.current).toHaveBeenCalledTimes(1)
+  })
+
   it('commits a title edit with Enter', () => {
     const component = createComponent()
     let savedTitle = component.title
@@ -157,7 +235,7 @@ describe('ComponentNode', () => {
     renderNode(component)
 
     fireEvent.doubleClick(screen.getByText('Note'))
-    const input = screen.getByRole('textbox', { name: 'Component title' })
+    const input = screen.getByRole('textbox', { name: '组件标题' })
     fireEvent.change(input, { target: { value: 'Roadmap' } })
 
     expect(updateComponent).not.toHaveBeenCalled()
@@ -175,12 +253,12 @@ describe('ComponentNode', () => {
     renderNode()
 
     fireEvent.doubleClick(screen.getByText('Note'))
-    const input = screen.getByRole('textbox', { name: 'Component title' })
+    const input = screen.getByRole('textbox', { name: '组件标题' })
     fireEvent.change(input, { target: { value: 'Discard me' } })
     fireEvent.keyDown(input, { key: 'Escape' })
 
     expect(updateComponent).not.toHaveBeenCalled()
-    expect(screen.queryByRole('textbox', { name: 'Component title' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: '组件标题' })).not.toBeInTheDocument()
     expect(screen.getByText('Note')).toBeInTheDocument()
   })
 

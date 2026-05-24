@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid'
 import { ArrowLeft, ArrowRight, Bug, Camera, Plus, RefreshCw, X } from 'lucide-react'
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useI18n } from '../../i18n'
 import { asString, normalizeUrl } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
 
@@ -21,10 +22,10 @@ type BrowserWebviewElement = Electron.WebviewTag
 const DEFAULT_BROWSER_URL = 'https://example.com'
 const WEBVIEW_PREFERENCES = 'contextIsolation=yes,sandbox=yes'
 
-function readTabs(state: Record<string, unknown>): BrowserTabState[] {
+function readTabs(state: Record<string, unknown>, defaultTitle: string): BrowserTabState[] {
   const tabs = state.tabs
   if (!Array.isArray(tabs) || tabs.length === 0) {
-    return [{ localId: nanoid(), title: 'Example', url: DEFAULT_BROWSER_URL }]
+    return [{ localId: nanoid(), title: defaultTitle, url: DEFAULT_BROWSER_URL }]
   }
 
   return tabs
@@ -32,8 +33,8 @@ function readTabs(state: Record<string, unknown>): BrowserTabState[] {
     .filter((tab): tab is BrowserTabState => Boolean(tab.localId && tab.url))
 }
 
-function createBrowserTab(url = DEFAULT_BROWSER_URL): BrowserTabState {
-  return { localId: nanoid(), title: 'New tab', url }
+function createBrowserTab(title: string, url = DEFAULT_BROWSER_URL): BrowserTabState {
+  return { localId: nanoid(), title, url }
 }
 
 function partitionForTab(componentId: string, tab: BrowserTabState): string {
@@ -122,11 +123,12 @@ export function BrowserComponent({
   isCanvasInteracting = false,
   isNodeSelected = false
 }: AtlasComponentRendererProps): JSX.Element {
+  const { t } = useI18n()
   const webviewsRef = useRef(new Map<string, BrowserWebviewElement>())
   const [address, setAddress] = useState('')
   const [snapshot, setSnapshot] = useState<string | null>(null)
 
-  const tabs = useMemo(() => readTabs(component.state), [component.state])
+  const tabs = useMemo(() => readTabs(component.state, t('browser.defaultTabTitle')), [component.state, t])
   const activeLocalId = asString(component.state.activeTabId, tabs[0]?.localId)
   const activeTab = tabs.find((tab) => tab.localId === activeLocalId) ?? tabs[0]
   const [loadedTabIds, setLoadedTabIds] = useState<Set<string>>(() => new Set(activeLocalId ? [activeLocalId] : []))
@@ -211,7 +213,7 @@ export function BrowserComponent({
     const dispose = window.atlas.browser.onWebviewOpenTabRequested((request: BrowserWebviewOpenTabRequest) => {
       if (!webviewLocalIdForContents(request.sourceWebContentsId)) return
 
-      const next = createBrowserTab(request.url)
+      const next = createBrowserTab(t('browser.newTab'), request.url)
       patchTabs([...tabs, next], next.localId)
     })
 
@@ -243,14 +245,14 @@ export function BrowserComponent({
   }
 
   const addTab = () => {
-    const next = createBrowserTab()
+    const next = createBrowserTab(t('browser.newTab'))
     patchTabs([...tabs, next], next.localId)
   }
 
   const closeTab = (localId: string) => {
     webviewsRef.current.delete(localId)
     const nextTabs = tabs.filter((tab) => tab.localId !== localId)
-    const fallbackTab = createBrowserTab()
+    const fallbackTab = createBrowserTab(t('browser.newTab'))
     const finalTabs = nextTabs.length ? nextTabs : [fallbackTab]
     patchTabs(finalTabs, finalTabs[0].localId)
   }
@@ -284,18 +286,18 @@ export function BrowserComponent({
             />
           </button>
         ))}
-        <button className="icon-button" onClick={addTab} title="New browser tab">
+        <button className="icon-button" onClick={addTab} title={t('browser.newTab')} aria-label={t('browser.newTab')}>
           <Plus size={14} />
         </button>
       </div>
       <div className="browser-toolbar">
-        <button className="icon-button" disabled={!activeWebviewAvailable} onClick={() => getActiveWebview()?.goBack()}>
+        <button className="icon-button" disabled={!activeWebviewAvailable} title={t('browser.back')} aria-label={t('browser.back')} onClick={() => getActiveWebview()?.goBack()}>
           <ArrowLeft size={15} />
         </button>
-        <button className="icon-button" disabled={!activeWebviewAvailable} onClick={() => getActiveWebview()?.goForward()}>
+        <button className="icon-button" disabled={!activeWebviewAvailable} title={t('browser.forward')} aria-label={t('browser.forward')} onClick={() => getActiveWebview()?.goForward()}>
           <ArrowRight size={15} />
         </button>
-        <button className="icon-button" disabled={!activeWebviewAvailable} onClick={() => getActiveWebview()?.reload()}>
+        <button className="icon-button" disabled={!activeWebviewAvailable} title={t('browser.reload')} aria-label={t('browser.reload')} onClick={() => getActiveWebview()?.reload()}>
           <RefreshCw size={15} />
         </button>
         <form
@@ -304,12 +306,12 @@ export function BrowserComponent({
             navigate()
           }}
         >
-          <input value={address} onChange={(event) => setAddress(event.target.value)} />
+          <input value={address} aria-label={t('browser.address')} onChange={(event) => setAddress(event.target.value)} />
         </form>
-        <button className="icon-button" disabled={!activeWebviewAvailable} onClick={() => getActiveWebview()?.openDevTools()}>
+        <button className="icon-button" disabled={!activeWebviewAvailable} title={t('browser.devtools')} aria-label={t('browser.devtools')} onClick={() => getActiveWebview()?.openDevTools()}>
           <Bug size={15} />
         </button>
-        <button className="icon-button" disabled={!activeWebviewAvailable} onClick={() => void captureActiveTab()}>
+        <button className="icon-button" disabled={!activeWebviewAvailable} title={t('browser.capture')} aria-label={t('browser.capture')} onClick={() => void captureActiveTab()}>
           <Camera size={15} />
         </button>
       </div>
@@ -326,7 +328,7 @@ export function BrowserComponent({
             tab={tab}
           />
         ))}
-        {snapshot ? <img className="browser-snapshot" src={snapshot} alt="Browser screenshot" onClick={() => setSnapshot(null)} /> : null}
+        {snapshot ? <img className="browser-snapshot" src={snapshot} alt={t('browser.screenshotAlt')} onClick={() => setSnapshot(null)} /> : null}
       </div>
     </div>
   )

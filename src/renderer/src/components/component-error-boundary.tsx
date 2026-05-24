@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { I18nContext } from '../i18n'
 
 type ComponentErrorBoundaryProps = {
   children: ReactNode
@@ -24,10 +25,14 @@ export class ComponentErrorBoundary extends Component<ComponentErrorBoundaryProp
   render(): ReactNode {
     if (this.state.error) {
       return (
-        <div className="component-error">
-          <strong>Component failed</strong>
-          <span>{this.state.error.message}</span>
-        </div>
+        <I18nContext.Consumer>
+          {({ t }) => (
+            <div className="component-error">
+              <strong>{t('component.componentFailed')}</strong>
+              <span>{this.state.error?.message}</span>
+            </div>
+          )}
+        </I18nContext.Consumer>
       )
     }
 

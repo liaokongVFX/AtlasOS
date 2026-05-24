@@ -50,6 +50,7 @@ import {
   type MouseEvent,
   type ReactNode
 } from 'react'
+import { useI18n, type I18nKey, type TFunction } from '../../i18n'
 import { cn } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
 import {
@@ -73,6 +74,7 @@ import {
   updateKanbanView,
   type KanbanCard,
   type KanbanColumn,
+  type KanbanText,
   type KanbanPriority,
   type KanbanState
 } from './kanban-model'
@@ -110,19 +112,11 @@ type ColumnDialogState =
 const CARD_DRAG_PREFIX = 'kanban-card:'
 const COLUMN_DRAG_PREFIX = 'kanban-column:'
 
-const PRIORITY_LABELS: Record<KanbanPriority, string> = {
-  none: '无',
-  low: '低',
-  medium: '中',
-  high: '高',
-  urgent: '紧急'
-}
-
 const DUE_DATE_SHORTCUTS = [
-  { label: '今天', offsetDays: 0 },
-  { label: '明天', offsetDays: 1 },
-  { label: '下周', offsetDays: 7 }
-]
+  { labelKey: 'kanban.today', offsetDays: 0 },
+  { labelKey: 'kanban.tomorrow', offsetDays: 1 },
+  { labelKey: 'kanban.nextWeek', offsetDays: 7 }
+] as const
 
 const FILTER_PRIORITIES = KANBAN_PRIORITIES.filter((priority) => priority !== 'none')
 
@@ -182,6 +176,10 @@ function activeFilterCount(state: KanbanState): number {
   return state.view.labels.length + state.view.assignees.length + state.view.priorities.length
 }
 
+function priorityLabel(priority: KanbanPriority, t: TFunction): string {
+  return t(`kanban.priority.${priority}` as I18nKey)
+}
+
 function cardDropTarget(state: KanbanState, overData: DragData): { columnId: string; index: number } | null {
   if (overData.type === 'column') {
     const column = state.columns.find((item) => item.id === overData.columnId)
@@ -213,7 +211,9 @@ function ToggleFilter({
 }
 
 function PriorityBadge({ priority }: { priority: KanbanPriority }): JSX.Element {
-  return <span className={cn('kanban-priority', `kanban-priority--${priority}`)}>{PRIORITY_LABELS[priority]}</span>
+  const { t } = useI18n()
+
+  return <span className={cn('kanban-priority', `kanban-priority--${priority}`)}>{priorityLabel(priority, t)}</span>
 }
 
 function PriorityPicker({
@@ -223,18 +223,19 @@ function PriorityPicker({
   value: KanbanPriority
   onChange: (priority: KanbanPriority) => void
 }): JSX.Element {
+  const { t } = useI18n()
   const labelId = useId()
   const valueId = useId()
 
   return (
     <div className="kanban-form-field">
-      <span id={labelId}>优先级</span>
+      <span id={labelId}>{t('kanban.priority')}</span>
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button type="button" className="kanban-picker-trigger" aria-labelledby={`${labelId} ${valueId}`}>
             <PriorityBadge priority={value} />
             <span id={valueId} className="sr-only">
-              {PRIORITY_LABELS[value]}
+              {priorityLabel(value, t)}
             </span>
             <ChevronDown size={15} />
           </button>
@@ -265,13 +266,14 @@ function DueDatePicker({
   value: string
   onChange: (date: string) => void
 }): JSX.Element {
+  const { t } = useI18n()
   const labelId = useId()
   const valueId = useId()
   const overdue = isOverdue(value)
 
   return (
     <div className="kanban-form-field">
-      <span id={labelId}>截止日期</span>
+      <span id={labelId}>{t('kanban.dueDate')}</span>
       <Popover.Root>
         <Popover.Trigger asChild>
           <button
@@ -280,26 +282,26 @@ function DueDatePicker({
             aria-labelledby={`${labelId} ${valueId}`}
           >
             <CalendarDays size={15} />
-            <span id={valueId}>{value || '未设置'}</span>
+            <span id={valueId}>{value || t('kanban.unset')}</span>
             <ChevronDown size={15} />
           </button>
         </Popover.Trigger>
         <Popover.Portal>
           <Popover.Content className="popover-content kanban-date-popover" align="start" sideOffset={8} collisionPadding={12}>
             <label className="kanban-date-picker">
-              <span>日期</span>
-              <input type="date" value={value} onChange={(event) => onChange(event.target.value)} aria-label="选择截止日期" />
+              <span>{t('kanban.date')}</span>
+              <input type="date" value={value} onChange={(event) => onChange(event.target.value)} aria-label={t('kanban.selectDueDate')} />
             </label>
             <div className="kanban-date-shortcuts">
               {DUE_DATE_SHORTCUTS.map((shortcut) => (
-                <button key={shortcut.label} type="button" className="kanban-date-shortcut" onClick={() => onChange(relativeDateInputValue(shortcut.offsetDays))}>
-                  {shortcut.label}
+                <button key={shortcut.labelKey} type="button" className="kanban-date-shortcut" onClick={() => onChange(relativeDateInputValue(shortcut.offsetDays))}>
+                  {t(shortcut.labelKey)}
                 </button>
               ))}
             </div>
             <button type="button" className="tool-button kanban-date-clear" onClick={() => onChange('')} disabled={!value}>
               <X size={14} />
-              <span>清除日期</span>
+              <span>{t('kanban.clearDate')}</span>
             </button>
           </Popover.Content>
         </Popover.Portal>
@@ -309,6 +311,7 @@ function DueDatePicker({
 }
 
 function KanbanCardPreview({ card, overlay = false }: { card: KanbanCard; overlay?: boolean }): JSX.Element {
+  const { t } = useI18n()
   const overdue = isOverdue(card.dueDate)
 
   return (
@@ -335,7 +338,7 @@ function KanbanCardPreview({ card, overlay = false }: { card: KanbanCard; overla
           </span>
         ) : null}
         {card.dueDate ? (
-          <span className={overdue ? 'kanban-card__meta-danger' : ''} title={overdue ? '已过期' : '截止日期'}>
+          <span className={overdue ? 'kanban-card__meta-danger' : ''} title={overdue ? t('kanban.overdue') : t('kanban.dueDateTitle')}>
             <CalendarDays size={12} />
             {card.dueDate}
           </span>
@@ -380,6 +383,7 @@ function SortableKanbanCard({
   columnId: string
   onOpen: (cardId: string) => void
 }): JSX.Element {
+  const { t } = useI18n()
   const { attributes, isDragging, listeners, setNodeRef, transform, transition } = useSortable({
     id: cardDragId(card.id),
     data: { type: 'card', cardId: card.id, columnId } satisfies DragData
@@ -438,8 +442,8 @@ function SortableKanbanCard({
       ref={setNodeRef}
       className={cn('kanban-card-shell nodrag', isDragging && 'kanban-card-shell--dragging')}
       style={style}
-      aria-label={`打开或拖拽卡片 ${card.title}`}
-      title="拖拽卡片；点击打开详情"
+      aria-label={t('kanban.openOrDragCard', { title: card.title })}
+      title={t('kanban.dragCardTitle')}
       onClick={handleCardClick}
       onKeyDownCapture={handleCardKeyDownCapture}
       {...attributes}
@@ -469,6 +473,7 @@ function SortableKanbanColumn({
   onEditColumn: (columnId: string) => void
   onOpenCard: (cardId: string) => void
 }): JSX.Element {
+  const { t } = useI18n()
   const { attributes, isDragging, listeners, setNodeRef, transform, transition } = useSortable({
     id: columnDragId(column.id),
     data: { type: 'column', columnId: column.id } satisfies DragData
@@ -489,8 +494,8 @@ function SortableKanbanColumn({
         <button
           type="button"
           className="kanban-column__drag nodrag"
-          aria-label={`拖拽列 ${column.title}`}
-          title="拖拽列"
+          aria-label={t('kanban.dragColumn', { column: column.title })}
+          title={t('kanban.dragColumnTitle')}
           {...attributes}
           {...listeners}
         >
@@ -503,36 +508,47 @@ function SortableKanbanColumn({
             {fullColumn.wipLimit !== null ? ` / ${fullColumn.wipLimit}` : ''}
           </span>
         </div>
-        <button type="button" className="icon-button kanban-icon-button" title="添加卡片" aria-label={`在 ${column.title} 添加卡片`} onClick={() => onAddCard(column.id)}>
+        <button
+          type="button"
+          className="icon-button kanban-icon-button"
+          title={t('kanban.addCard')}
+          aria-label={t('kanban.addCardAria', { column: column.title })}
+          onClick={() => onAddCard(column.id)}
+        >
           <Plus size={14} />
         </button>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
-            <button type="button" className="icon-button kanban-icon-button" title="列设置" aria-label={`${column.title} 设置`}>
+            <button
+              type="button"
+              className="icon-button kanban-icon-button"
+              title={t('kanban.columnSettings')}
+              aria-label={t('kanban.columnSettingsAria', { column: column.title })}
+            >
               <MoreHorizontal size={14} />
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content className="menu-content kanban-column-menu" collisionPadding={12}>
               <DropdownMenu.Item className="menu-item kanban-column-menu__item" onSelect={() => onEditColumn(column.id)}>
-                <span>重命名与限制</span>
+                <span>{t('kanban.renameAndLimit')}</span>
               </DropdownMenu.Item>
               <DropdownMenu.Item className="menu-item menu-item--danger kanban-column-menu__item" onSelect={() => onDeleteColumn(column.id)}>
                 <Trash2 size={14} />
-                <span>删除列</span>
+                <span>{t('kanban.deleteColumn')}</span>
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       </header>
-      {wipExceeded ? <div className="kanban-column__wip">已超过 WIP 限制</div> : null}
+      {wipExceeded ? <div className="kanban-column__wip">{t('kanban.wipExceeded')}</div> : null}
       <SortableContext items={cards.map((card) => cardDragId(card.id))} strategy={verticalListSortingStrategy}>
         <div className="kanban-column__cards">
           {cards.map((card) => (
             <SortableKanbanCard key={card.id} card={card} columnId={column.id} onOpen={onOpenCard} />
           ))}
           {cards.length === 0 ? (
-            <div className="kanban-column__empty">{filtersActive && fullColumn.cardIds.length > 0 ? '无匹配卡片' : '暂无卡片'}</div>
+            <div className="kanban-column__empty">{filtersActive && fullColumn.cardIds.length > 0 ? t('kanban.noMatchingCards') : t('kanban.noCards')}</div>
           ) : null}
         </div>
       </SortableContext>
@@ -541,8 +557,21 @@ function SortableKanbanColumn({
 }
 
 export function KanbanComponent({ component, updateState }: AtlasComponentRendererProps): JSX.Element {
+  const { t } = useI18n()
   const rawKanban = component.state.kanban
-  const kanban = useMemo(() => normalizeKanbanState(rawKanban), [rawKanban])
+  const kanbanText = useMemo<KanbanText>(
+    () => ({
+      defaultColumns: [
+        { id: 'backlog', title: t('kanban.defaultColumn.backlog') },
+        { id: 'doing', title: t('kanban.defaultColumn.doing') },
+        { id: 'done', title: t('kanban.defaultColumn.done') }
+      ],
+      defaultCardTitle: t('kanban.defaultCardTitle'),
+      defaultColumnTitle: t('kanban.defaultColumnTitle')
+    }),
+    [t]
+  )
+  const kanban = useMemo(() => normalizeKanbanState(rawKanban, undefined, kanbanText), [rawKanban, kanbanText])
   const [dragPreview, setDragPreview] = useState<KanbanState | null>(null)
   const [activeDrag, setActiveDrag] = useState<DragData | null>(null)
   const [cardDialog, setCardDialog] = useState<CardDialogState | null>(null)
@@ -625,13 +654,13 @@ export function KanbanComponent({ component, updateState }: AtlasComponentRender
 
       const nextState =
         cardDialog.mode === 'create'
-          ? createKanbanCard(kanban, cardDialog.columnId, nanoid(), input)
-          : updateKanbanCard(kanban, cardDialog.cardId, input)
+          ? createKanbanCard(kanban, cardDialog.columnId, nanoid(), input, undefined, kanbanText)
+          : updateKanbanCard(kanban, cardDialog.cardId, input, undefined, kanbanText)
 
       commitKanban(nextState, true)
       closeCardDialog()
     },
-    [cardAssignee, cardDescription, cardDialog, cardDueDate, cardLabels, cardPriority, cardTitle, closeCardDialog, commitKanban, kanban]
+    [cardAssignee, cardDescription, cardDialog, cardDueDate, cardLabels, cardPriority, cardTitle, closeCardDialog, commitKanban, kanban, kanbanText]
   )
 
   const deleteActiveCard = useCallback(() => {
@@ -670,20 +699,20 @@ export function KanbanComponent({ component, updateState }: AtlasComponentRender
       const input = { title: columnTitle, wipLimit: columnWipLimit }
       const nextState =
         columnDialog.mode === 'create'
-          ? createKanbanColumn(kanban, nanoid(), input)
-          : updateKanbanColumn(kanban, columnDialog.columnId, input)
+          ? createKanbanColumn(kanban, nanoid(), input, undefined, kanbanText)
+          : updateKanbanColumn(kanban, columnDialog.columnId, input, undefined, kanbanText)
 
       commitKanban(nextState, true)
       closeColumnDialog()
     },
-    [closeColumnDialog, columnDialog, columnTitle, columnWipLimit, commitKanban, kanban]
+    [closeColumnDialog, columnDialog, columnTitle, columnWipLimit, commitKanban, kanban, kanbanText]
   )
 
   const confirmDeleteColumn = useCallback(() => {
     if (!deleteColumnId) return
-    commitKanban(deleteKanbanColumn(kanban, deleteColumnId), true)
+    commitKanban(deleteKanbanColumn(kanban, deleteColumnId, kanbanText), true)
     setDeleteColumnId(null)
-  }, [commitKanban, deleteColumnId, kanban])
+  }, [commitKanban, deleteColumnId, kanban, kanbanText])
 
   const setSearch = useCallback(
     (search: string) => {
@@ -781,32 +810,37 @@ export function KanbanComponent({ component, updateState }: AtlasComponentRender
       <div className="kanban-toolbar">
         <div className="kanban-search">
           <Search size={15} />
-          <input value={renderState.view.search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索卡片" aria-label="搜索卡片" />
+          <input
+            value={renderState.view.search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={t('kanban.searchCards')}
+            aria-label={t('kanban.searchCards')}
+          />
         </div>
         <Popover.Root>
           <Popover.Trigger asChild>
             <button type="button" className={cn('tool-button kanban-filter-button', activeFilterCount(renderState) > 0 && 'kanban-filter-button--active')}>
               <SlidersHorizontal size={15} />
-              <span>筛选{activeFilterCount(renderState) > 0 ? ` ${activeFilterCount(renderState)}` : ''}</span>
+              <span>{t('kanban.filter')}{activeFilterCount(renderState) > 0 ? ` ${activeFilterCount(renderState)}` : ''}</span>
             </button>
           </Popover.Trigger>
           <Popover.Portal>
             <Popover.Content className="popover-content kanban-filter-popover" sideOffset={8} collisionPadding={12}>
               <div className="kanban-filter-group">
-                <strong>优先级</strong>
+                <strong>{t('kanban.priority')}</strong>
                 {FILTER_PRIORITIES.map((priority) => (
                   <ToggleFilter
                     key={priority}
                     checked={renderState.view.priorities.includes(priority)}
                     onChange={(checked) => togglePriorityFilter(priority, checked)}
                   >
-                    {PRIORITY_LABELS[priority]}
+                    {priorityLabel(priority, t)}
                   </ToggleFilter>
                 ))}
               </div>
               {filterOptions.labels.length > 0 ? (
                 <div className="kanban-filter-group">
-                  <strong>标签</strong>
+                  <strong>{t('kanban.labels')}</strong>
                   {filterOptions.labels.map((label) => (
                     <ToggleFilter
                       key={label}
@@ -820,7 +854,7 @@ export function KanbanComponent({ component, updateState }: AtlasComponentRender
               ) : null}
               {filterOptions.assignees.length > 0 ? (
                 <div className="kanban-filter-group">
-                  <strong>负责人</strong>
+                  <strong>{t('kanban.assignee')}</strong>
                   {filterOptions.assignees.map((assignee) => (
                     <ToggleFilter
                       key={assignee}
@@ -833,14 +867,14 @@ export function KanbanComponent({ component, updateState }: AtlasComponentRender
                 </div>
               ) : null}
               <button type="button" className="tool-button kanban-filter-clear" onClick={clearFilters} disabled={!filtersActive}>
-                清除筛选
+                {t('kanban.clearFilters')}
               </button>
             </Popover.Content>
           </Popover.Portal>
         </Popover.Root>
         <button type="button" className="tool-button" onClick={openCreateColumn}>
           <Plus size={15} />
-          <span>添加列</span>
+          <span>{t('kanban.addColumn')}</span>
         </button>
       </div>
 
@@ -881,15 +915,15 @@ export function KanbanComponent({ component, updateState }: AtlasComponentRender
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content className="dialog-content kanban-dialog">
-            <Dialog.Title className="dialog-title">{cardDialog?.mode === 'create' ? '添加卡片' : '编辑卡片'}</Dialog.Title>
-            <Dialog.Description className="sr-only">编辑 Kanban 卡片的标题、描述、标签、优先级、负责人和截止日期。</Dialog.Description>
+            <Dialog.Title className="dialog-title">{cardDialog?.mode === 'create' ? t('kanban.addCard') : t('kanban.editCard')}</Dialog.Title>
+            <Dialog.Description className="sr-only">{t('kanban.editCardDescription')}</Dialog.Description>
             <form onSubmit={submitCardDialog} className="kanban-form">
               <label>
-                <span>标题</span>
+                <span>{t('kanban.title')}</span>
                 <input value={cardTitle} autoFocus onChange={(event) => setCardTitle(event.target.value)} />
               </label>
               <label>
-                <span>描述</span>
+                <span>{t('kanban.description')}</span>
                 <textarea value={cardDescription} onChange={(event) => setCardDescription(event.target.value)} />
               </label>
               <div className="kanban-form__grid">
@@ -897,27 +931,27 @@ export function KanbanComponent({ component, updateState }: AtlasComponentRender
                 <DueDatePicker value={cardDueDate} onChange={setCardDueDate} />
               </div>
               <label>
-                <span>负责人</span>
+                <span>{t('kanban.assignee')}</span>
                 <input value={cardAssignee} onChange={(event) => setCardAssignee(event.target.value)} />
               </label>
               <label>
-                <span>标签</span>
-                <input value={cardLabels} onChange={(event) => setCardLabels(event.target.value)} placeholder="用逗号分隔" />
+                <span>{t('kanban.labels')}</span>
+                <input value={cardLabels} onChange={(event) => setCardLabels(event.target.value)} placeholder={t('kanban.labelsPlaceholder')} />
               </label>
               <div className="dialog-actions">
                 {cardDialog?.mode === 'edit' ? (
                   <button type="button" className="tool-button danger" onClick={deleteActiveCard}>
                     <Trash2 size={16} />
-                    <span>删除</span>
+                    <span>{t('common.delete')}</span>
                   </button>
                 ) : null}
                 <Dialog.Close asChild>
                   <button type="button" className="tool-button">
-                    取消
+                    {t('common.cancel')}
                   </button>
                 </Dialog.Close>
                 <button type="submit" className="tool-button" disabled={!cardTitle.trim()}>
-                  保存
+                  {t('common.save')}
                 </button>
               </div>
             </form>
@@ -929,32 +963,32 @@ export function KanbanComponent({ component, updateState }: AtlasComponentRender
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content className="dialog-content kanban-dialog kanban-dialog--narrow">
-            <Dialog.Title className="dialog-title">{columnDialog?.mode === 'create' ? '添加列' : '列设置'}</Dialog.Title>
-            <Dialog.Description className="sr-only">编辑 Kanban 列名称和 WIP 限制。</Dialog.Description>
+            <Dialog.Title className="dialog-title">{columnDialog?.mode === 'create' ? t('kanban.addColumn') : t('kanban.columnSettings')}</Dialog.Title>
+            <Dialog.Description className="sr-only">{t('kanban.editColumnDescription')}</Dialog.Description>
             <form onSubmit={submitColumnDialog} className="kanban-form">
               <label>
-                <span>名称</span>
+                <span>{t('common.name')}</span>
                 <input value={columnTitle} autoFocus onChange={(event) => setColumnTitle(event.target.value)} />
               </label>
               <label>
-                <span>WIP 限制</span>
+                <span>{t('kanban.wipLimit')}</span>
                 <input
                   type="number"
                   min={1}
                   max={999}
                   value={columnWipLimit}
                   onChange={(event) => setColumnWipLimit(event.target.value)}
-                  placeholder="不限制"
+                  placeholder={t('kanban.unlimited')}
                 />
               </label>
               <div className="dialog-actions">
                 <Dialog.Close asChild>
                   <button type="button" className="tool-button">
-                    取消
+                    {t('common.cancel')}
                   </button>
                 </Dialog.Close>
                 <button type="submit" className="tool-button" disabled={!columnTitle.trim()}>
-                  保存
+                  {t('common.save')}
                 </button>
               </div>
             </form>
@@ -966,19 +1000,22 @@ export function KanbanComponent({ component, updateState }: AtlasComponentRender
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content className="dialog-content">
-            <Dialog.Title className="dialog-title">删除列?</Dialog.Title>
+            <Dialog.Title className="dialog-title">{t('kanban.deleteColumnTitle')}</Dialog.Title>
             <Dialog.Description className="dialog-description">
-              删除 {deleteColumn ? `"${deleteColumn.title}"` : '该列'} 会同时删除其中 {deleteColumn?.cardIds.length ?? 0} 张卡片。
+              {t('kanban.deleteColumnDescription', {
+                column: deleteColumn ? `"${deleteColumn.title}"` : t('kanban.thisColumn'),
+                count: deleteColumn?.cardIds.length ?? 0
+              })}
             </Dialog.Description>
             <div className="dialog-actions">
               <Dialog.Close asChild>
                 <button type="button" className="tool-button">
-                  取消
+                  {t('common.cancel')}
                 </button>
               </Dialog.Close>
               <button type="button" className="tool-button danger" onClick={confirmDeleteColumn}>
                 <Trash2 size={16} />
-                <span>删除</span>
+                <span>{t('common.delete')}</span>
               </button>
             </div>
           </Dialog.Content>

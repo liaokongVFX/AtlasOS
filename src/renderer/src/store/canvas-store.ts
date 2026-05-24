@@ -3,19 +3,15 @@ import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
 import type { AtlasAppState, CanvasComponent, CanvasDocument, ComponentType, Frame } from '@shared/schema'
-import { COMPONENT_DEFINITIONS } from '../components/component-definitions'
+import {
+  componentDefinitionTitle,
+  getComponentDefinition,
+  type ComponentCreateInput,
+  type ComponentCreatePatch
+} from '../components/registry'
+import { translateCurrent } from '../i18n'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
-
-type ComponentCreatePatch = Omit<Partial<CanvasComponent>, 'frame'> & {
-  frame?: Partial<Frame>
-}
-
-type ComponentCreateInput = {
-  type: ComponentType
-  position?: { x: number; y: number }
-  patch?: ComponentCreatePatch
-}
 
 type ComponentFrameUpdate = {
   componentId: string
@@ -57,7 +53,7 @@ function createFallbackCanvas(): CanvasDocument {
   return {
     schemaVersion: ATLAS_SCHEMA_VERSION,
     id: nanoid(),
-    name: 'Home',
+    name: translateCurrent('canvas.homeName'),
     viewport: { ...DEFAULT_VIEWPORT },
     background: {
       color: DEFAULT_CANVAS_BACKGROUND.color,
@@ -81,8 +77,26 @@ function cloneRecord<T extends Record<string, unknown>>(record: T): T {
   }
 }
 
+function hasPatchKey<TKey extends keyof ComponentCreatePatch>(patch: ComponentCreatePatch | undefined, key: TKey): patch is ComponentCreatePatch & Required<Pick<ComponentCreatePatch, TKey>> {
+  return Boolean(patch && Object.prototype.hasOwnProperty.call(patch, key))
+}
+
+function mergeComponentPatch(first?: ComponentCreatePatch | null, second?: ComponentCreatePatch | null): ComponentCreatePatch | undefined {
+  if (!first && !second) return undefined
+
+  return {
+    ...first,
+    ...second,
+    frame: { ...first?.frame, ...second?.frame },
+    config: { ...first?.config, ...second?.config },
+    state: { ...first?.state, ...second?.state },
+    bindings: { ...first?.bindings, ...second?.bindings }
+  }
+}
+
 function createComponent(type: ComponentType, canvas: CanvasDocument, position?: { x: number; y: number }, patch?: ComponentCreatePatch): CanvasComponent {
-  const definition = COMPONENT_DEFINITIONS[type]
+  const definition = getComponentDefinition(type)
+  const createPatch = mergeComponentPatch(definition.create?.(), patch)
   const timestamp = nowIso()
   const frame: Frame = {
     ...definition.defaultFrame,
@@ -93,7 +107,7 @@ function createComponent(type: ComponentType, canvas: CanvasDocument, position?:
   const base: CanvasComponent = {
     id: nanoid(),
     type,
-    title: definition.title,
+    title: componentDefinitionTitle(definition),
     frame,
     zIndex: nextZIndex(canvas),
     config: {},
@@ -105,11 +119,11 @@ function createComponent(type: ComponentType, canvas: CanvasDocument, position?:
 
   return {
     ...base,
-    ...patch,
-    frame: { ...base.frame, ...patch?.frame },
-    config: { ...base.config, ...patch?.config },
-    state: { ...base.state, ...patch?.state },
-    bindings: { ...base.bindings, ...patch?.bindings }
+    ...createPatch,
+    frame: { ...base.frame, ...createPatch?.frame },
+    config: { ...base.config, ...createPatch?.config },
+    state: { ...base.state, ...createPatch?.state },
+    bindings: { ...base.bindings, ...createPatch?.bindings }
   }
 }
 
@@ -152,12 +166,13 @@ export const useCanvasStore = create<CanvasStore>()(
           error: null
         })
       } catch (error) {
-        set({ error: error instanceof Error ? error.message : 'Failed to load workspace' })
+        set({ error: error instanceof Error ? error.message : translateCurrent('app.error.loadWorkspace') })
       }
     },
 
     async createCanvas() {
-      const result = await window.atlas.canvas.create()
+      const index = (get().appState?.canvasOrder.length ?? Object.keys(get().canvases).length) + 1
+      const result = await window.atlas.canvas.create(translateCurrent('canvas.newCanvasName', { index }))
       set((state) => {
         state.appState = result.appState
         state.canvases[result.canvas.id] = result.canvas
@@ -201,7 +216,7 @@ export const useCanvasStore = create<CanvasStore>()(
         set((state) => {
           state.appState = previousAppState
           state.activeCanvasId = previousAppState.activeCanvasId
-          state.error = error instanceof Error ? error.message : 'Failed to reorder canvases'
+          state.error = error instanceof Error ? error.message : translateCurrent('app.error.reorderCanvases')
         })
       }
     },
@@ -249,7 +264,7 @@ export const useCanvasStore = create<CanvasStore>()(
       } catch (error) {
         set({
           saveState: 'error',
-          error: error instanceof Error ? error.message : 'Failed to save canvas'
+          error: error instanceof Error ? error.message : translateCurrent('app.error.saveCanvas')
         })
       }
     },
@@ -320,18 +335,22 @@ export const useCanvasStore = create<CanvasStore>()(
 
           for (const component of componentsToDuplicate) {
             const timestamp = nowIso()
+            const definition = getComponentDefinition(component.type)
+            const duplicatePatch = definition.duplicate?.(component) ?? undefined
             const duplicatedComponent: CanvasComponent = {
               ...component,
+              ...duplicatePatch,
               id: nanoid(),
               frame: {
                 ...component.frame,
+                ...duplicatePatch?.frame,
                 x: component.frame.x + 32,
                 y: component.frame.y + 32
               },
               zIndex,
-              config: cloneRecord(component.config),
-              state: component.type === 'browser' ? {} : cloneRecord(component.state),
-              bindings: cloneRecord(component.bindings),
+              config: { ...cloneRecord(component.config), ...duplicatePatch?.config },
+              state: hasPatchKey(duplicatePatch, 'state') ? cloneRecord(duplicatePatch.state ?? {}) : cloneRecord(component.state),
+              bindings: { ...cloneRecord(component.bindings), ...duplicatePatch?.bindings },
               createdAt: timestamp,
               updatedAt: timestamp
             }
@@ -399,9 +418,7 @@ export const useCanvasStore = create<CanvasStore>()(
       if (removableIds.size === 0) return
 
       for (const component of components) {
-        if (removableIds.has(component.id) && component.type === 'terminal') {
-          void window.atlas.terminal.closeComponent(component.id)
-        }
+        if (removableIds.has(component.id)) void getComponentDefinition(component.type).dispose?.(component)
       }
 
       get().updateCanvas(

@@ -4,6 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { fileExtension, fileName } from '../../lib/file-types'
+import { useI18n, type TFunction } from '../../i18n'
 import { writeClipboardText } from '../../lib/clipboard'
 import { asString } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
@@ -49,7 +50,6 @@ type TerminalClipboardShortcutHandlers = {
 const MIN_TRANSFORM_SCALE_DELTA = 0.001
 const PASTE_FEEDBACK_DURATION_MS = 3200
 const PASTE_SHORTCUT_FALLBACK_DELAY_MS = 80
-const TERMINAL_PASTE_LOG_PREFIX = '[AtlasOS terminal paste]'
 const TERMINAL_PATH_QUOTE_PATTERN = /[\s"'`$&|<>()[\]{};]/
 const PASTED_IMAGE_MIME_TYPES_BY_EXTENSION = new Map([
   ['.png', 'image/png'],
@@ -146,30 +146,6 @@ function installTerminalClipboardShortcuts(terminal: Terminal, handlers: Termina
   })
 }
 
-function logTerminalPaste(stage: string, details?: Record<string, unknown>): void {
-  if (details) {
-    console.info(TERMINAL_PASTE_LOG_PREFIX, stage, details)
-    return
-  }
-
-  console.info(TERMINAL_PASTE_LOG_PREFIX, stage)
-}
-
-function describeClipboardData(dataTransfer: DataTransfer | null | undefined): Record<string, unknown> {
-  if (!dataTransfer) return { hasClipboardData: false }
-
-  return {
-    hasClipboardData: true,
-    types: Array.from(dataTransfer.types),
-    fileCount: dataTransfer.files.length,
-    itemCount: dataTransfer.items?.length ?? 0,
-    items: Array.from(dataTransfer.items ?? []).map((item) => ({
-      kind: item.kind,
-      type: item.type || '(empty)'
-    }))
-  }
-}
-
 function dataTransferFiles(dataTransfer: DataTransfer | null | undefined): File[] {
   if (!dataTransfer) return []
 
@@ -192,12 +168,7 @@ function hasTransferFiles(dataTransfer: DataTransfer | null | undefined): boolea
 function readExistingFilePath(file: File): string {
   try {
     return window.atlas.filesystem.getPathForFile(file).trim()
-  } catch (error) {
-    logTerminalPaste('clipboard-file-path-unavailable', {
-      name: file.name || '(unnamed)',
-      type: file.type || '(empty)',
-      error: error instanceof Error ? error.message : String(error)
-    })
+  } catch {
     return ''
   }
 }
@@ -231,7 +202,7 @@ async function blobToBase64(blob: Blob): Promise<string> {
   return btoa(binary)
 }
 
-async function resolveTerminalAsset(file: File): Promise<ResolvedTerminalAsset> {
+async function resolveTerminalAsset(file: File, t: TFunction): Promise<ResolvedTerminalAsset> {
   const existingPath = readExistingFilePath(file)
 
   if (existingPath) {
@@ -244,7 +215,7 @@ async function resolveTerminalAsset(file: File): Promise<ResolvedTerminalAsset> 
 
   const imageMimeType = mimeTypeForPastedImage(file.name || undefined, file.type || undefined)
   if (!imageMimeType) {
-    throw new Error('Only pasted images can be saved to a temporary terminal path')
+    throw new Error(t('terminal.onlyImagesTempPath'))
   }
 
   const dataBase64 = await blobToBase64(file)
@@ -264,7 +235,6 @@ async function resolveTerminalAsset(file: File): Promise<ResolvedTerminalAsset> 
 async function readBrowserClipboardImages(): Promise<BrowserClipboardImage[]> {
   const read = navigator.clipboard?.read
   if (typeof read !== 'function') {
-    logTerminalPaste('browser-clipboard-read-unavailable')
     return []
   }
 
@@ -281,10 +251,7 @@ async function readBrowserClipboardImages(): Promise<BrowserClipboardImage[]> {
     }
 
     return images
-  } catch (error) {
-    logTerminalPaste('browser-clipboard-read-failed', {
-      error: error instanceof Error ? error.message : String(error)
-    })
+  } catch {
     return []
   }
 }
@@ -310,6 +277,7 @@ function stopTerminalKeyEvent(event: KeyboardEvent): void {
 }
 
 export function TerminalComponent({ component, updateState, isNodeSelected = false }: AtlasComponentRendererProps): JSX.Element {
+  const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const sessionIdRef = useRef<string | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -318,11 +286,16 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
   const focusFrameRef = useRef<number | null>(null)
   const feedbackTimerRef = useRef<number | null>(null)
   const isNodeSelectedRef = useRef(isNodeSelected)
+  const tRef = useRef(t)
   const [isDropActive, setIsDropActive] = useState(false)
   const [pasteFeedback, setPasteFeedback] = useState<TerminalPasteFeedback | null>(null)
 
   isNodeSelectedRef.current = isNodeSelected
   cwdRef.current = asString(component.state.cwd, asString(component.config.cwd))
+
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
 
   const clearScheduledFocus = useCallback(() => {
     pendingFocusRef.current = false
@@ -386,7 +359,7 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
       if (!instance || files.length === 0) return
 
       try {
-        const resolvedAssets = await Promise.all(files.map((file) => resolveTerminalAsset(file)))
+        const resolvedAssets = await Promise.all(files.map((file) => resolveTerminalAsset(file, tRef.current)))
         if (terminalRef.current !== instance) return
         if (resolvedAssets.length === 0) return
 
@@ -395,17 +368,17 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
         const createdCount = resolvedAssets.filter((asset) => asset.createdFromClipboard).length
         const message =
           createdCount === 1 && resolvedAssets.length === 1
-            ? 'Saved screenshot and inserted its path'
+            ? tRef.current('terminal.savedScreenshotInserted')
             : resolvedAssets.length === 1
-              ? 'Inserted attachment path'
-              : `Inserted ${resolvedAssets.length} attachment paths`
+              ? tRef.current('terminal.insertedAttachmentPath')
+              : tRef.current('terminal.insertedAttachmentPaths', { count: resolvedAssets.length })
 
         const detail = resolvedAssets.length === 1 ? resolvedAssets[0].name : resolvedAssets.map((asset) => asset.name).join(', ')
         showPasteFeedback({ tone: 'info', message, detail })
       } catch (error) {
         showPasteFeedback({
           tone: 'error',
-          message: 'Unable to insert the pasted attachment',
+          message: tRef.current('terminal.unableInsertPastedAttachment'),
           detail: error instanceof Error ? error.message : String(error)
         })
       }
@@ -421,33 +394,22 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
       try {
         const saved: NativeClipboardImageSaveResult = await window.atlas.terminal.saveClipboardImage()
         if (!saved.saved) {
-          logTerminalPaste('native-clipboard-image-empty', { formats: saved.formats })
           return false
         }
 
         if (terminalRef.current !== instance) return true
 
         instance.paste(formatTerminalPaths([saved.path]))
-        logTerminalPaste('native-clipboard-image-inserted', {
-          path: saved.path,
-          width: saved.width,
-          height: saved.height,
-          byteLength: saved.byteLength,
-          formats: saved.formats
-        })
         showPasteFeedback({
           tone: 'info',
-          message: 'Saved screenshot and inserted its path',
+          message: tRef.current('terminal.savedScreenshotInserted'),
           detail: fileName(saved.path)
         })
         return true
       } catch (error) {
-        logTerminalPaste('native-clipboard-image-failed', {
-          error: error instanceof Error ? error.message : String(error)
-        })
         showPasteFeedback({
           tone: 'error',
-          message: 'Unable to insert the pasted screenshot',
+          message: tRef.current('terminal.unableInsertPastedScreenshot'),
           detail: error instanceof Error ? error.message : String(error)
         })
         return true
@@ -464,27 +426,22 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
       try {
         const result: NativeClipboardFilesResult = await window.atlas.terminal.readClipboardFiles()
         if (result.paths.length === 0) {
-          logTerminalPaste('native-clipboard-files-empty', { formats: result.formats })
           return false
         }
 
         if (terminalRef.current !== instance) return true
 
         instance.paste(formatTerminalPaths(result.paths))
-        logTerminalPaste('native-clipboard-files-inserted', {
-          count: result.paths.length,
-          formats: result.formats
-        })
         showPasteFeedback({
           tone: 'info',
-          message: result.paths.length === 1 ? 'Inserted copied file path' : `Inserted ${result.paths.length} copied file paths`,
+          message:
+            result.paths.length === 1
+              ? tRef.current('terminal.insertedCopiedFilePath')
+              : tRef.current('terminal.insertedCopiedFilePaths', { count: result.paths.length }),
           detail: result.paths.length === 1 ? fileName(result.paths[0]) : result.paths.map(fileName).join(', ')
         })
         return true
-      } catch (error) {
-        logTerminalPaste('native-clipboard-files-failed', {
-          error: error instanceof Error ? error.message : String(error)
-        })
+      } catch {
         return false
       }
     },
@@ -515,14 +472,17 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
         instance.paste(formatTerminalPaths(savedImages))
         showPasteFeedback({
           tone: 'info',
-          message: images.length === 1 ? 'Saved screenshot and inserted its path' : `Saved ${images.length} screenshots and inserted their paths`,
+          message:
+            images.length === 1
+              ? tRef.current('terminal.savedScreenshotInserted')
+              : tRef.current('terminal.savedScreenshotsInserted', { count: images.length }),
           detail: savedImages.length === 1 ? fileName(savedImages[0]) : savedImages.map(fileName).join(', ')
         })
         return true
       } catch (error) {
         showPasteFeedback({
           tone: 'error',
-          message: 'Unable to insert the pasted screenshot',
+          message: tRef.current('terminal.unableInsertPastedScreenshot'),
           detail: error instanceof Error ? error.message : String(error)
         })
         return false
@@ -533,21 +493,8 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
 
   const pasteClipboardIntoTerminal = useCallback(
     async (instance: Terminal, event?: ClipboardEvent) => {
-      logTerminalPaste('paste-start', {
-        source: event ? 'paste-event' : 'shortcut-fallback',
-        ...describeClipboardData(event?.clipboardData)
-      })
-
       const files = dataTransferFiles(event?.clipboardData)
       if (files.length > 0) {
-        logTerminalPaste('paste-files-detected', {
-          count: files.length,
-          files: files.map((file) => ({
-            name: file.name || '(unnamed)',
-            type: file.type || '(empty)',
-            size: file.size
-          }))
-        })
         await pasteFilesIntoTerminal(files)
         return true
       }
@@ -558,13 +505,6 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
 
       const browserImages = await readBrowserClipboardImages()
       if (browserImages.length > 0) {
-        logTerminalPaste('browser-clipboard-images-detected', {
-          count: browserImages.length,
-          images: browserImages.map(({ blob, mimeType }) => ({
-            mimeType,
-            size: blob.size
-          }))
-        })
         return pasteBrowserClipboardImagesIntoTerminal(browserImages)
       }
 
@@ -574,12 +514,10 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
 
       const text = event?.clipboardData?.getData('text/plain') || readNativeClipboardText()
       if (text) {
-        logTerminalPaste('clipboard-text-inserted', { length: text.length })
         instance.paste(text)
         return true
       }
 
-      logTerminalPaste('paste-empty')
       return false
     },
     [
@@ -802,7 +740,7 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
           })
           disposeExit = window.atlas.terminal.onExit(session.sessionId, ({ exitCode }) => {
             if (disposed) return
-            instance.writeln(`\r\nProcess exited with code ${exitCode}`)
+            instance.writeln(`\r\n${tRef.current('terminal.processExited', { code: exitCode })}`)
           })
           const previousDisposeExit = disposeExit
           disposeExit = () => {
@@ -812,7 +750,7 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
         })
         .catch((error) => {
           if (disposed) return
-          instance.writeln(`Failed to start terminal: ${error instanceof Error ? error.message : String(error)}`)
+          instance.writeln(tRef.current('terminal.startFailed', { message: error instanceof Error ? error.message : String(error) }))
         })
 
     }
@@ -857,7 +795,7 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
       <div ref={containerRef} className="terminal-module__screen" />
       {isDropActive ? (
         <div className="terminal-module__drop-overlay" aria-hidden="true">
-          Drop files here to paste their paths into the terminal
+          {t('terminal.dropFiles')}
         </div>
       ) : null}
       {pasteFeedback ? (

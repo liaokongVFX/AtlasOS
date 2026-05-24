@@ -1,7 +1,12 @@
 import { clipboard, contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AtlasAppState, CanvasDocument } from '@shared/schema'
+import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } from '@shared/plugins'
+import type { AppSettings, AtlasAppState, CanvasDocument } from '@shared/schema'
 
 type Listener<T> = (payload: T) => void
+
+type OpenSettingsRequest = {
+  sectionId?: string
+}
 
 type SavedClipboardImageResult =
   | {
@@ -30,8 +35,15 @@ function on<T>(channel: string, listener: Listener<T>): () => void {
 }
 
 const atlasApi = {
+  app: {
+    onOpenSettings: (listener: Listener<OpenSettingsRequest | undefined>) => on('app:open-settings', listener)
+  },
   appState: {
     get: () => ipcRenderer.invoke('app-state:get', {}) as Promise<AtlasAppState>
+  },
+  appSettings: {
+    get: () => ipcRenderer.invoke('app-settings:get', {}) as Promise<AppSettings>,
+    update: (settings: AppSettings) => ipcRenderer.invoke('app-settings:update', { settings }) as Promise<AppSettings>
   },
   canvas: {
     list: () => ipcRenderer.invoke('canvas:list', {}) as Promise<CanvasDocument[]>,
@@ -120,6 +132,21 @@ const atlasApi = {
       on('browser:open-tab-requested', listener),
     onWebviewOpenTabRequested: (listener: Listener<{ sourceWebContentsId: number; url: string }>) =>
       on('browser:webview-open-tab-requested', listener)
+  },
+  plugins: {
+    getSettings: () => ipcRenderer.invoke('plugins:get-settings', {}) as Promise<PluginSettings>,
+    setRootDirectory: (rootPath: string) => ipcRenderer.invoke('plugins:set-root-directory', { rootPath }) as Promise<PluginSettings>,
+    scanRootDirectory: () => ipcRenderer.invoke('plugins:scan-root-directory', {}) as Promise<PluginInfo[]>,
+    list: () => ipcRenderer.invoke('plugins:list', {}) as Promise<PluginInfo[]>,
+    installDirectory: (sourcePath?: string, dialogTitle?: string) =>
+      ipcRenderer.invoke('plugins:install-directory', { sourcePath, dialogTitle }) as Promise<PluginInfo | null>,
+    enable: (pluginId: string) => ipcRenderer.invoke('plugins:enable', { pluginId }) as Promise<PluginInfo>,
+    disable: (pluginId: string) => ipcRenderer.invoke('plugins:disable', { pluginId }) as Promise<PluginInfo>,
+    uninstall: (pluginId: string) => ipcRenderer.invoke('plugins:uninstall', { pluginId }) as Promise<{ ok: true }>,
+    reload: (pluginId: string) => ipcRenderer.invoke('plugins:reload', { pluginId }) as Promise<PluginInfo>,
+    updateConfig: (pluginId: string, config: PluginConfig) => ipcRenderer.invoke('plugins:update-config', { pluginId, config }) as Promise<PluginInfo>,
+    diagnostics: (pluginId: string) => ipcRenderer.invoke('plugins:diagnostics', { pluginId }) as Promise<PluginDiagnosticEntry[]>,
+    invoke: (pluginId: string, command: string, input?: unknown) => ipcRenderer.invoke('plugins:invoke', { pluginId, command, input }) as Promise<unknown>
   }
 }
 

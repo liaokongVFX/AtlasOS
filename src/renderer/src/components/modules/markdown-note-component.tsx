@@ -9,13 +9,9 @@ import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import { useMemo, useState } from 'react'
+import { useI18n } from '../../i18n'
 import { asString } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
-
-const DEFAULT_NOTE = `# AtlasOS note
-
-Use Markdown for durable workspace notes.
-`
 
 const MARKDOWN_EDITOR_THEME = EditorView.theme(
   {
@@ -139,8 +135,9 @@ const HIGHLIGHT_OPTIONS = {
 } satisfies RehypeHighlightOptions
 
 export function MarkdownNoteComponent({ component, updateState }: AtlasComponentRendererProps): JSX.Element {
+  const { t } = useI18n()
   const [mode, setMode] = useState<'edit' | 'preview'>('edit')
-  const content = asString(component.state.content, DEFAULT_NOTE)
+  const content = asString(component.state.content, t('markdown.defaultNote'))
   const extensions = useMemo(() => [markdown(), EditorView.lineWrapping, MARKDOWN_EDITOR_SYNTAX], [])
 
   return (
@@ -148,11 +145,11 @@ export function MarkdownNoteComponent({ component, updateState }: AtlasComponent
       <div className="note-toolbar">
         <button className={mode === 'edit' ? 'segmented segmented--active' : 'segmented'} onClick={() => setMode('edit')}>
           <Pencil size={14} />
-          Edit
+          {t('markdown.edit')}
         </button>
         <button className={mode === 'preview' ? 'segmented segmented--active' : 'segmented'} onClick={() => setMode('preview')}>
           <Eye size={14} />
-          Preview
+          {t('markdown.preview')}
         </button>
       </div>
       {mode === 'edit' ? (

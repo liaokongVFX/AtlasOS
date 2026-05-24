@@ -20,7 +20,7 @@ import { terminalCreateSchema } from '@shared/schema'
 import { parseFileUriListPaths, readClipboardFilePathsFromNativeFormats } from './clipboard-files'
 import { handleValidated } from './ipc-helpers'
 import { buildPowerShellBootstrapScript, extractCwdMarkers } from './pty-cwd'
-import { readWindowsClipboardFileDropPaths, type WindowsClipboardFileDropResult } from './windows-clipboard-files'
+import { readWindowsClipboardFileDropPaths } from './windows-clipboard-files'
 
 type TerminalSession = {
   id: string
@@ -50,20 +50,6 @@ type SavedClipboardImageResult =
 type NativeClipboardFilesResult = {
   paths: string[]
   formats: string[]
-}
-
-type ClipboardFormatReadDiagnostic = {
-  format: string
-  bufferBytes?: number
-  textLength?: number
-  bufferError?: string
-  textError?: string
-}
-
-type ClipboardSpecializedReadDiagnostic = {
-  kind: string
-  length?: number
-  error?: string
 }
 
 const STALE_PASTED_ASSET_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7
@@ -124,8 +110,7 @@ function extensionForMimeType(mimeType?: string): string {
 function readClipboardFormats(): string[] {
   try {
     return clipboard.availableFormats('clipboard')
-  } catch (error) {
-    console.warn('Failed to inspect terminal clipboard formats:', error)
+  } catch {
     return []
   }
 }
@@ -363,21 +348,12 @@ export class PtyService {
     const image = clipboard.readImage('clipboard')
 
     if (image.isEmpty()) {
-      console.info('[AtlasOS terminal paste] native clipboard image empty', { formats })
       return { saved: false, reason: 'empty', formats }
     }
 
     const size = image.getSize()
     const buffer = image.toPNG()
     const targetPath = await this.savePastedImageBuffer(buffer, 'image/png')
-
-    console.info('[AtlasOS terminal paste] saved native clipboard image', {
-      path: targetPath,
-      width: size.width,
-      height: size.height,
-      byteLength: buffer.length,
-      formats
-    })
 
     return {
       saved: true,
@@ -389,23 +365,21 @@ export class PtyService {
     }
   }
 
-  private readClipboardFilesFromSpecializedElectronApis(reads: ClipboardSpecializedReadDiagnostic[]): string[] {
+  private readClipboardFilesFromSpecializedElectronApis(): string[] {
     const paths: string[] = []
 
     try {
       const bookmark = clipboard.readBookmark()
-      reads.push({ kind: 'bookmark-url', length: bookmark.url.length })
       if (bookmark.url) paths.push(...parseFileUriListPaths(bookmark.url))
-    } catch (error) {
-      reads.push({ kind: 'bookmark-url', error: error instanceof Error ? error.message : String(error) })
+    } catch {
+      // Ignore unavailable specialized clipboard formats and continue through fallbacks.
     }
 
     try {
       const text = clipboard.readText('clipboard')
-      reads.push({ kind: 'plain-text', length: text.length })
       if (text) paths.push(...parseFileUriListPaths(text))
-    } catch (error) {
-      reads.push({ kind: 'plain-text', error: error instanceof Error ? error.message : String(error) })
+    } catch {
+      // Ignore unavailable specialized clipboard formats and continue through fallbacks.
     }
 
     return paths
@@ -413,68 +387,31 @@ export class PtyService {
 
   private async readClipboardFiles(): Promise<NativeClipboardFilesResult> {
     const formats = readClipboardFormats()
-    const reads: ClipboardFormatReadDiagnostic[] = []
-    const specializedReads: ClipboardSpecializedReadDiagnostic[] = []
-    const diagnosticFor = (format: string): ClipboardFormatReadDiagnostic => {
-      const existing = reads.find((entry) => entry.format === format)
-      if (existing) return existing
-
-      const entry: ClipboardFormatReadDiagnostic = { format }
-      reads.push(entry)
-      return entry
-    }
-
     const paths = readClipboardFilePathsFromNativeFormats(
       formats,
       (format) => {
-        const diagnostic = diagnosticFor(format)
-
         try {
-          const buffer = clipboard.readBuffer(format)
-          diagnostic.bufferBytes = buffer.length
-          return buffer
-        } catch (error) {
-          diagnostic.bufferError = error instanceof Error ? error.message : String(error)
+          return clipboard.readBuffer(format)
+        } catch {
           return Buffer.alloc(0)
         }
       },
       (format) => {
-        const diagnostic = diagnosticFor(format)
-
         try {
-          const text = clipboard.read(format)
-          diagnostic.textLength = text.length
-          return text
-        } catch (error) {
-          diagnostic.textError = error instanceof Error ? error.message : String(error)
+          return clipboard.read(format)
+        } catch {
           return ''
         }
       }
     )
 
-    const electronRawPaths = [...paths, ...this.readClipboardFilesFromSpecializedElectronApis(specializedReads)]
+    const electronRawPaths = [...paths, ...this.readClipboardFilesFromSpecializedElectronApis()]
     let existingPaths = uniqueExistingPaths(electronRawPaths)
-    let windowsFileDrop: WindowsClipboardFileDropResult | null = null
 
     if (existingPaths.length === 0) {
-      windowsFileDrop = await readWindowsClipboardFileDropPaths()
+      const windowsFileDrop = await readWindowsClipboardFileDropPaths()
       existingPaths = uniqueExistingPaths(windowsFileDrop.paths)
     }
-
-    console.info('[AtlasOS terminal paste] native clipboard files inspected', {
-      count: existingPaths.length,
-      formats,
-      electronPathCandidates: electronRawPaths.length,
-      reads,
-      specializedReads,
-      windowsFileDrop: windowsFileDrop
-        ? {
-            candidateCount: windowsFileDrop.paths.length,
-            nativeFormats: windowsFileDrop.nativeFormats,
-            diagnostic: windowsFileDrop.diagnostic
-          }
-        : { attempted: false }
-    })
 
     return { paths: existingPaths, formats }
   }
@@ -506,13 +443,13 @@ export class PtyService {
               if (metadata.mtimeMs < cutoff) {
                 await unlink(fullPath)
               }
-            } catch (error) {
-              console.warn(`Failed to inspect pasted terminal asset ${fullPath}:`, error)
+            } catch {
+              return
             }
           })
       )
-    } catch (error) {
-      console.warn('Failed to clean stale terminal pasted assets:', error)
+    } catch {
+      return
     }
   }
 }

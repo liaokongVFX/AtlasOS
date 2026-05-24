@@ -1,10 +1,14 @@
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { app, BrowserWindow, Menu, nativeImage, session, shell, Tray, type NativeImage } from 'electron'
+import { DEFAULT_LOCALE, type Locale } from '@shared/constants'
+import { translateShared } from '@shared/locale-text'
 import { CanvasPersistence } from './services/canvas-persistence'
 import { FileSystemService } from './services/ipc-filesystem'
 import { PtyService } from './services/pty-service'
 import { BrowserService } from './services/browser-service'
+import { AppSettingsService } from './services/app-settings-service'
+import { PluginService } from './services/plugin-service'
 import { WorkspaceDocumentService } from './services/workspace-document-service'
 import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services/local-asset-protocol'
 
@@ -13,10 +17,14 @@ let mainWindowCreation: Promise<void> | null = null
 let tray: Tray | null = null
 let browserService: BrowserService | null = null
 let fileSystemService: FileSystemService | null = null
+let pluginService: PluginService | null = null
 let ptyService: PtyService | null = null
+let appSettingsService: AppSettingsService | null = null
+let trayLocale: Locale = DEFAULT_LOCALE
 let isQuitting = false
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL)
+const forceSoftwareRendering = process.env.ATLAS_FORCE_SOFTWARE_RENDERING === '1'
 const trayIcon16 =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAABgklEQVR4nGNgYGBg4BUQ9+EREDvFKyj2k1dQ/D9+LPYTolbcmwGmmZegJuyYh18sgIFHUOw0LgWyimpgjNMAAbGTDPic3dHd/7+9qw+fd34w4JJUUNX6/+bdh//vPnz6r6yui9MQBlwSU6bN+v/j1x8wnjx1JmkGaOoa///4+dv/w0dP/D905Pj/T1++/9fWNyXegPkLl4JtDs8s+R+UUgBmz1u4hDgDjEyt/3/9/vP/+4+f/zuuuP7fcfm1/6/evAOLgeQIGrBy7QawjYdf/v7vefgnGIPYILEVa9bjN8Da3vn/958QxdGHP/+fdO7l/4lnX/6POvz5//dff8ByIDU4Ddi6fTdY89xjt/6brHn0n09c4T+/mNx/49UP/s8/cQcst2XbLnQDxMAJycXDF6wAZJP9yhv/5aPK4Irko8v/26++DZYDqfHwCUAkJPSkLKJj/d94+Z3//GKycDEQGyQGksOSlMW9MaJHSBIzyrCJCUp4QXKkoLg3yDQSsvNJmGYAUm6m7l8hypkAAAAASUVORK5CYII='
 const trayIcon32 =
@@ -53,10 +61,12 @@ app.on('web-contents-created', (_event, contents) => {
 function disposeWindowServices(): void {
   browserService?.dispose()
   fileSystemService?.dispose()
+  pluginService?.dispose()
   ptyService?.dispose()
 
   browserService = null
   fileSystemService = null
+  pluginService = null
   ptyService = null
 }
 
@@ -68,8 +78,9 @@ function configureAppRuntime(): void {
     mkdirSync(devSessionData, { recursive: true })
     app.setPath('userData', devUserData)
     app.setPath('sessionData', devSessionData)
+  }
 
-    // Electron 42 can hard-fail the GPU process on some Windows VM/sandbox setups.
+  if (forceSoftwareRendering) {
     app.disableHardwareAcceleration()
     app.commandLine.appendSwitch('disable-gpu')
     app.commandLine.appendSwitch('disable-gpu-compositing')
@@ -107,6 +118,15 @@ async function showMainWindow(): Promise<void> {
   window.focus()
 }
 
+async function showSettings(): Promise<void> {
+  const window = await ensureMainWindow()
+
+  if (window.isMinimized()) window.restore()
+  if (!window.isVisible()) window.show()
+  window.focus()
+  window.webContents.send('app:open-settings')
+}
+
 function quitApp(): void {
   isQuitting = true
   app.quit()
@@ -116,22 +136,7 @@ function ensureTray(): void {
   if (tray) return
 
   tray = new Tray(createTrayIcon())
-  tray.setToolTip('AtlasOS - double-click to open')
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      {
-        label: 'Open AtlasOS',
-        click: () => {
-          void showMainWindow()
-        }
-      },
-      { type: 'separator' },
-      {
-        label: 'Quit AtlasOS',
-        click: quitApp
-      }
-    ])
-  )
+  updateTrayMenu()
 
   tray.on('double-click', () => {
     void showMainWindow()
@@ -142,6 +147,33 @@ function ensureTray(): void {
       void showMainWindow()
     })
   }
+}
+
+function updateTrayMenu(): void {
+  if (!tray) return
+
+  tray.setToolTip(translateShared(trayLocale, 'main.trayTooltip'))
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: translateShared(trayLocale, 'main.openAtlas'),
+        click: () => {
+          void showMainWindow()
+        }
+      },
+      {
+        label: translateShared(trayLocale, 'main.settings'),
+        click: () => {
+          void showSettings()
+        }
+      },
+      { type: 'separator' },
+      {
+        label: translateShared(trayLocale, 'main.quitAtlas'),
+        click: quitApp
+      }
+    ])
+  )
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -196,8 +228,8 @@ function installSecurityDefaults(): void {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           isDev
-            ? "default-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* data: blob:; script-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: atlas-file: https:; media-src 'self' data: blob: atlas-file:; frame-src http: https:;"
-            : "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: atlas-file: https:; media-src 'self' data: blob: atlas-file:; frame-src http: https:;"
+            ? "default-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* data: blob:; script-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:* atlas-plugin:; style-src 'self' 'unsafe-inline' atlas-plugin:; img-src 'self' data: blob: atlas-file: atlas-plugin: https:; media-src 'self' data: blob: atlas-file: atlas-plugin:; frame-src http: https:;"
+            : "default-src 'self' data: blob:; script-src 'self' atlas-plugin:; style-src 'self' 'unsafe-inline' atlas-plugin:; img-src 'self' data: blob: atlas-file: atlas-plugin: https:; media-src 'self' data: blob: atlas-file: atlas-plugin:; frame-src http: https:;"
         ]
       }
     })
@@ -205,7 +237,12 @@ function installSecurityDefaults(): void {
 }
 
 async function createWindow(): Promise<void> {
-  const persistence = new CanvasPersistence()
+  appSettingsService = new AppSettingsService()
+  const settings = await appSettingsService.getSettings()
+  trayLocale = settings.locale
+  updateTrayMenu()
+
+  const persistence = new CanvasPersistence(() => appSettingsService?.getSettings() ?? Promise.resolve(settings))
   await persistence.initialize()
 
   const window = new BrowserWindow({
@@ -253,6 +290,12 @@ async function createWindow(): Promise<void> {
   ptyService.registerIpc()
   browserService = new BrowserService(window)
   browserService.registerIpc()
+  appSettingsService.registerIpc((nextSettings) => {
+    trayLocale = nextSettings.locale
+    updateTrayMenu()
+  })
+  pluginService = new PluginService()
+  pluginService.registerIpc()
 
   window.on('close', (event) => {
     if (isQuitting) {

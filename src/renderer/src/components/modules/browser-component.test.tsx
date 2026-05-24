@@ -254,7 +254,7 @@ describe('BrowserComponent', () => {
     }
     const requestedTab = tabPatch.tabs.find((tab) => tab.url === 'https://example.com/new-window')
 
-    expect(requestedTab).toEqual(expect.objectContaining({ title: 'New tab', url: 'https://example.com/new-window' }))
+    expect(requestedTab).toEqual(expect.objectContaining({ title: '新标签页', url: 'https://example.com/new-window' }))
     expect(tabPatch.activeTabId).toBe(requestedTab?.localId)
   })
 })

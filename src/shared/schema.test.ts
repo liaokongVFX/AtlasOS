@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { ATLAS_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from './constants'
-import { canvasDocumentSchema } from './schema'
+import { ATLAS_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, DEFAULT_LOCALE, DEFAULT_VIEWPORT } from './constants'
+import { appSettingsSchema, canvasDocumentSchema } from './schema'
 
 describe('canvasDocumentSchema', () => {
   it('validates a minimal canvas document with default structures', () => {
@@ -70,5 +70,75 @@ describe('canvasDocumentSchema', () => {
     })
 
     expect(parsed.components[0].type).toBe('kanban')
+  })
+
+  it('accepts plugin canvas component types', () => {
+    const timestamp = new Date().toISOString()
+    const parsed = canvasDocumentSchema.parse({
+      schemaVersion: ATLAS_SCHEMA_VERSION,
+      id: 'canvas-1',
+      name: 'Home',
+      viewport: DEFAULT_VIEWPORT,
+      background: DEFAULT_CANVAS_BACKGROUND,
+      components: [
+        {
+          id: 'plugin-1',
+          type: 'acme.tools/timer',
+          title: 'Timer',
+          frame: { x: 0, y: 0, width: 420, height: 260 },
+          config: {},
+          state: {},
+          bindings: {},
+          createdAt: timestamp,
+          updatedAt: timestamp
+        }
+      ],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    })
+
+    expect(parsed.components[0].type).toBe('acme.tools/timer')
+  })
+})
+
+describe('appSettingsSchema', () => {
+  it('defaults canvas keyboard shortcuts', () => {
+    expect(appSettingsSchema.parse({})).toEqual({
+      schemaVersion: ATLAS_SCHEMA_VERSION,
+      locale: DEFAULT_LOCALE,
+      shortcuts: {
+        canvasDeselect: 'Ctrl+Q',
+        canvasFind: 'Ctrl+F'
+      }
+    })
+  })
+
+  it('accepts supported locales', () => {
+    expect(appSettingsSchema.parse({ locale: 'en-US' }).locale).toBe('en-US')
+  })
+
+  it('normalizes custom keyboard shortcuts', () => {
+    expect(
+      appSettingsSchema.parse({
+        shortcuts: {
+          canvasDeselect: 'ctrl + shift + x',
+          canvasFind: 'alt + f'
+        }
+      }).shortcuts
+    ).toEqual({
+      canvasDeselect: 'Ctrl+Shift+X',
+      canvasFind: 'Alt+F'
+    })
+  })
+
+  it('rejects duplicate keyboard shortcuts', () => {
+    expect(() =>
+      appSettingsSchema.parse({
+        shortcuts: {
+          canvasDeselect: 'Ctrl+K',
+          canvasFind: 'control + k'
+        }
+      })
+    ).toThrow(/unique/)
   })
 })

@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Copy, ExternalLink, File, FilePlus, Folder, 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { FileEntry } from '@shared/schema'
 import { useElementSize } from '../../hooks/use-element-size'
+import { useI18n, type TFunction } from '../../i18n'
 import { writeClipboardText } from '../../lib/clipboard'
 import { componentTypeForFileSource, createFileComponentPatch } from '../../lib/file-component-factory'
 import { asString, cn } from '../../lib/utils'
@@ -190,7 +191,7 @@ function syncSelectedEntry(tree: FileEntry, selected: FileEntry | null): FileEnt
   return findEntry(tree, selected.path)
 }
 
-function createRow(rootPath: string, actions: FileTreeRowActions) {
+function createRow(rootPath: string, actions: FileTreeRowActions, t: TFunction) {
   return function Row({ node, style }: NodeRendererProps<FileNodeData>) {
     const entry = node.data
     const Icon = entry.kind === 'directory' ? (node.isOpen ? FolderOpen : Folder) : File
@@ -210,6 +211,7 @@ function createRow(rootPath: string, actions: FileTreeRowActions) {
           <div
             className={cn('file-tree-row', node.isSelected && 'file-tree-row--selected')}
             style={style}
+            data-component-context-menu-trigger=""
             onDoubleClick={() => {
               if (isExpandable) node.toggle()
               else if (entry.kind === 'file') void actions.onOpenOnDesktop(entry)
@@ -231,8 +233,8 @@ function createRow(rootPath: string, actions: FileTreeRowActions) {
               <button
                 type="button"
                 className="file-tree-disclosure"
-                aria-label={node.isOpen ? 'Collapse folder' : 'Expand folder'}
-                title={node.isOpen ? 'Collapse folder' : 'Expand folder'}
+                aria-label={node.isOpen ? t('fileTree.collapseFolder') : t('fileTree.expandFolder')}
+                title={node.isOpen ? t('fileTree.collapseFolder') : t('fileTree.expandFolder')}
                 onClick={(event) => {
                   event.stopPropagation()
                   node.toggle()
@@ -253,28 +255,28 @@ function createRow(rootPath: string, actions: FileTreeRowActions) {
             className="menu-content file-tree-context-menu"
             collisionPadding={12}
             onCloseAutoFocus={(event) => event.preventDefault()}
-            aria-label={`${entry.name} actions`}
+            aria-label={t('fileTree.entryActions', { name: entry.name })}
           >
             <ContextMenu.Item className="menu-item file-tree-context-menu__item" onSelect={() => actions.onCreateEntry('file', entry)}>
               <FilePlus size={14} />
-              <span>新建文件</span>
+              <span>{t('fileTree.newFile')}</span>
             </ContextMenu.Item>
             <ContextMenu.Item className="menu-item file-tree-context-menu__item" onSelect={() => actions.onCreateEntry('folder', entry)}>
               <FolderPlus size={14} />
-              <span>新建文件夹</span>
+              <span>{t('fileTree.newFolder')}</span>
             </ContextMenu.Item>
             {entry.path !== rootPath ? (
               <>
                 <ContextMenu.Item className="menu-item file-tree-context-menu__item" onSelect={() => actions.onRenameEntry(entry)}>
                   <Pencil size={14} />
-                  <span>重命名</span>
+                  <span>{t('common.rename')}</span>
                 </ContextMenu.Item>
                 <ContextMenu.Item
                   className="menu-item menu-item--danger file-tree-context-menu__item"
                   onSelect={() => actions.onTrashEntry(entry)}
                 >
                   <Trash2 size={14} />
-                  <span>{entry.kind === 'directory' ? '删除文件夹' : '删除文件'}</span>
+                  <span>{entry.kind === 'directory' ? t('fileTree.deleteFolder') : t('fileTree.deleteFile')}</span>
                 </ContextMenu.Item>
               </>
             ) : null}
@@ -282,21 +284,21 @@ function createRow(rootPath: string, actions: FileTreeRowActions) {
             {entry.kind === 'file' ? (
               <ContextMenu.Item className="menu-item file-tree-context-menu__item" onSelect={() => void actions.onOpenOnDesktop(entry)}>
                 <ExternalLink size={14} />
-                <span>打开到桌面</span>
+                <span>{t('fileTree.openDesktop')}</span>
               </ContextMenu.Item>
             ) : null}
             <ContextMenu.Item className="menu-item file-tree-context-menu__item" onSelect={() => void actions.onRevealInFolder(entry)}>
               <FolderOpen size={14} />
-              <span>打开文件所在位置</span>
+              <span>{t('fileTree.revealLocation')}</span>
             </ContextMenu.Item>
             <ContextMenu.Item className="menu-item file-tree-context-menu__item" onSelect={() => void actions.onOpenCommandLine(entry)}>
               <TerminalSquare size={14} />
-              <span>打开命令行</span>
+              <span>{t('fileTree.openCommandLine')}</span>
             </ContextMenu.Item>
             <ContextMenu.Separator className="menu-separator" />
             <ContextMenu.Item className="menu-item file-tree-context-menu__item" onSelect={() => void actions.onCopyPath(entry)}>
               <Copy size={14} />
-              <span>复制文件路径</span>
+              <span>{t('fileTree.copyFilePath')}</span>
             </ContextMenu.Item>
           </ContextMenu.Content>
         </ContextMenu.Portal>
@@ -306,6 +308,7 @@ function createRow(rootPath: string, actions: FileTreeRowActions) {
 }
 
 export function FileTreeComponent({ component, updateConfig, updateState }: AtlasComponentRendererProps): JSX.Element {
+  const { t } = useI18n()
   const rootPath = asString(component.config.rootPath)
   const persistedOpenPaths = useMemo(() => readOpenPaths(rootPath, component.state.openPaths), [component.state.openPaths, rootPath])
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -356,9 +359,9 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
       setSelected((current) => syncSelectedEntry(nextTree, current))
       setError(null)
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load folder')
+      setError(loadError instanceof Error ? loadError.message : t('fileTree.failedLoadFolder'))
     }
-  }, [rootPath])
+  }, [rootPath, t])
 
   const loadDirectory = useCallback(
     async (targetPath: string, force = false) => {
@@ -382,12 +385,12 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
         setSelected((current) => (current?.path === loadedEntry.path ? loadedEntry : current))
         setError(null)
       } catch (loadError) {
-        setError(errorMessage(loadError, 'Failed to load folder'))
+        setError(errorMessage(loadError, t('fileTree.failedLoadFolder')))
       } finally {
         loadingPathsRef.current.delete(targetPath)
       }
     },
-    [rootPath]
+    [rootPath, t]
   )
 
   const persistOpenPaths = useCallback(
@@ -466,10 +469,10 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
         await window.atlas.filesystem.revealInFolder(rootPath, entry.path)
         setError(null)
       } catch (actionError) {
-        setError(errorMessage(actionError, 'Failed to open file location'))
+        setError(errorMessage(actionError, t('fileTree.failedOpenLocation')))
       }
     },
-    [rootPath]
+    [rootPath, t]
   )
 
   const openCommandLine = useCallback((entry: FileEntry) => {
@@ -507,24 +510,24 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
         )
         setError(null)
       } catch (actionError) {
-        setError(errorMessage(actionError, 'Failed to open file on desktop'))
+        setError(errorMessage(actionError, t('fileTree.failedOpenDesktop')))
       }
     },
-    [addComponent, component.frame.width, component.frame.x, component.frame.y, rootPath]
+    [addComponent, component.frame.width, component.frame.x, component.frame.y, rootPath, t]
   )
 
   const copyPath = useCallback(async (entry: FileEntry) => {
     try {
       const didCopy = await writeClipboardText(entry.path)
       if (!didCopy) {
-        setError('Failed to copy file path')
+        setError(t('fileTree.failedCopyPath'))
         return
       }
       setError(null)
     } catch (actionError) {
-      setError(errorMessage(actionError, 'Failed to copy file path'))
+      setError(errorMessage(actionError, t('fileTree.failedCopyPath')))
     }
-  }, [])
+  }, [t])
 
   const requestCreateEntry = useCallback((kind: CreateEntryKind, target: FileEntry) => {
     setPendingCreate({ kind, target })
@@ -552,10 +555,10 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
         await loadDirectory(targetPath, true)
         setError(null)
       } catch (createError) {
-        setError(errorMessage(createError, pendingCreate.kind === 'file' ? 'Failed to create file' : 'Failed to create folder'))
+        setError(errorMessage(createError, pendingCreate.kind === 'file' ? t('fileTree.failedCreateFile') : t('fileTree.failedCreateFolder')))
       }
     },
-    [closeCreateDialog, loadDirectory, newEntryName, pendingCreate, rootPath]
+    [closeCreateDialog, loadDirectory, newEntryName, pendingCreate, rootPath, t]
   )
 
   const requestRenameEntry = useCallback((target: FileEntry) => {
@@ -591,10 +594,10 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
         await loadDirectory(parentPath, true)
         setError(null)
       } catch (renameError) {
-        setError(errorMessage(renameError, 'Failed to rename item'))
+        setError(errorMessage(renameError, t('fileTree.failedRename')))
       }
     },
-    [closeRenameDialog, loadDirectory, renameEntryName, renameTarget, rootPath, updateState]
+    [closeRenameDialog, loadDirectory, renameEntryName, renameTarget, rootPath, t, updateState]
   )
 
   const requestTrashEntry = useCallback((target: FileEntry) => {
@@ -613,9 +616,9 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
       await loadDirectory(parentPath, true)
       setError(null)
     } catch (trashError) {
-      setError(errorMessage(trashError, 'Failed to move item to recycle bin'))
+      setError(errorMessage(trashError, t('fileTree.failedTrash')))
     }
-  }, [loadDirectory, rootPath, trashTarget])
+  }, [loadDirectory, rootPath, t, trashTarget])
 
   const rowActions = useMemo<FileTreeRowActions>(
     () => ({
@@ -630,10 +633,10 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
     }),
     [copyPath, openCommandLine, openOnDesktop, requestCreateEntry, requestRenameEntry, requestTrashEntry, revealInFolder]
   )
-  const Row = useMemo(() => createRow(rootPath, rowActions), [rootPath, rowActions])
+  const Row = useMemo(() => createRow(rootPath, rowActions, t), [rootPath, rowActions, t])
 
   const chooseDirectory = async () => {
-    const directory = await window.atlas.filesystem.chooseDirectory('Bind file tree to folder')
+    const directory = await window.atlas.filesystem.chooseDirectory(t('fileTree.bindTitle'))
     if (directory) {
       updateConfig({ rootPath: directory }, true)
       updateState({ openPaths: [directory] }, true)
@@ -645,7 +648,7 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
       <div className="empty-module">
         <Folder size={28} />
         <button className="primary-button" onClick={chooseDirectory}>
-          Choose folder
+          {t('fileTree.chooseFolder')}
         </button>
       </div>
     )
@@ -655,10 +658,10 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
     <>
       <div className="file-tree-module" ref={containerRef}>
         <div className="file-tree-toolbar">
-          <button className="icon-button" onClick={chooseDirectory} title="Choose folder">
+          <button className="icon-button" onClick={chooseDirectory} title={t('fileTree.chooseFolder')} aria-label={t('fileTree.chooseFolder')}>
             <Folder size={15} />
           </button>
-          <button className="icon-button" onClick={() => void loadTree()} title="Refresh">
+          <button className="icon-button" onClick={() => void loadTree()} title={t('common.reload')} aria-label={t('common.reload')}>
             <RefreshCw size={15} />
           </button>
         </div>
@@ -685,13 +688,17 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content className="dialog-content">
-            <Dialog.Title className="dialog-title">{pendingCreate?.kind === 'folder' ? '新建文件夹' : '新建文件'}</Dialog.Title>
+            <Dialog.Title className="dialog-title">
+              {pendingCreate?.kind === 'folder' ? t('fileTree.newFolderTitle') : t('fileTree.newFileTitle')}
+            </Dialog.Title>
             <Dialog.Description className="dialog-description">
-              在 {pendingCreate ? `"${createLocationName(pendingCreate.target)}"` : '当前目录'} 中创建。
+              {t('fileTree.createDescription', {
+                location: pendingCreate ? `"${createLocationName(pendingCreate.target)}"` : t('fileTree.currentDirectory')
+              })}
             </Dialog.Description>
             <form onSubmit={(event) => void createEntry(event)}>
               <div className="field-row">
-                <label htmlFor="file-tree-new-entry-name">名称</label>
+                <label htmlFor="file-tree-new-entry-name">{t('common.name')}</label>
                 <input
                   id="file-tree-new-entry-name"
                   value={newEntryName}
@@ -702,12 +709,12 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
               <div className="dialog-actions">
                 <Dialog.Close asChild>
                   <button type="button" className="tool-button">
-                    取消
+                    {t('common.cancel')}
                   </button>
                 </Dialog.Close>
                 <button type="submit" className="tool-button" disabled={!newEntryName.trim()}>
                   {pendingCreate?.kind === 'folder' ? <FolderPlus size={16} /> : <FilePlus size={16} />}
-                  <span>创建</span>
+                  <span>{t('common.create')}</span>
                 </button>
               </div>
             </form>
@@ -719,13 +726,15 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content className="dialog-content">
-            <Dialog.Title className="dialog-title">{renameTarget?.kind === 'directory' ? '重命名文件夹' : '重命名文件'}</Dialog.Title>
+            <Dialog.Title className="dialog-title">
+              {renameTarget?.kind === 'directory' ? t('fileTree.renameFolderTitle') : t('fileTree.renameFileTitle')}
+            </Dialog.Title>
             <Dialog.Description className="dialog-description">
-              修改 {renameTarget ? `"${renameTarget.name}"` : '该项目'} 的名称。
+              {t('fileTree.renameDescription', { name: renameTarget ? `"${renameTarget.name}"` : t('fileTree.thisItem') })}
             </Dialog.Description>
             <form onSubmit={(event) => void renameEntry(event)}>
               <div className="field-row">
-                <label htmlFor="file-tree-rename-entry-name">名称</label>
+                <label htmlFor="file-tree-rename-entry-name">{t('common.name')}</label>
                 <input
                   id="file-tree-rename-entry-name"
                   value={renameEntryName}
@@ -736,12 +745,12 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
               <div className="dialog-actions">
                 <Dialog.Close asChild>
                   <button type="button" className="tool-button">
-                    取消
+                    {t('common.cancel')}
                   </button>
                 </Dialog.Close>
                 <button type="submit" className="tool-button" disabled={!renameEntryName.trim() || renameEntryName.trim() === renameTarget?.name}>
                   <Pencil size={16} />
-                  <span>重命名</span>
+                  <span>{t('common.rename')}</span>
                 </button>
               </div>
             </form>
@@ -753,19 +762,21 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content className="dialog-content">
-            <Dialog.Title className="dialog-title">{trashTarget?.kind === 'directory' ? '删除文件夹?' : '删除文件?'}</Dialog.Title>
+            <Dialog.Title className="dialog-title">
+              {trashTarget?.kind === 'directory' ? t('fileTree.deleteFolderTitle') : t('fileTree.deleteFileTitle')}
+            </Dialog.Title>
             <Dialog.Description className="dialog-description">
-              将 {trashTarget ? `"${trashTarget.name}"` : '该项目'} 移到回收站。
+              {t('fileTree.trashDescription', { name: trashTarget ? `"${trashTarget.name}"` : t('fileTree.thisItem') })}
             </Dialog.Description>
             <div className="dialog-actions">
               <Dialog.Close asChild>
-                <button type="button" className="tool-button">
-                  取消
-                </button>
+                  <button type="button" className="tool-button">
+                    {t('common.cancel')}
+                  </button>
               </Dialog.Close>
               <button type="button" className="tool-button danger" onClick={() => void confirmTrashEntry()}>
                 <Trash2 size={16} />
-                <span>删除</span>
+                <span>{t('common.delete')}</span>
               </button>
             </div>
           </Dialog.Content>

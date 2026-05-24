@@ -46,14 +46,22 @@ export type KanbanColumnInput = {
   wipLimit?: number | string | null
 }
 
-const DEFAULT_COLUMNS = [
-  { id: 'backlog', title: 'Backlog' },
-  { id: 'doing', title: 'Doing' },
-  { id: 'done', title: 'Done' }
-] as const
+export type KanbanText = {
+  defaultColumns: ReadonlyArray<{ id: string; title: string }>
+  defaultCardTitle: string
+  defaultColumnTitle: string
+}
 
-const DEFAULT_CARD_TITLE = '新卡片'
-const DEFAULT_COLUMN_TITLE = '新列'
+export const DEFAULT_KANBAN_TEXT: KanbanText = {
+  defaultColumns: [
+    { id: 'backlog', title: '待办' },
+    { id: 'doing', title: '进行中' },
+    { id: 'done', title: '完成' }
+  ],
+  defaultCardTitle: '新卡片',
+  defaultColumnTitle: '新列'
+}
+
 const MAX_WIP_LIMIT = 999
 
 function nowIso(): string {
@@ -140,23 +148,23 @@ function createColumn(id: string, title: string, timestamp: string): KanbanColum
   }
 }
 
-export function createDefaultKanbanState(timestamp = nowIso()): KanbanState {
+export function createDefaultKanbanState(timestamp = nowIso(), text: KanbanText = DEFAULT_KANBAN_TEXT): KanbanState {
   return {
     schemaVersion: KANBAN_STATE_VERSION,
-    columns: DEFAULT_COLUMNS.map((column) => createColumn(column.id, column.title, timestamp)),
+    columns: text.defaultColumns.map((column) => createColumn(column.id, column.title, timestamp)),
     cards: {},
     view: createDefaultView()
   }
 }
 
-function normalizeCard(id: string, value: unknown, timestamp: string): KanbanCard | null {
+function normalizeCard(id: string, value: unknown, timestamp: string, text: KanbanText): KanbanCard | null {
   if (!id || !isRecord(value)) return null
 
   const cardId = asString(value.id, id).trim() || id
 
   return {
     id: cardId,
-    title: asTitle(value.title, DEFAULT_CARD_TITLE),
+    title: asTitle(value.title, text.defaultCardTitle),
     description: asString(value.description),
     labels: normalizeKanbanLabels(value.labels),
     priority: normalizePriority(value.priority),
@@ -167,19 +175,19 @@ function normalizeCard(id: string, value: unknown, timestamp: string): KanbanCar
   }
 }
 
-function normalizeCards(value: unknown, timestamp: string): Record<string, KanbanCard> {
+function normalizeCards(value: unknown, timestamp: string, text: KanbanText): Record<string, KanbanCard> {
   if (!isRecord(value)) return {}
 
   const cards: Record<string, KanbanCard> = {}
   for (const [id, rawCard] of Object.entries(value)) {
-    const card = normalizeCard(id, rawCard, timestamp)
+    const card = normalizeCard(id, rawCard, timestamp, text)
     if (card) cards[card.id] = card
   }
 
   return cards
 }
 
-function normalizeColumns(value: unknown, cards: Record<string, KanbanCard>, timestamp: string): KanbanColumn[] {
+function normalizeColumns(value: unknown, cards: Record<string, KanbanCard>, timestamp: string, text: KanbanText): KanbanColumn[] {
   const rawColumns = Array.isArray(value) ? value : []
   const cardIds = new Set(Object.keys(cards))
   const assignedCardIds = new Set<string>()
@@ -205,7 +213,7 @@ function normalizeColumns(value: unknown, cards: Record<string, KanbanCard>, tim
     columnIds.add(id)
     columns.push({
       id,
-      title: asTitle(rawColumn.title, DEFAULT_COLUMN_TITLE),
+      title: asTitle(rawColumn.title, text.defaultColumnTitle),
       cardIds: normalizedCardIds,
       wipLimit: normalizeWipLimit(rawColumn.wipLimit),
       createdAt: asTimestamp(rawColumn.createdAt, timestamp),
@@ -213,7 +221,7 @@ function normalizeColumns(value: unknown, cards: Record<string, KanbanCard>, tim
     })
   }
 
-  const finalColumns = columns.length > 0 ? columns : createDefaultKanbanState(timestamp).columns
+  const finalColumns = columns.length > 0 ? columns : createDefaultKanbanState(timestamp, text).columns
   const firstColumn = finalColumns[0]
   for (const cardId of cardIds) {
     if (!assignedCardIds.has(cardId)) firstColumn.cardIds.push(cardId)
@@ -222,14 +230,14 @@ function normalizeColumns(value: unknown, cards: Record<string, KanbanCard>, tim
   return finalColumns
 }
 
-export function normalizeKanbanState(value: unknown, timestamp = nowIso()): KanbanState {
-  if (!isRecord(value)) return createDefaultKanbanState(timestamp)
+export function normalizeKanbanState(value: unknown, timestamp = nowIso(), text: KanbanText = DEFAULT_KANBAN_TEXT): KanbanState {
+  if (!isRecord(value)) return createDefaultKanbanState(timestamp, text)
 
-  const cards = normalizeCards(value.cards, timestamp)
+  const cards = normalizeCards(value.cards, timestamp, text)
 
   return {
     schemaVersion: KANBAN_STATE_VERSION,
-    columns: normalizeColumns(value.columns, cards, timestamp),
+    columns: normalizeColumns(value.columns, cards, timestamp, text),
     cards,
     view: normalizeView(value.view)
   }
@@ -266,11 +274,17 @@ function clampIndex(index: number, max: number): number {
   return Math.max(0, Math.min(Math.round(index), max))
 }
 
-export function createKanbanColumn(state: KanbanState, id: string, input: KanbanColumnInput = {}, timestamp = nowIso()): KanbanState {
+export function createKanbanColumn(
+  state: KanbanState,
+  id: string,
+  input: KanbanColumnInput = {},
+  timestamp = nowIso(),
+  text: KanbanText = DEFAULT_KANBAN_TEXT
+): KanbanState {
   const next = cloneState(state)
   next.columns.push({
     id,
-    title: asTitle(input.title, DEFAULT_COLUMN_TITLE),
+    title: asTitle(input.title, text.defaultColumnTitle),
     cardIds: [],
     wipLimit: normalizeWipLimit(input.wipLimit),
     createdAt: timestamp,
@@ -279,18 +293,24 @@ export function createKanbanColumn(state: KanbanState, id: string, input: Kanban
   return next
 }
 
-export function updateKanbanColumn(state: KanbanState, columnId: string, input: KanbanColumnInput, timestamp = nowIso()): KanbanState {
+export function updateKanbanColumn(
+  state: KanbanState,
+  columnId: string,
+  input: KanbanColumnInput,
+  timestamp = nowIso(),
+  text: KanbanText = DEFAULT_KANBAN_TEXT
+): KanbanState {
   const next = cloneState(state)
   const column = next.columns.find((item) => item.id === columnId)
   if (!column) return state
 
-  if (input.title !== undefined) column.title = asTitle(input.title, DEFAULT_COLUMN_TITLE)
+  if (input.title !== undefined) column.title = asTitle(input.title, text.defaultColumnTitle)
   if (input.wipLimit !== undefined) column.wipLimit = normalizeWipLimit(input.wipLimit)
   column.updatedAt = timestamp
   return next
 }
 
-export function deleteKanbanColumn(state: KanbanState, columnId: string): KanbanState {
+export function deleteKanbanColumn(state: KanbanState, columnId: string, text: KanbanText = DEFAULT_KANBAN_TEXT): KanbanState {
   const target = state.columns.find((column) => column.id === columnId)
   if (!target) return state
 
@@ -302,7 +322,7 @@ export function deleteKanbanColumn(state: KanbanState, columnId: string): Kanban
   }
 
   if (next.columns.length === 0) {
-    return createDefaultKanbanState()
+    return createDefaultKanbanState(nowIso(), text)
   }
 
   return next
@@ -321,14 +341,21 @@ export function moveKanbanColumn(state: KanbanState, columnId: string, targetInd
   return next
 }
 
-export function createKanbanCard(state: KanbanState, columnId: string, id: string, input: KanbanCardInput = {}, timestamp = nowIso()): KanbanState {
+export function createKanbanCard(
+  state: KanbanState,
+  columnId: string,
+  id: string,
+  input: KanbanCardInput = {},
+  timestamp = nowIso(),
+  text: KanbanText = DEFAULT_KANBAN_TEXT
+): KanbanState {
   const column = state.columns.find((item) => item.id === columnId)
   if (!column) return state
 
   const next = cloneState(state)
   next.cards[id] = {
     id,
-    title: asTitle(input.title, DEFAULT_CARD_TITLE),
+    title: asTitle(input.title, text.defaultCardTitle),
     description: asString(input.description),
     labels: normalizeKanbanLabels(input.labels),
     priority: normalizePriority(input.priority),
@@ -342,13 +369,19 @@ export function createKanbanCard(state: KanbanState, columnId: string, id: strin
   return next
 }
 
-export function updateKanbanCard(state: KanbanState, cardId: string, input: KanbanCardInput, timestamp = nowIso()): KanbanState {
+export function updateKanbanCard(
+  state: KanbanState,
+  cardId: string,
+  input: KanbanCardInput,
+  timestamp = nowIso(),
+  text: KanbanText = DEFAULT_KANBAN_TEXT
+): KanbanState {
   if (!state.cards[cardId]) return state
 
   const next = cloneState(state)
   const card = next.cards[cardId]
 
-  if (input.title !== undefined) card.title = asTitle(input.title, DEFAULT_CARD_TITLE)
+  if (input.title !== undefined) card.title = asTitle(input.title, text.defaultCardTitle)
   if (input.description !== undefined) card.description = asString(input.description)
   if (input.labels !== undefined) card.labels = normalizeKanbanLabels(input.labels)
   if (input.priority !== undefined) card.priority = normalizePriority(input.priority)

@@ -1,19 +1,13 @@
 import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { NodeResizer, type Node, type NodeProps, type OnResize, type OnResizeEnd } from '@xyflow/react'
 import type { CanvasComponent } from '@shared/schema'
-import { asString, cn } from '../lib/utils'
-import { getFilePreviewKind } from '../lib/file-types'
-import {
-  fitMediaFrameToAspectRatio,
-  mediaAspectRatioFromConfig,
-  mediaAspectRatioFromFrame,
-  MEDIA_NODE_MIN_WIDTH,
-  normalizeMediaResizeFrame
-} from '../lib/media-frame'
+import { cn } from '../lib/utils'
+import { MEDIA_NODE_MIN_WIDTH } from '../lib/media-frame'
 import { notifyCanvasViewportSync } from '../lib/canvas-viewport-sync'
 import { useCanvasStore } from '../store/canvas-store'
+import { useI18n } from '../i18n'
 import { ComponentErrorBoundary } from './component-error-boundary'
-import { componentRegistry } from './registry'
+import { componentDefinitionTitle, getComponentDefinition, type NodeResizeParams } from './registry'
 
 type AtlasNodeData = Record<string, unknown> & {
   canvasId: string
@@ -25,10 +19,51 @@ export type AtlasFlowNode = Node<AtlasNodeData, 'atlasComponent'>
 
 const NODE_SELECTION_RESIZER_COLOR = 'var(--component-node-selected-handle)'
 const DEFAULT_NODE_MIN_HEIGHT = 160
+const SHIELD_CONTEXT_MENU_TRIGGER_SELECTOR = '[data-component-context-menu-trigger]'
+
+function contextMenuPassthroughTarget(shield: HTMLElement, clientX: number, clientY: number): HTMLElement | null {
+  const body = shield.parentElement
+  if (!body) return null
+
+  const elementsAtPoint = document.elementsFromPoint?.(clientX, clientY) ?? []
+  const target = elementsAtPoint
+    .filter((element) => element !== shield && body.contains(element) && !element.closest('.component-node__interaction-shield'))
+    .map((element) => element.closest<HTMLElement>(SHIELD_CONTEXT_MENU_TRIGGER_SELECTOR))
+    .find((element): element is HTMLElement => Boolean(element && body.contains(element)))
+  if (target) return target
+
+  const previousPointerEvents = shield.style.pointerEvents
+  shield.style.pointerEvents = 'none'
+  const fallbackTarget = document.elementFromPoint?.(clientX, clientY) ?? null
+  shield.style.pointerEvents = previousPointerEvents
+
+  const passthroughTarget = fallbackTarget?.closest<HTMLElement>(SHIELD_CONTEXT_MENU_TRIGGER_SELECTOR) ?? null
+  return passthroughTarget && body.contains(passthroughTarget) ? passthroughTarget : null
+}
+
+function createForwardedContextMenuEvent(event: MouseEvent<HTMLElement>): globalThis.MouseEvent {
+  return new globalThis.MouseEvent('contextmenu', {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    button: event.button,
+    buttons: event.buttons,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    screenX: event.screenX,
+    screenY: event.screenY,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    metaKey: event.metaKey
+  })
+}
 
 function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode>): JSX.Element {
+  const { t } = useI18n()
   const { canvasId, component } = data
-  const definition = componentRegistry[component.type]
+  const definition = getComponentDefinition(component.type)
+  const defaultTitle = componentDefinitionTitle(definition, t)
   const updateComponent = useCanvasStore((state) => state.updateComponent)
   const [isResizing, setIsResizing] = useState(false)
   const [isEditingTitle, setIsEditingTitle] = useState(false)
@@ -36,11 +71,10 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
   const titleInputRef = useRef<HTMLInputElement | null>(null)
   const shouldCommitTitleEditRef = useRef(true)
   const resizeDirectionRef = useRef<readonly number[] | null>(null)
-  const terminalPath = component.type === 'terminal' ? asString(component.state.cwd, asString(component.config.cwd)) : ''
-  const previewKind =
-    component.type === 'file-preview' ? getFilePreviewKind(asString(component.bindings.path), asString(component.config.mimeType)) : null
-  const isMediaPreview = previewKind === 'image' || previewKind === 'video'
-  const mediaAspectRatio = isMediaPreview ? (mediaAspectRatioFromConfig(component.config) ?? mediaAspectRatioFromFrame(component.frame)) : null
+  const resizeBehavior = definition.getResizeBehavior?.(component) ?? null
+  const nodeChromeVariant = definition.chrome?.variant
+  const isTerminalChrome = nodeChromeVariant === 'terminal'
+  const subtitle = definition.getSubtitle?.(component) ?? null
 
   const Icon = definition.icon
   const Renderer = definition.Renderer
@@ -82,9 +116,9 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
 
   const setTitle = useCallback((title: string) => {
     updateComponent(canvasId, component.id, (draft) => {
-      draft.title = title.trim() || definition.title
+      draft.title = title.trim() || defaultTitle
     })
-  }, [canvasId, component.id, definition.title, updateComponent])
+  }, [canvasId, component.id, defaultTitle, updateComponent])
 
   useEffect(() => {
     if (!isEditingTitle) setDraftTitle(component.title)
@@ -146,22 +180,27 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
 
   const persistResize = useCallback<OnResizeEnd>((_, params) => {
     setIsResizing(false)
-    const normalizedFrame =
-      mediaAspectRatio && isMediaPreview
-        ? normalizeMediaResizeFrame(params, mediaAspectRatio, resizeDirectionRef.current)
-        : {
-            x: Math.round(params.x),
-            y: Math.round(params.y),
-            width: Math.round(params.width),
-            height: Math.round(params.height)
-          }
+    const resizeParams: NodeResizeParams = {
+      x: params.x,
+      y: params.y,
+      width: params.width,
+      height: params.height
+    }
+    const normalizedFrame = resizeBehavior?.normalizeFrame
+      ? resizeBehavior.normalizeFrame(resizeParams, { component, direction: resizeDirectionRef.current })
+      : {
+          x: Math.round(params.x),
+          y: Math.round(params.y),
+          width: Math.round(params.width),
+          height: Math.round(params.height)
+        }
 
     resizeDirectionRef.current = null
     updateComponent(canvasId, component.id, (draft) => {
       draft.frame = normalizedFrame
     })
     notifyCanvasViewportSync()
-  }, [canvasId, component.id, isMediaPreview, mediaAspectRatio, updateComponent])
+  }, [canvasId, component, resizeBehavior, updateComponent])
 
   const markResizing = useCallback(() => {
     setIsResizing(true)
@@ -171,9 +210,18 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
     data.onRequestSelect?.(component.id)
   }, [component.id, data])
 
+  const forwardShieldContextMenu = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    const target = contextMenuPassthroughTarget(event.currentTarget, event.clientX, event.clientY)
+    if (!target) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    target.dispatchEvent(createForwardedContextMenuEvent(event))
+  }, [])
+
   return (
     <section
-      className={cn('component-node', selected && 'component-node--selected', component.type === 'terminal' && 'component-node--terminal')}
+      className={cn('component-node', selected && 'component-node--selected', isTerminalChrome && 'component-node--terminal')}
       style={{ zIndex: component.zIndex }}
       onContextMenuCapture={selectComponentForContextMenu}
     >
@@ -182,43 +230,39 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
         handleClassName="component-node__resize-handle"
         isVisible={selected}
         lineClassName="component-node__resize-line"
-        minWidth={MEDIA_NODE_MIN_WIDTH}
-        minHeight={
-          isMediaPreview && mediaAspectRatio
-            ? fitMediaFrameToAspectRatio(component.frame, mediaAspectRatio, MEDIA_NODE_MIN_WIDTH).height
-            : DEFAULT_NODE_MIN_HEIGHT
-        }
-        keepAspectRatio={isMediaPreview}
-        onResize={isMediaPreview ? trackResize : markResizing}
+        minWidth={resizeBehavior?.minWidth ?? MEDIA_NODE_MIN_WIDTH}
+        minHeight={resizeBehavior?.minHeight ?? DEFAULT_NODE_MIN_HEIGHT}
+        keepAspectRatio={resizeBehavior?.keepAspectRatio ?? false}
+        onResize={resizeBehavior?.keepAspectRatio ? trackResize : markResizing}
         onResizeEnd={persistResize}
       />
-      <header className={cn('component-node__header', component.type === 'terminal' && 'component-node__header--terminal')}>
+      <header className={cn('component-node__header', isTerminalChrome && 'component-node__header--terminal')}>
         <div className="component-node__title">
           <Icon size={16} />
-          <div className={cn('component-node__title-stack', component.type === 'terminal' && 'component-node__title-stack--terminal')}>
+          <div className={cn('component-node__title-stack', isTerminalChrome && 'component-node__title-stack--terminal')}>
             {isEditingTitle ? (
               <input
                 ref={titleInputRef}
-                className={cn('component-node__title-input nodrag', component.type === 'terminal' && 'component-node__title-input--terminal')}
-                size={component.type === 'terminal' ? Math.max(8, draftTitle.length) : undefined}
+                className={cn('component-node__title-input nodrag', isTerminalChrome && 'component-node__title-input--terminal')}
+                size={definition.chrome?.titleInputSize?.(draftTitle)}
                 value={draftTitle}
                 onBlur={commitTitleEdit}
                 onChange={(event) => setDraftTitle(event.target.value)}
                 onKeyDown={handleTitleKeyDown}
-                aria-label="Component title"
+                aria-label={t('component.title')}
               />
             ) : (
               <span
-                className={cn('component-node__title-display', component.type === 'terminal' && 'component-node__title-display--terminal')}
+                className={cn('component-node__title-display', isTerminalChrome && 'component-node__title-display--terminal')}
                 title={component.title}
                 onDoubleClick={beginTitleEdit}
               >
                 {component.title}
               </span>
             )}
-            {component.type === 'terminal' && terminalPath ? (
-              <div className="component-node__subtitle component-node__subtitle--inline" title={terminalPath}>
-                {terminalPath}
+            {subtitle ? (
+              <div className="component-node__subtitle component-node__subtitle--inline" title={subtitle}>
+                {subtitle}
               </div>
             ) : null}
           </div>
@@ -237,7 +281,9 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
             isNodeSelected={selected}
           />
         </ComponentErrorBoundary>
-        {showInteractionShield ? <div className="component-node__interaction-shield" aria-hidden="true" /> : null}
+        {showInteractionShield ? (
+          <div className="component-node__interaction-shield" aria-hidden="true" onContextMenu={forwardShieldContextMenu} />
+        ) : null}
       </div>
     </section>
   )

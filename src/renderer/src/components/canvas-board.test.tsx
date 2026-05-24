@@ -1,9 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+﻿import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ATLAS_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
+import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
 import type { CanvasComponent, CanvasDocument } from '@shared/schema'
+import { I18nContext, setCurrentLocale, translate } from '../i18n'
 import { subscribeCanvasViewportSync } from '../lib/canvas-viewport-sync'
+import { useAppSettingsStore } from '../store/app-settings-store'
 import { useCanvasStore } from '../store/canvas-store'
 import { CanvasBoard } from './canvas-board'
 import type { AtlasFlowNode } from './component-node'
@@ -137,6 +139,22 @@ function createAtlasFileDropDataTransfer(payload: Record<string, unknown>): Data
   } as unknown as DataTransfer
 }
 
+function renderCanvasBoard(): ReturnType<typeof render> {
+  setCurrentLocale('en-US')
+
+  return render(
+    <I18nContext.Provider
+      value={{
+        locale: 'en-US',
+        setLocale: vi.fn(),
+        t: (key, values) => translate('en-US', key, values)
+      }}
+    >
+      <CanvasBoard />
+    </I18nContext.Provider>
+  )
+}
+
 function createDropEvent(dataTransfer: DataTransfer, clientX = 320, clientY = 240): ReactDragEvent {
   return {
     clientX,
@@ -198,6 +216,15 @@ describe('CanvasBoard', () => {
         }
       }
     })
+    useAppSettingsStore.setState({
+      error: null,
+      isLoaded: true,
+      settings: {
+        schemaVersion: ATLAS_SCHEMA_VERSION,
+        locale: 'en-US',
+        shortcuts: { ...DEFAULT_APP_SHORTCUTS }
+      }
+    })
     useCanvasStore.setState({
       activeCanvasId: 'canvas-1',
       appState: null,
@@ -215,7 +242,7 @@ describe('CanvasBoard', () => {
     const listener = vi.fn()
     const unsubscribe = subscribeCanvasViewportSync(listener)
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     expect(reactFlowProps.current?.onMove).toBeTypeOf('function')
 
@@ -229,14 +256,14 @@ describe('CanvasBoard', () => {
   })
 
   it('leaves canvas component positions unconstrained by grid snapping', () => {
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     expect(reactFlowProps.current?.snapToGrid).toBeUndefined()
     expect(reactFlowProps.current?.snapGrid).toBeUndefined()
   })
 
   it('disables browser webview hit testing while the viewport is being dragged', () => {
-    const { container } = render(<CanvasBoard />)
+    const { container } = renderCanvasBoard()
 
     const board = container.querySelector('.canvas-board')
     expect(board).not.toHaveClass('canvas-board--viewport-interacting')
@@ -267,7 +294,7 @@ describe('CanvasBoard', () => {
     const listener = vi.fn()
     const unsubscribe = subscribeCanvasViewportSync(listener)
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     expect(reactFlowProps.current?.onNodesChange).toBeTypeOf('function')
     expect(reactFlowProps.current?.selectNodesOnDrag).toBe(false)
@@ -296,7 +323,7 @@ describe('CanvasBoard', () => {
     const listener = vi.fn()
     const unsubscribe = subscribeCanvasViewportSync(listener)
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     const node = reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1')
     expect(node).toBeDefined()
@@ -334,7 +361,7 @@ describe('CanvasBoard', () => {
     const listener = vi.fn()
     const unsubscribe = subscribeCanvasViewportSync(listener)
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     const firstNode = reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1')
     const secondNode = reactFlowProps.current?.nodes?.find((item) => item.id === 'component-2')
@@ -366,7 +393,7 @@ describe('CanvasBoard', () => {
   })
 
   it('creates a selected component from the double-click menu at the pointer position', async () => {
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     expect(reactFlowProps.current?.onPaneClick).toBeTypeOf('function')
     expect(reactFlowProps.current?.zoomOnDoubleClick).toBe(false)
@@ -414,7 +441,7 @@ describe('CanvasBoard', () => {
       }
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     act(() => {
       reactFlowProps.current?.onNodesChange?.([{ id: 'component-1', type: 'select', selected: true }])
@@ -438,7 +465,7 @@ describe('CanvasBoard', () => {
       }
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     const visualSelectedNode = reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')
     expect(visualSelectedNode?.selected).not.toBe(true)
@@ -470,7 +497,7 @@ describe('CanvasBoard', () => {
       }
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     const selectedTerminalNode = reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')
     reactFlowMock.getNodes.mockReturnValue(selectedTerminalNode ? [{ ...selectedTerminalNode, selected: true }] : [])
@@ -497,7 +524,7 @@ describe('CanvasBoard', () => {
       }
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     act(() => {
       reactFlowProps.current?.onNodesChange?.([{ id: 'component-1', type: 'select', selected: true }])
@@ -530,7 +557,7 @@ describe('CanvasBoard', () => {
       }
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     const visualSelectedNode = reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')
     expect(visualSelectedNode?.selected).not.toBe(true)
@@ -544,6 +571,119 @@ describe('CanvasBoard', () => {
     const components = useCanvasStore.getState().canvases['canvas-1'].components
     expect(components).toHaveLength(2)
     expect(components[1].id).not.toBe('component-1')
+  })
+
+  it('clears selected components with Ctrl+Q', () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('component-1'),
+            createComponent('component-2', { frame: { x: 560, y: 120, width: 420, height: 300 } })
+          ]
+        }
+      }
+    }))
+    const listener = vi.fn()
+    const unsubscribe = subscribeCanvasViewportSync(listener)
+
+    try {
+      renderCanvasBoard()
+
+      act(() => {
+        reactFlowProps.current?.onNodesChange?.([
+          { id: 'component-1', type: 'select', selected: true },
+          { id: 'component-2', type: 'select', selected: true }
+        ])
+      })
+      expect(reactFlowProps.current?.nodes?.filter((item) => item.selected).map((item) => item.id)).toEqual(['component-1', 'component-2'])
+
+      const event = new KeyboardEvent('keydown', { key: 'q', ctrlKey: true, bubbles: true, cancelable: true })
+      act(() => {
+        window.dispatchEvent(event)
+      })
+
+      expect(event.defaultPrevented).toBe(true)
+      expect(reactFlowProps.current?.nodes?.some((item) => item.selected)).toBe(false)
+      expect(useCanvasStore.getState().canvases['canvas-1'].components).toHaveLength(2)
+      expect(listener).toHaveBeenCalledTimes(1)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('uses the configured shortcut to clear selected components', () => {
+    useAppSettingsStore.setState({
+      settings: {
+        schemaVersion: ATLAS_SCHEMA_VERSION,
+        locale: 'en-US',
+        shortcuts: {
+          canvasDeselect: 'Ctrl+Shift+X',
+          canvasFind: 'Ctrl+F'
+        }
+      }
+    })
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [createComponent('component-1')]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([{ id: 'component-1', type: 'select', selected: true }])
+    })
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+    expect(reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')?.selected).toBe(true)
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }))
+    })
+    expect(reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')?.selected).toBe(false)
+  })
+
+  it('clears a selected terminal with Ctrl+Q from inside xterm focus', () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('component-1', {
+              type: 'terminal',
+              title: 'Terminal',
+              config: {},
+              state: {}
+            })
+          ]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([{ id: 'component-1', type: 'select', selected: true }])
+    })
+    const textarea = createXtermKeyboardTarget('component-1')
+
+    try {
+      fireEvent.keyDown(textarea, { key: 'q', ctrlKey: true })
+    } finally {
+      textarea.closest('.react-flow__node')?.remove()
+    }
+
+    expect(reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')?.selected).toBe(false)
   })
 
   it('opens the node finder with Ctrl+F and focuses the clicked node', async () => {
@@ -571,7 +711,7 @@ describe('CanvasBoard', () => {
     document.body.appendChild(nodeElement)
 
     try {
-      render(<CanvasBoard />)
+      renderCanvasBoard()
 
       act(() => {
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }))
@@ -595,6 +735,41 @@ describe('CanvasBoard', () => {
     }
   })
 
+  it('uses the configured shortcut to open the node finder', async () => {
+    useAppSettingsStore.setState({
+      settings: {
+        schemaVersion: ATLAS_SCHEMA_VERSION,
+        locale: 'en-US',
+        shortcuts: {
+          canvasDeselect: 'Ctrl+Q',
+          canvasFind: 'Alt+K'
+        }
+      }
+    })
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [createComponent('component-1', { title: 'First note' })]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+    expect(screen.queryByRole('dialog', { name: 'Find canvas node' })).not.toBeInTheDocument()
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', altKey: true, bubbles: true, cancelable: true }))
+    })
+
+    expect(await screen.findByRole('option', { name: /First note/ })).toBeInTheDocument()
+  })
+
   it('supports arrow-key selection and Enter in the node finder', async () => {
     useCanvasStore.setState((state) => ({
       canvases: {
@@ -612,7 +787,7 @@ describe('CanvasBoard', () => {
       }
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }))
@@ -630,6 +805,37 @@ describe('CanvasBoard', () => {
       expect(reactFlowProps.current?.nodes?.find((node) => node.id === 'component-2')?.selected).toBe(true)
     })
     expect(reactFlowMock.setCenter).toHaveBeenCalledWith(850, 410, { duration: 180, zoom: 1.15 })
+  })
+
+  it('scrolls the node finder list back to the top when search changes', async () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('component-1', { title: 'Alpha note' }),
+            createComponent('component-2', { title: 'Beta note' }),
+            createComponent('component-3', { title: 'Gamma note' }),
+            createComponent('component-4', { title: 'Delta note' })
+          ]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+
+    const input = await screen.findByRole('combobox', { name: 'Find canvas node' })
+    const list = await screen.findByRole('listbox', { name: 'Canvas nodes' })
+    list.scrollTop = 360
+
+    fireEvent.change(input, { target: { value: 'Gamma' } })
+
+    await waitFor(() => expect(list.scrollTop).toBe(0))
   })
 
   it('shows type-specific paths and URLs in the node finder', async () => {
@@ -716,7 +922,7 @@ describe('CanvasBoard', () => {
       }
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }))
@@ -727,7 +933,7 @@ describe('CanvasBoard', () => {
     expect(screen.getByText('D:\\workspace')).toBeInTheDocument()
     expect(screen.getByText('D:\\workspace\\src\\app.ts')).toBeInTheDocument()
     expect(screen.getByText('D:\\workspace\\README.md')).toBeInTheDocument()
-    expect(screen.getByText('2 列 · 1 卡片')).toBeInTheDocument()
+    expect(screen.getByText('2 columns · 1 cards')).toBeInTheDocument()
   })
 
   it('searches kanban card metadata in the node finder', async () => {
@@ -775,7 +981,7 @@ describe('CanvasBoard', () => {
       }
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }))
@@ -801,7 +1007,7 @@ describe('CanvasBoard', () => {
       }
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     const requestSelect = reactFlowProps.current?.nodes?.find((node) => node.id === 'component-2')?.data.onRequestSelect
     expect(requestSelect).toBeTypeOf('function')
@@ -832,7 +1038,7 @@ describe('CanvasBoard', () => {
       kind: 'file'
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     await act(async () => {
       await reactFlowProps.current?.onDrop?.(createDropEvent(createFileDropDataTransfer([imageFile, videoFile])))
@@ -881,7 +1087,7 @@ describe('CanvasBoard', () => {
         kind: 'file'
       })
 
-      render(<CanvasBoard />)
+      renderCanvasBoard()
 
       await act(async () => {
         await reactFlowProps.current?.onDrop?.(createDropEvent(createFileDropDataTransfer([imageFile])))
@@ -915,7 +1121,7 @@ describe('CanvasBoard', () => {
     })
     vi.mocked(filesystem.readFile).mockResolvedValue('# Hello')
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     await act(async () => {
       await reactFlowProps.current?.onDrop?.(createDropEvent(createFileDropDataTransfer([markdownFile])))
@@ -932,7 +1138,7 @@ describe('CanvasBoard', () => {
   })
 
   it('creates a text preview from an internally dropped code file', async () => {
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     await act(async () => {
       await reactFlowProps.current?.onDrop?.(
@@ -970,7 +1176,7 @@ describe('CanvasBoard', () => {
       }
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     act(() => {
       reactFlowProps.current?.onNodesChange?.([{ id: 'component-1', type: 'select', selected: true }])
@@ -998,7 +1204,7 @@ describe('CanvasBoard', () => {
       }
     }))
 
-    render(<CanvasBoard />)
+    renderCanvasBoard()
 
     const input = document.createElement('input')
     document.body.appendChild(input)
@@ -1006,6 +1212,34 @@ describe('CanvasBoard', () => {
     try {
       fireEvent.keyDown(input, { key: 'f', ctrlKey: true })
       expect(screen.queryByRole('dialog', { name: 'Find canvas node' })).not.toBeInTheDocument()
+    } finally {
+      input.remove()
+    }
+  })
+
+  it('does not clear selected components while an unrelated editable target has focus', () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [createComponent('component-1')]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([{ id: 'component-1', type: 'select', selected: true }])
+    })
+
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+
+    try {
+      fireEvent.keyDown(input, { key: 'q', ctrlKey: true })
+      expect(reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')?.selected).toBe(true)
     } finally {
       input.remove()
     }

@@ -17,25 +17,28 @@ import { Maximize2, Search, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type RefObject } from 'react'
 import type { Measurable } from '@radix-ui/rect'
 import type { CanvasComponent, ComponentType, FileEntry } from '@shared/schema'
+import { keyboardEventMatchesShortcut } from '@shared/keyboard-shortcuts'
 import { notifyCanvasViewportSync } from '../lib/canvas-viewport-sync'
-import {
-  componentTypeForFileSource,
-  createFileComponentPatch,
-  stackedFileComponentPosition,
-  type CanvasFileSource
-} from '../lib/file-component-factory'
+import { stackedFileComponentPosition, type CanvasFileSource } from '../lib/file-component-factory'
 import { fileName, getFilePreviewKind } from '../lib/file-types'
 import type { MediaDimensions } from '../lib/media-frame'
+import { useAppSettingsStore } from '../store/app-settings-store'
 import { useCanvasStore } from '../store/canvas-store'
+import { useI18n } from '../i18n'
 import { ComponentNode, type AtlasFlowNode } from './component-node'
-import { CREATABLE_COMPONENT_TYPES } from './component-definitions'
-import { getKanbanSearchTokens, getKanbanStats, normalizeKanbanState } from './modules/kanban-model'
-import { componentRegistry } from './registry'
+import {
+  componentDefinitionTitle,
+  createComponentInputFromFileSource,
+  getComponentDefinition,
+  getCreatableComponentDefinitions,
+  useComponentRegistryVersion
+} from './registry'
 
 type ComponentNodeCacheEntry = {
   canvasId: string
   component: CanvasComponent
   onRequestSelect?: (componentId: string) => void
+  registryVersion: number
   node: AtlasFlowNode
 }
 
@@ -45,8 +48,6 @@ const nodeTypes = {
 
 const NODE_FOCUS_DURATION = 180
 const NODE_FOCUS_ZOOM = 1.15
-const NODE_FINDER_DEFAULT_BROWSER_URL = 'https://example.com'
-
 const CANVAS_SHORTCUT_BLOCKLIST_SELECTOR = [
   'input',
   'textarea',
@@ -63,8 +64,20 @@ const CANVAS_SHORTCUT_BLOCKLIST_SELECTOR = [
   '.menu-content',
   '.top-bar'
 ].join(',')
+const CANVAS_DESELECT_SHORTCUT_BLOCKLIST_SELECTOR = [
+  '.component-node__title-input',
+  '.dialog-content',
+  '.popover-content',
+  '.menu-content',
+  '.top-bar'
+].join(',')
 
-function componentToNode(canvasId: string, component: CanvasComponent, onRequestSelect?: (componentId: string) => void): AtlasFlowNode {
+function componentToNode(
+  canvasId: string,
+  component: CanvasComponent,
+  registryVersion = 0,
+  onRequestSelect?: (componentId: string) => void
+): AtlasFlowNode {
   return {
     id: component.id,
     type: 'atlasComponent',
@@ -75,7 +88,7 @@ function componentToNode(canvasId: string, component: CanvasComponent, onRequest
     height: component.frame.height,
     measured: { width: component.frame.width, height: component.frame.height },
     zIndex: component.zIndex,
-    data: { canvasId, component, onRequestSelect },
+    data: { canvasId, component, onRequestSelect, registryVersion },
     style: {
       width: component.frame.width,
       height: component.frame.height,
@@ -88,15 +101,21 @@ function cachedComponentToNode(
   cache: Map<string, ComponentNodeCacheEntry>,
   canvasId: string,
   component: CanvasComponent,
+  registryVersion: number,
   onRequestSelect?: (componentId: string) => void
 ): AtlasFlowNode {
   const cached = cache.get(component.id)
-  if (cached?.canvasId === canvasId && cached.component === component && cached.onRequestSelect === onRequestSelect) {
+  if (
+    cached?.canvasId === canvasId &&
+    cached.component === component &&
+    cached.onRequestSelect === onRequestSelect &&
+    cached.registryVersion === registryVersion
+  ) {
     return cached.node
   }
 
-  const node = componentToNode(canvasId, component, onRequestSelect)
-  cache.set(component.id, { canvasId, component, onRequestSelect, node })
+  const node = componentToNode(canvasId, component, registryVersion, onRequestSelect)
+  cache.set(component.id, { canvasId, component, onRequestSelect, registryVersion, node })
   return node
 }
 
@@ -182,14 +201,22 @@ function isSelectedTerminalTarget(target: EventTarget | null, selectedNodeIds: S
   return Boolean(flowNodeId && selectedNodeIds.has(flowNodeId))
 }
 
-function isCanvasShortcutBlocked(target: EventTarget | null, selectedNodeIds: Set<string>, shortcut: 'delete' | 'duplicate' | 'find'): boolean {
-  if (shortcut === 'delete' && isSelectedTerminalTarget(target, selectedNodeIds)) return false
-
-  return target instanceof Element && Boolean(target.closest(CANVAS_SHORTCUT_BLOCKLIST_SELECTOR))
+function isSelectedNodeTarget(target: EventTarget | null, selectedNodeIds: Set<string>): boolean {
+  const flowNodeId = closestFlowNodeId(target)
+  return Boolean(flowNodeId && selectedNodeIds.has(flowNodeId))
 }
 
-function isCanvasFindShortcut(event: KeyboardEvent): boolean {
-  return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f'
+function isCanvasShortcutBlocked(
+  target: EventTarget | null,
+  selectedNodeIds: Set<string>,
+  shortcut: 'delete' | 'deselect' | 'duplicate' | 'find'
+): boolean {
+  if (shortcut === 'delete' && isSelectedTerminalTarget(target, selectedNodeIds)) return false
+  if (shortcut === 'deselect' && isSelectedNodeTarget(target, selectedNodeIds)) {
+    return target instanceof Element && Boolean(target.closest(CANVAS_DESELECT_SHORTCUT_BLOCKLIST_SELECTOR))
+  }
+
+  return target instanceof Element && Boolean(target.closest(CANVAS_SHORTCUT_BLOCKLIST_SELECTOR))
 }
 
 function focusFlowNodeElement(componentId: string): void {
@@ -332,10 +359,12 @@ function CanvasCreateMenu({
   onClose: () => void
   onCreate: (type: ComponentType) => void
 }): JSX.Element {
-  const [activeType, setActiveType] = useState<ComponentType>(CREATABLE_COMPONENT_TYPES[0])
+  const { t } = useI18n()
+  const creatableDefinitions = getCreatableComponentDefinitions()
+  const [activeType, setActiveType] = useState<ComponentType>(creatableDefinitions[0]?.type ?? '')
 
   useEffect(() => {
-    if (open) setActiveType(CREATABLE_COMPONENT_TYPES[0])
+    if (open) setActiveType(getCreatableComponentDefinitions()[0]?.type ?? '')
   }, [open])
 
   return (
@@ -351,11 +380,12 @@ function CanvasCreateMenu({
           onOpenAutoFocus={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => event.preventDefault()}
           role="menu"
-          aria-label="Create component"
+          aria-label={t('canvas.createComponent')}
         >
-          {CREATABLE_COMPONENT_TYPES.map((type) => {
-            const definition = componentRegistry[type]
+          {creatableDefinitions.map((definition) => {
+            const type = definition.type
             const Icon = definition.icon
+            const title = componentDefinitionTitle(definition, t)
 
             return (
               <button
@@ -374,7 +404,7 @@ function CanvasCreateMenu({
                 onClick={() => onCreate(type)}
               >
                 <Icon size={14} />
-                <span>{definition.title}</span>
+                <span>{title}</span>
               </button>
             )
           })}
@@ -385,6 +415,7 @@ function CanvasCreateMenu({
 }
 
 function CanvasZoomControls({ hasNodes }: { hasNodes: boolean }): JSX.Element {
+  const { t } = useI18n()
   const reactFlow = useReactFlow<AtlasFlowNode>()
   const zoom = useStore((state) => state.transform[2])
   const zoomPercent = Math.round(zoom * 100)
@@ -408,7 +439,7 @@ function CanvasZoomControls({ hasNodes }: { hasNodes: boolean }): JSX.Element {
 
   return (
     <Panel position="bottom-right" className="canvas-zoom-controls" style={{ right: 15, bottom: 15, margin: 0 }}>
-      <button type="button" className="canvas-panel-button" onClick={zoomOut} aria-label="Zoom out" title="Zoom out">
+      <button type="button" className="canvas-panel-button" onClick={zoomOut} aria-label={t('canvas.zoomOut')} title={t('canvas.zoomOut')}>
         <ZoomOut size={16} />
       </button>
       <div className="canvas-zoom-level" aria-live="polite">
@@ -419,25 +450,27 @@ function CanvasZoomControls({ hasNodes }: { hasNodes: boolean }): JSX.Element {
         className="canvas-panel-button"
         onClick={fitView}
         disabled={!hasNodes}
-        aria-label="Fit view"
-        title="Fit view"
+        aria-label={t('canvas.fitView')}
+        title={t('canvas.fitView')}
       >
         <Maximize2 size={16} />
       </button>
-      <button type="button" className="canvas-panel-button" onClick={zoomIn} aria-label="Zoom in" title="Zoom in">
+      <button type="button" className="canvas-panel-button" onClick={zoomIn} aria-label={t('canvas.zoomIn')} title={t('canvas.zoomIn')}>
         <ZoomIn size={16} />
       </button>
     </Panel>
   )
 }
 
-function nodeFinderKeywords(component: CanvasComponent, typeLabel: string): string[] {
+function nodeFinderKeywords(component: CanvasComponent, localizedDefinitionTitle: string): string[] {
+  const definition = getComponentDefinition(component.type)
   const detail = nodeFinderDetail(component)
-  const kanbanTokens = component.type === 'kanban' ? getKanbanSearchTokens(normalizeKanbanState(component.state.kanban)) : []
+  const pluginTokens = definition.getSearchTokens?.(component) ?? []
 
   return [
     component.title,
-    typeLabel,
+    localizedDefinitionTitle,
+    definition.title,
     component.type,
     detail,
     optionalString(component.bindings.path),
@@ -445,59 +478,12 @@ function nodeFinderKeywords(component: CanvasComponent, typeLabel: string): stri
     optionalString(component.config.rootPath),
     optionalString(component.config.cwd),
     optionalString(component.state.cwd),
-    ...kanbanTokens
+    ...pluginTokens
   ].filter((value): value is string => Boolean(value))
 }
 
-type BrowserFinderTab = {
-  localId: string
-  url: string
-}
-
-function browserFinderTabs(component: CanvasComponent): BrowserFinderTab[] {
-  const tabs = component.state.tabs
-  if (!Array.isArray(tabs)) return []
-
-  return tabs
-    .filter(isRecord)
-    .map((tab) => ({
-      localId: optionalString(tab.localId) ?? '',
-      url: optionalString(tab.url) ?? ''
-    }))
-    .filter((tab) => tab.localId && tab.url)
-}
-
-function browserFinderUrl(component: CanvasComponent): string {
-  const tabs = browserFinderTabs(component)
-  if (tabs.length === 0) return NODE_FINDER_DEFAULT_BROWSER_URL
-
-  const activeTabId = optionalString(component.state.activeTabId)
-  return tabs.find((tab) => tab.localId === activeTabId)?.url ?? tabs[0].url
-}
-
 function nodeFinderDetail(component: CanvasComponent): string | null {
-  if (component.type === 'terminal') {
-    return optionalString(component.state.cwd) ?? optionalString(component.config.cwd) ?? null
-  }
-
-  if (component.type === 'browser') {
-    return browserFinderUrl(component)
-  }
-
-  if (component.type === 'file-tree') {
-    return optionalString(component.config.rootPath) ?? optionalString(component.bindings.rootPath) ?? null
-  }
-
-  if (component.type === 'file-preview' || component.type === 'markdown-note') {
-    return optionalString(component.bindings.path) ?? optionalString(component.bindings.rootPath) ?? null
-  }
-
-  if (component.type === 'kanban') {
-    const stats = getKanbanStats(normalizeKanbanState(component.state.kanban))
-    return `${stats.columnCount} 列 · ${stats.cardCount} 卡片`
-  }
-
-  return null
+  return getComponentDefinition(component.type).getDetail?.(component) ?? null
 }
 
 function CanvasNodeFinder({
@@ -511,50 +497,73 @@ function CanvasNodeFinder({
   onOpenChange: (open: boolean) => void
   onSelect: (componentId: string) => void
 }): JSX.Element {
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const scrollResetFrameRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (open) setSearch('')
   }, [open])
 
+  useLayoutEffect(() => {
+    if (!open) return undefined
+
+    const resetScroll = (): void => {
+      if (listRef.current) listRef.current.scrollTop = 0
+    }
+
+    resetScroll()
+    scrollResetFrameRef.current = window.requestAnimationFrame(() => {
+      scrollResetFrameRef.current = null
+      resetScroll()
+    })
+
+    return () => {
+      if (scrollResetFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollResetFrameRef.current)
+        scrollResetFrameRef.current = null
+      }
+    }
+  }, [open, search])
+
   return (
     <Command.Dialog
       open={open}
       onOpenChange={onOpenChange}
-      label="Find canvas node"
+      label={t('canvas.findCanvasNode')}
       loop
       overlayClassName="dialog-overlay node-finder-overlay"
       contentClassName="dialog-content node-finder"
     >
-      <Dialog.Title className="sr-only">Find canvas node</Dialog.Title>
-      <Dialog.Description className="sr-only">
-        Search current canvas nodes and jump to the selected node.
-      </Dialog.Description>
+      <Dialog.Title className="sr-only">{t('canvas.findCanvasNode')}</Dialog.Title>
+      <Dialog.Description className="sr-only">{t('canvas.findCanvasNodeDescription')}</Dialog.Description>
       <div className="node-finder__search">
         <Search size={16} aria-hidden="true" />
         <Command.Input
           value={search}
           onValueChange={setSearch}
-          placeholder="Find nodes"
-          aria-label="Find nodes"
+          placeholder={t('canvas.findNodes')}
+          aria-label={t('canvas.findNodes')}
         />
       </div>
-      <Command.List className="node-finder__list" label="Canvas nodes">
+      <Command.List ref={listRef} className="node-finder__list" label={t('canvas.nodeListLabel')}>
         <Command.Empty className="node-finder__empty">
-          {components.length === 0 ? 'No nodes in this workspace.' : 'No matching nodes.'}
+          {components.length === 0 ? t('canvas.noNodes') : t('canvas.noMatchingNodes')}
         </Command.Empty>
-        <Command.Group heading="Nodes">
+        <Command.Group heading={t('canvas.nodes')}>
           {components.map((component) => {
-            const definition = componentRegistry[component.type]
+            const definition = getComponentDefinition(component.type)
             const Icon = definition.icon
             const detail = nodeFinderDetail(component)
+            const definitionTitle = componentDefinitionTitle(definition, t)
 
             return (
               <Command.Item
                 key={component.id}
                 className="node-finder__item"
                 value={component.id}
-                keywords={nodeFinderKeywords(component, definition.title)}
+                keywords={nodeFinderKeywords(component, definitionTitle)}
                 onSelect={() => onSelect(component.id)}
               >
                 <span className="node-finder__item-icon" aria-hidden="true">
@@ -562,7 +571,7 @@ function CanvasNodeFinder({
                 </span>
                 <span className="node-finder__item-main">
                   <span className="node-finder__item-title">{component.title}</span>
-                  <span className="node-finder__item-type">{definition.title}</span>
+                  <span className="node-finder__item-type">{definitionTitle}</span>
                   {detail ? <span className="node-finder__item-detail">{detail}</span> : null}
                 </span>
               </Command.Item>
@@ -576,6 +585,7 @@ function CanvasNodeFinder({
 
 export function CanvasBoard(): JSX.Element {
   const reactFlow = useReactFlow<AtlasFlowNode>()
+  const componentRegistryVersion = useComponentRegistryVersion()
   const activeCanvasId = useCanvasStore((state) => state.activeCanvasId)
   const canvas = useCanvasStore((state) => (state.activeCanvasId ? state.canvases[state.activeCanvasId] : null))
   const updateCanvas = useCanvasStore((state) => state.updateCanvas)
@@ -585,8 +595,9 @@ export function CanvasBoard(): JSX.Element {
   const duplicateComponents = useCanvasStore((state) => state.duplicateComponents)
   const removeComponents = useCanvasStore((state) => state.removeComponents)
   const bringToFront = useCanvasStore((state) => state.bringToFront)
+  const shortcuts = useAppSettingsStore((state) => state.settings.shortcuts)
   const [nodes, setNodes] = useState<AtlasFlowNode[]>(() =>
-    canvas ? canvas.components.map((component) => componentToNode(canvas.id, component)) : []
+    canvas ? canvas.components.map((component) => componentToNode(canvas.id, component, componentRegistryVersion)) : []
   )
   const [createMenu, setCreateMenu] = useState<CanvasCreateMenuState | null>(null)
   const [isNodeFinderOpen, setIsNodeFinderOpen] = useState(false)
@@ -626,7 +637,7 @@ export function CanvasBoard(): JSX.Element {
     const liveComponentIds = new Set<string>()
     const nextNodes = canvas.components.map((component) => {
       liveComponentIds.add(component.id)
-      return cachedComponentToNode(cache, canvas.id, component, selectComponentForContextMenu)
+      return cachedComponentToNode(cache, canvas.id, component, componentRegistryVersion, selectComponentForContextMenu)
     })
 
     for (const [componentId, cached] of cache) {
@@ -636,7 +647,7 @@ export function CanvasBoard(): JSX.Element {
     }
 
     return nextNodes
-  }, [canvas, selectComponentForContextMenu])
+  }, [canvas, componentRegistryVersion, selectComponentForContextMenu])
 
   useLayoutEffect(() => {
     setNodes((currentNodes) => {
@@ -777,6 +788,17 @@ export function CanvasBoard(): JSX.Element {
     [activeCanvasId, closeCreateMenu, duplicateComponents]
   )
 
+  const clearSelectedNodes = useCallback(
+    (componentIds: string[]) => {
+      if (componentIds.length === 0) return
+
+      closeCreateMenu()
+      setNodes((currentNodes) => unselectNodeIds(currentNodes, new Set(componentIds)))
+      notifyCanvasViewportSync()
+    },
+    [closeCreateMenu]
+  )
+
   const getSelectedComponentIds = useCallback(() => {
     const flowNodes = reactFlow.getNodes()
     return flowNodes.length > 0 ? selectedNodeIds(flowNodes) : selectedNodeIds(nodes)
@@ -786,7 +808,7 @@ export function CanvasBoard(): JSX.Element {
     (event: KeyboardEvent) => {
       if (event.defaultPrevented || !activeCanvasId) return
 
-      if (isCanvasFindShortcut(event)) {
+      if (keyboardEventMatchesShortcut(event, shortcuts.canvasFind)) {
         if (isCanvasShortcutBlocked(event.target, new Set(), 'find')) return
 
         event.preventDefault()
@@ -799,6 +821,15 @@ export function CanvasBoard(): JSX.Element {
       if (componentIds.length === 0) return
 
       const selectedComponentIds = new Set(componentIds)
+      if (keyboardEventMatchesShortcut(event, shortcuts.canvasDeselect)) {
+        if (isCanvasShortcutBlocked(event.target, selectedComponentIds, 'deselect')) return
+
+        event.preventDefault()
+        event.stopPropagation()
+        clearSelectedNodes(componentIds)
+        return
+      }
+
       if (event.key === 'Delete' && !event.altKey && !event.ctrlKey && !event.metaKey) {
         if (isCanvasShortcutBlocked(event.target, selectedComponentIds, 'delete')) return
 
@@ -816,7 +847,16 @@ export function CanvasBoard(): JSX.Element {
         duplicateSelectedNodes(componentIds)
       }
     },
-    [activeCanvasId, deleteSelectedNodes, duplicateSelectedNodes, getSelectedComponentIds, openNodeFinder]
+    [
+      activeCanvasId,
+      clearSelectedNodes,
+      deleteSelectedNodes,
+      duplicateSelectedNodes,
+      getSelectedComponentIds,
+      openNodeFinder,
+      shortcuts.canvasDeselect,
+      shortcuts.canvasFind
+    ]
   )
 
   useEffect(() => {
@@ -914,17 +954,19 @@ export function CanvasBoard(): JSX.Element {
       if (droppedFiles.length === 0) return
 
       const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
-      const plannedComponents = await Promise.all(
-        droppedFiles.map(async (droppedFile, index) => {
-          const type = componentTypeForFileSource(droppedFile)
+      const plannedComponents = (
+        await Promise.all(
+          droppedFiles.map(async (droppedFile, index) => {
+            const componentInput = await createComponentInputFromFileSource(droppedFile)
+            if (!componentInput) return null
 
-          return {
-            type,
-            position: stackedFileComponentPosition(position, index),
-            patch: await createFileComponentPatch(droppedFile, type)
-          }
-        })
-      )
+            return {
+              ...componentInput,
+              position: stackedFileComponentPosition(position, index)
+            }
+          })
+        )
+      ).filter((component): component is NonNullable<typeof component> => Boolean(component))
 
       addComponents(plannedComponents)
       notifyCanvasViewportSync()

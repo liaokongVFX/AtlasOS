@@ -96,7 +96,7 @@ describe('TopBar workspace tabs', () => {
     render(<TopBar />)
 
     fireEvent.doubleClick(screen.getByRole('button', { name: 'Canvas One' }))
-    const input = screen.getByLabelText('Rename Canvas One')
+    const input = screen.getByLabelText('重命名 Canvas One')
     fireEvent.change(input, { target: { value: 'Roadmap' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
@@ -151,11 +151,11 @@ describe('TopBar workspace tabs', () => {
   it('asks before deleting the selected workspace tab', () => {
     render(<TopBar />)
 
-    fireEvent.click(screen.getByLabelText('Delete Canvas One'))
+    fireEvent.click(screen.getByLabelText('删除 Canvas One'))
 
-    expect(screen.getByText('Delete "Canvas One"?')).toBeInTheDocument()
+    expect(screen.getByText('删除 "Canvas One"？')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    fireEvent.click(screen.getByRole('button', { name: '删除' }))
 
     expect(deleteCanvas).toHaveBeenCalledWith('canvas-1')
   })

@@ -8,6 +8,7 @@ import {
   parseByteRange,
   parseLocalAssetUrl
 } from '@shared/local-assets'
+import { ATLAS_PLUGIN_RENDERER_PROTOCOL } from '@shared/plugins'
 import { assertInsideRoot } from './path-safety'
 
 const ALLOWED_METHODS = 'GET, HEAD'
@@ -37,6 +38,16 @@ export function registerLocalAssetScheme(): void {
     {
       scheme: LOCAL_ASSET_PROTOCOL,
       privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        stream: true
+      }
+    },
+    {
+      scheme: ATLAS_PLUGIN_RENDERER_PROTOCOL,
+      privileges: {
+        corsEnabled: true,
         standard: true,
         secure: true,
         supportFetchAPI: true,

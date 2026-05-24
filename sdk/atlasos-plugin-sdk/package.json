@@ -1,0 +1,12 @@
+{
+  "name": "@atlasos/plugin-sdk",
+  "version": "0.1.0",
+  "description": "Type definitions and small helpers for AtlasOS trusted local plugins.",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "sideEffects": false,
+  "peerDependencies": {
+    "react": ">=19"
+  }
+}

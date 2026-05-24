@@ -51,16 +51,16 @@ describe('KanbanComponent', () => {
     component.state = {}
     const updateState = renderKanban(component)
 
-    expect(screen.getByText('Backlog')).toBeInTheDocument()
-    expect(screen.getByText('Doing')).toBeInTheDocument()
-    expect(screen.getByText('Done')).toBeInTheDocument()
+    expect(screen.getByText('待办')).toBeInTheDocument()
+    expect(screen.getByText('进行中')).toBeInTheDocument()
+    expect(screen.getByText('完成')).toBeInTheDocument()
     await waitFor(() => expect(updateState).toHaveBeenCalledWith(expect.objectContaining({ kanban: expect.any(Object) }), true))
   })
 
   it('creates a card with advanced fields', async () => {
     const updateState = renderKanban()
 
-    fireEvent.click(screen.getByRole('button', { name: '在 Backlog 添加卡片' }))
+    fireEvent.click(screen.getByRole('button', { name: '在 待办 添加卡片' }))
     fireEvent.change(screen.getByLabelText('标题'), { target: { value: '修复渲染器' } })
     fireEvent.change(screen.getByLabelText('描述'), { target: { value: '拖拽时保持稳定' } })
     fireEvent.pointerDown(screen.getByRole('button', { name: '优先级 无' }))
@@ -139,7 +139,7 @@ describe('KanbanComponent', () => {
     cleanup()
     nextState = updateKanbanColumn(nextState, 'doing', { wipLimit: 1 }, TIMESTAMP)
     const editState = renderKanban(createComponent(nextState))
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Doing 设置' }))
+    fireEvent.pointerDown(screen.getByRole('button', { name: '进行中 设置' }))
     fireEvent.click(await screen.findByRole('menuitem', { name: '重命名与限制' }))
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: '进行中' } })
     fireEvent.change(screen.getByLabelText('WIP 限制'), { target: { value: '3' } })

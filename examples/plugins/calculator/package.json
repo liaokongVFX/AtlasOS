@@ -1,0 +1,15 @@
+{
+  "name": "@atlasos/example-calculator-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "@atlasos/plugin-sdk": "file:../../../sdk/atlasos-plugin-sdk",
+    "@vitejs/plugin-react": "^5.0.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.11"
+  }
+}

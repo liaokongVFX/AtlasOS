@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
+import { pluginConfigSchema, pluginIdSchema } from './plugins'
+import { appSettingsSchema, browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
 
 export const MAX_TERMINAL_PASTED_ASSET_BASE64_CHARS = 14 * 1024 * 1024
 
@@ -19,6 +20,10 @@ export const reorderCanvasesInputSchema = z.object({
 
 export const saveCanvasInputSchema = z.object({
   canvas: canvasDocumentSchema
+})
+
+export const updateAppSettingsInputSchema = z.object({
+  settings: appSettingsSchema
 })
 
 export const chooseDirectoryInputSchema = z.object({
@@ -121,5 +126,28 @@ export const browserTypeInputSchema = browserSelectorInputSchema.extend({
 
 export const browserBoundsInputSchema = browserBoundsSchema
 
+export const pluginIdInputSchema = z.object({
+  pluginId: pluginIdSchema
+})
+
+export const pluginInstallDirectoryInputSchema = z.object({
+  sourcePath: z.string().min(1).optional(),
+  dialogTitle: z.string().min(1).max(120).optional()
+})
+
+export const pluginRootDirectoryInputSchema = z.object({
+  rootPath: z.string().min(1)
+})
+
+export const pluginConfigInputSchema = pluginIdInputSchema.extend({
+  config: pluginConfigSchema
+})
+
+export const pluginInvokeInputSchema = pluginIdInputSchema.extend({
+  command: z.string().min(1).max(120),
+  input: z.unknown().optional()
+})
+
 export type SaveCanvasInput = z.infer<typeof saveCanvasInputSchema>
+export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsInputSchema>
 export type TerminalCreateInput = z.infer<typeof terminalCreateSchema>

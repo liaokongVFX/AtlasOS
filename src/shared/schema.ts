@@ -1,7 +1,8 @@
 import { z } from 'zod'
-import { ATLAS_SCHEMA_VERSION, COMPONENT_TYPES, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from './constants'
+import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_LOCALE, DEFAULT_VIEWPORT, LOCALES } from './constants'
+import { keyboardShortcutsEqual, normalizeKeyboardShortcut } from './keyboard-shortcuts'
 
-export const componentTypeSchema = z.enum(COMPONENT_TYPES)
+export const componentTypeSchema = z.string().min(1)
 
 export const frameSchema = z.object({
   x: z.number(),
@@ -60,6 +61,41 @@ export const appStateSchema = z.object({
   updatedAt: z.string()
 })
 
+export const keyboardShortcutSchema = z.string().trim().min(1).max(80).transform((value, context) => {
+  const normalized = normalizeKeyboardShortcut(value)
+  if (!normalized) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Shortcut must combine optional modifiers with one key'
+    })
+    return z.NEVER
+  }
+
+  return normalized
+})
+
+export const appShortcutSettingsSchema = z
+  .object({
+    canvasDeselect: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasDeselect),
+    canvasFind: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasFind)
+  })
+  .default(DEFAULT_APP_SHORTCUTS)
+  .superRefine((shortcuts, context) => {
+    if (keyboardShortcutsEqual(shortcuts.canvasDeselect, shortcuts.canvasFind)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Canvas shortcuts must be unique',
+        path: ['canvasFind']
+      })
+    }
+  })
+
+export const appSettingsSchema = z.object({
+  schemaVersion: z.literal(ATLAS_SCHEMA_VERSION).default(ATLAS_SCHEMA_VERSION),
+  locale: z.enum(LOCALES).default(DEFAULT_LOCALE),
+  shortcuts: appShortcutSettingsSchema
+})
+
 export type FileEntry = {
   id: string
   name: string
@@ -111,3 +147,5 @@ export type CanvasBackground = z.infer<typeof canvasBackgroundSchema>
 export type CanvasComponent = z.infer<typeof canvasComponentSchema>
 export type CanvasDocument = z.infer<typeof canvasDocumentSchema>
 export type AtlasAppState = z.infer<typeof appStateSchema>
+export type AppShortcutSettings = z.infer<typeof appShortcutSettingsSchema>
+export type AppSettings = z.infer<typeof appSettingsSchema>

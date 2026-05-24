@@ -3,8 +3,10 @@ import * as Dialog from '@radix-ui/react-dialog'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { Plus, Save, Trash2, X } from 'lucide-react'
 import type { CanvasDocument } from '@shared/schema'
+import { useI18n } from '../i18n'
 import { useCanvasStore } from '../store/canvas-store'
 import { BackgroundPanel } from './background-panel'
+import { SettingsDialog } from './settings-dialog'
 
 type DropPlacement = 'before' | 'after'
 
@@ -26,6 +28,7 @@ function getDropPlacement(event: DragEvent<HTMLDivElement>): DropPlacement {
 }
 
 export function TopBar(): JSX.Element {
+  const { t } = useI18n()
   const [editingCanvasId, setEditingCanvasId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [draggingCanvasId, setDraggingCanvasId] = useState<string | null>(null)
@@ -42,6 +45,7 @@ export function TopBar(): JSX.Element {
   const deleteCanvas = useCanvasStore((state) => state.deleteCanvas)
   const saveCanvasNow = useCanvasStore((state) => state.saveCanvasNow)
   const closeCanvas = closeCanvasId ? canvases[closeCanvasId] : null
+  const saveStateLabel = t(`saveState.${saveState}`)
 
   const beginEditing = (canvas: CanvasDocument) => {
     setEditingCanvasId(canvas.id)
@@ -147,7 +151,7 @@ export function TopBar(): JSX.Element {
                 {isEditing ? (
                   <input
                     className="workspace-tab__input"
-                    aria-label={`Rename ${canvas.name}`}
+                    aria-label={t('canvas.renameCanvasAria', { name: canvas.name })}
                     value={editingName}
                     autoFocus
                     draggable={false}
@@ -175,7 +179,7 @@ export function TopBar(): JSX.Element {
                       <button
                         type="button"
                         className="workspace-tab__close"
-                        aria-label={`Delete ${canvas.name}`}
+                        aria-label={t('canvas.deleteCanvasAria', { name: canvas.name })}
                         draggable={false}
                         onClick={(event) => {
                           event.stopPropagation()
@@ -185,7 +189,7 @@ export function TopBar(): JSX.Element {
                         <X size={14} />
                       </button>
                     </Tooltip.Trigger>
-                    <Tooltip.Content className="tooltip-content">Delete canvas</Tooltip.Content>
+                    <Tooltip.Content className="tooltip-content">{t('canvas.deleteCanvas')}</Tooltip.Content>
                   </Tooltip.Root>
                 ) : null}
               </div>
@@ -193,19 +197,25 @@ export function TopBar(): JSX.Element {
           })}
           <Tooltip.Root>
             <Tooltip.Trigger asChild>
-              <button className="icon-button" onClick={() => void createCanvas()} aria-label="New canvas">
+              <button className="icon-button" onClick={() => void createCanvas()} aria-label={t('canvas.newCanvas')}>
                 <Plus size={16} />
               </button>
             </Tooltip.Trigger>
-            <Tooltip.Content className="tooltip-content">New canvas</Tooltip.Content>
+            <Tooltip.Content className="tooltip-content">{t('canvas.newCanvas')}</Tooltip.Content>
           </Tooltip.Root>
         </div>
 
         <div className="top-bar__tools">
+          <SettingsDialog />
           <BackgroundPanel />
-          <button className="tool-button" disabled={!activeCanvasId} onClick={() => activeCanvasId && void saveCanvasNow(activeCanvasId)}>
+          <button
+            className="tool-button"
+            disabled={!activeCanvasId}
+            aria-label={saveStateLabel}
+            onClick={() => activeCanvasId && void saveCanvasNow(activeCanvasId)}
+          >
             <Save size={16} />
-            <span>{saveState}</span>
+            <span>{saveStateLabel}</span>
           </button>
         </div>
       </header>
@@ -213,19 +223,19 @@ export function TopBar(): JSX.Element {
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content className="dialog-content">
-            <Dialog.Title className="dialog-title">Delete canvas?</Dialog.Title>
+            <Dialog.Title className="dialog-title">{t('canvas.deleteCanvasTitle')}</Dialog.Title>
             <Dialog.Description className="dialog-description">
-              Delete {closeCanvas ? `"${closeCanvas.name}"` : 'this canvas'}?
+              {t('canvas.deleteCanvasDescription', { name: closeCanvas ? `"${closeCanvas.name}"` : t('canvas.thisCanvas') })}
             </Dialog.Description>
             <div className="dialog-actions">
               <Dialog.Close asChild>
                 <button type="button" className="tool-button">
-                  Cancel
+                  {t('common.cancel')}
                 </button>
               </Dialog.Close>
               <button type="button" className="tool-button danger" onClick={() => void confirmCloseCanvas()}>
                 <Trash2 size={16} />
-                <span>Delete</span>
+                <span>{t('common.delete')}</span>
               </button>
             </div>
           </Dialog.Content>

@@ -15,6 +15,7 @@ import {
   watchDirectoryInputSchema
 } from '@shared/ipc'
 import type { FileEntry } from '@shared/schema'
+import { translateShared } from '@shared/locale-text'
 import { assertInsideRoot, childPath, sanitizeFileName } from './path-safety'
 import { handleValidated } from './ipc-helpers'
 
@@ -26,7 +27,7 @@ export class FileSystemService {
   registerIpc(): void {
     handleValidated('filesystem:choose-directory', chooseDirectoryInputSchema, async (_, input) => {
       const result = await dialog.showOpenDialog({
-        title: input.title ?? 'Choose folder',
+        title: input.title ?? translateShared(undefined, 'filesystem.chooseFolder'),
         properties: ['openDirectory', 'createDirectory']
       })
 

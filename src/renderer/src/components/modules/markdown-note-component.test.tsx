@@ -41,7 +41,7 @@ function renderMarkdownPreview(content: string): HTMLElement {
     />
   )
 
-  fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+  fireEvent.click(screen.getByRole('button', { name: '预览' }))
 
   return container
 }

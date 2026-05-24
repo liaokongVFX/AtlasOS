@@ -4,6 +4,7 @@ import CodeMirror from '@uiw/react-codemirror'
 import { FileWarning, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { localAssetUrl } from '@shared/local-assets'
+import { useI18n } from '../../i18n'
 import { codeLanguageDescriptionForFile, loadCodeLanguageForFile } from '../../lib/code-language'
 import { getFilePreviewKind } from '../../lib/file-types'
 import {
@@ -24,6 +25,7 @@ export function FilePreviewComponent({
   updateFrame = () => undefined,
   updateState
 }: AtlasComponentRendererProps): JSX.Element {
+  const { t } = useI18n()
   const configuredRootPath = asString(component.bindings.rootPath)
   const path = asString(component.bindings.path)
   const rootPath = configuredRootPath || path
@@ -49,10 +51,10 @@ export function FilePreviewComponent({
       setError(null)
       updateState({ status: 'live' }, false)
     } catch (readError) {
-      setError(readError instanceof Error ? readError.message : 'Failed to read file')
+      setError(readError instanceof Error ? readError.message : t('filePreview.failedRead'))
       updateState({ status: 'missing' }, true)
     }
-  }, [path, previewKind, rootPath, updateState])
+  }, [path, previewKind, rootPath, t, updateState])
 
   useEffect(() => {
     void load()
@@ -111,7 +113,7 @@ export function FilePreviewComponent({
     return (
       <div className="empty-module">
         <FileWarning size={28} />
-        <span>No file bound</span>
+        <span>{t('filePreview.noFileBound')}</span>
       </div>
     )
   }
@@ -132,7 +134,7 @@ export function FilePreviewComponent({
               })
             }}
             onError={() => {
-              setMediaError('Failed to load image preview.')
+              setMediaError(t('filePreview.failedImagePreview'))
               updateState({ status: 'missing' }, true)
             }}
           />
@@ -159,7 +161,7 @@ export function FilePreviewComponent({
               })
             }}
             onError={() => {
-              setMediaError('Failed to load video preview.')
+              setMediaError(t('filePreview.failedVideoPreview'))
               updateState({ status: 'missing' }, true)
             }}
           />
@@ -172,7 +174,7 @@ export function FilePreviewComponent({
     return (
       <div className="empty-module">
         <FileWarning size={28} />
-        <span>Preview is not available for this file type.</span>
+        <span>{t('filePreview.unsupported')}</span>
       </div>
     )
   }
@@ -184,7 +186,7 @@ export function FilePreviewComponent({
           <span>{path}</span>
           {languageDescription && content.length <= MAX_HIGHLIGHTED_TEXT_LENGTH ? <strong>{languageDescription.name}</strong> : null}
         </div>
-        <button className="icon-button" onClick={() => void load()} title="Refresh">
+        <button className="icon-button" onClick={() => void load()} title={t('filePreview.refresh')} aria-label={t('filePreview.refresh')}>
           <RefreshCw size={14} />
         </button>
       </div>

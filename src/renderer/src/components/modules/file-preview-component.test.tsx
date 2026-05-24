@@ -68,7 +68,7 @@ describe('FilePreviewComponent media previews', () => {
 
     fireEvent.error(screen.getByRole('img'))
 
-    expect(screen.getByText('Failed to load image preview.')).toBeInTheDocument()
+    expect(screen.getByText('图片预览加载失败。')).toBeInTheDocument()
     expect(updateState).toHaveBeenCalledWith({ status: 'missing' }, true)
   })
 

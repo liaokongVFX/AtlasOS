@@ -1,9 +1,11 @@
 import * as Popover from '@radix-ui/react-popover'
 import { Image, Palette } from 'lucide-react'
+import { useI18n } from '../i18n'
 import { asNumber, asString } from '../lib/utils'
 import { useCanvasStore } from '../store/canvas-store'
 
 export function BackgroundPanel(): JSX.Element {
+  const { t } = useI18n()
   const activeCanvasId = useCanvasStore((state) => state.activeCanvasId)
   const canvas = useCanvasStore((state) => (state.activeCanvasId ? state.canvases[state.activeCanvasId] : null))
   const updateCanvas = useCanvasStore((state) => state.updateCanvas)
@@ -12,7 +14,7 @@ export function BackgroundPanel(): JSX.Element {
     return (
       <button className="tool-button" disabled>
         <Palette size={16} />
-        <span>Background</span>
+        <span>{t('background.background')}</span>
       </button>
     )
   }
@@ -24,11 +26,11 @@ export function BackgroundPanel(): JSX.Element {
     <Popover.Root>
       <Popover.Trigger className="tool-button">
         <Palette size={16} />
-        <span>Background</span>
+        <span>{t('background.background')}</span>
       </Popover.Trigger>
       <Popover.Content className="popover-content" sideOffset={8} align="end">
         <div className="field-row">
-          <label>Color</label>
+          <label>{t('background.color')}</label>
           <input
             type="color"
             value={background.color}
@@ -41,7 +43,7 @@ export function BackgroundPanel(): JSX.Element {
         </div>
         <div className="field-row">
           <label>
-            <Image size={14} /> Image URL
+            <Image size={14} /> {t('background.imageUrl')}
           </label>
           <input
             value={asString(background.image.src)}
@@ -54,7 +56,7 @@ export function BackgroundPanel(): JSX.Element {
           />
         </div>
         <div className="field-row">
-          <label>Image opacity</label>
+          <label>{t('background.imageOpacity')}</label>
           <input
             type="range"
             min="0"

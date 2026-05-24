@@ -20,7 +20,7 @@ describe('kanban model', () => {
     const state = createDefaultKanbanState(TIMESTAMP)
 
     expect(state.schemaVersion).toBe(1)
-    expect(state.columns.map((column) => column.title)).toEqual(['Backlog', 'Doing', 'Done'])
+    expect(state.columns.map((column) => column.title)).toEqual(['待办', '进行中', '完成'])
     expect(state.cards).toEqual({})
     expect(state.view).toEqual({ search: '', labels: [], assignees: [], priorities: [] })
   })

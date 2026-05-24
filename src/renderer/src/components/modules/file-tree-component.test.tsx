@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+﻿import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanvasComponent, FileEntry } from '@shared/schema'
 import { useCanvasStore } from '../../store/canvas-store'
@@ -124,7 +124,7 @@ async function expandSrcDirectory(): Promise<void> {
   if (!folderRow) throw new Error('Expected src row to be rendered')
 
   await act(async () => {
-    fireEvent.click(within(folderRow as HTMLElement).getByRole('button', { name: 'Expand folder' }))
+    fireEvent.click(within(folderRow as HTMLElement).getByRole('button', { name: '展开文件夹' }))
   })
   await screen.findByText('index.ts')
 }
@@ -186,9 +186,9 @@ describe('FileTreeComponent', () => {
   it('keeps file creation controls out of the file tree toolbar', async () => {
     renderFileTree()
 
-    expect(await screen.findByTitle('Choose folder')).toBeVisible()
+    expect(await screen.findByTitle('选择文件夹')).toBeVisible()
     expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo', 1)
-    expect(screen.getByTitle('Refresh')).toBeVisible()
+    expect(screen.getByTitle('重新加载')).toBeVisible()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     expect(screen.queryByPlaceholderText('new file or folder')).not.toBeInTheDocument()
     expect(screen.queryByTitle('New file')).not.toBeInTheDocument()
@@ -231,7 +231,7 @@ describe('FileTreeComponent', () => {
     const folderName = await screen.findByText('src')
     const folderRow = folderName.closest('.file-tree-row')
     if (!folderRow) throw new Error('Expected src row to be rendered')
-    expect(within(folderRow as HTMLElement).getByRole('button', { name: 'Collapse folder' })).toBeVisible()
+    expect(within(folderRow as HTMLElement).getByRole('button', { name: '收起文件夹' })).toBeVisible()
   })
 
   it('restores nested open paths without loading unrelated closed branches', async () => {
@@ -260,7 +260,7 @@ describe('FileTreeComponent', () => {
     const folderName = await screen.findByText('src')
     const folderRow = folderName.closest('.file-tree-row')
     if (!folderRow) throw new Error('Expected src row to be rendered')
-    expect(within(folderRow as HTMLElement).getByRole('button', { name: 'Collapse folder' })).toBeVisible()
+    expect(within(folderRow as HTMLElement).getByRole('button', { name: '收起文件夹' })).toBeVisible()
     expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src', 1)
     expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src\\components', 1)
   })
@@ -276,7 +276,7 @@ describe('FileTreeComponent', () => {
     if (!folderRow) throw new Error('Expected src row to be rendered')
 
     await act(async () => {
-      fireEvent.click(within(folderRow as HTMLElement).getByRole('button', { name: 'Collapse folder' }))
+      fireEvent.click(within(folderRow as HTMLElement).getByRole('button', { name: '收起文件夹' }))
     })
 
     expect(updateState).toHaveBeenCalledWith({ openPaths: ['D:\\repo'] }, true)
@@ -291,7 +291,7 @@ describe('FileTreeComponent', () => {
     await screen.findByText('src')
 
     await act(async () => {
-      fireEvent.click(await screen.findByTitle('Choose folder'))
+      fireEvent.click(await screen.findByTitle('选择文件夹'))
     })
 
     expect(updateConfig).toHaveBeenCalledWith({ rootPath: 'D:\\workspace' }, true)
@@ -422,7 +422,7 @@ describe('FileTreeComponent', () => {
     })
   })
 
-  it('renames a file from the context menu and refreshes its parent directory', async () => {
+  it('renames a file from the context menu and 重新加载es its parent directory', async () => {
     renderFileTree()
     await expandSrcDirectory()
 
