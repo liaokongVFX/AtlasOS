@@ -50,6 +50,7 @@ import {
   type MouseEvent,
   type ReactNode
 } from 'react'
+import type { PetAlertTarget } from '@shared/pet'
 import { useI18n, type I18nKey, type TFunction } from '../../i18n'
 import { cn } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
@@ -111,6 +112,7 @@ type ColumnDialogState =
 
 const CARD_DRAG_PREFIX = 'kanban-card:'
 const COLUMN_DRAG_PREFIX = 'kanban-column:'
+const OPEN_KANBAN_CARD_EVENT = 'atlas:open-kanban-card'
 
 const DUE_DATE_SHORTCUTS = [
   { labelKey: 'kanban.today', offsetDays: 0 },
@@ -633,6 +635,17 @@ export function KanbanComponent({ component, updateState }: AtlasComponentRender
     },
     [kanban.cards]
   )
+
+  useEffect(() => {
+    const openTargetCard = (event: Event): void => {
+      const target = (event as CustomEvent<PetAlertTarget>).detail
+      if (target?.componentId !== component.id || !target.cardId) return
+      openEditCard(target.cardId)
+    }
+
+    window.addEventListener(OPEN_KANBAN_CARD_EVENT, openTargetCard)
+    return () => window.removeEventListener(OPEN_KANBAN_CARD_EVENT, openTargetCard)
+  }, [component.id, openEditCard])
 
   const closeCardDialog = useCallback(() => {
     setCardDialog(null)

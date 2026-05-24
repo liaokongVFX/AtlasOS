@@ -276,7 +276,7 @@ function stopTerminalKeyEvent(event: KeyboardEvent): void {
   event.stopImmediatePropagation?.()
 }
 
-export function TerminalComponent({ component, updateState, isNodeSelected = false }: AtlasComponentRendererProps): JSX.Element {
+export function TerminalComponent({ canvasId, component, updateState, isNodeSelected = false }: AtlasComponentRendererProps): JSX.Element {
   const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const sessionIdRef = useRef<string | null>(null)
@@ -711,6 +711,8 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
       void window.atlas.terminal
         .create({
           componentId: component.id,
+          canvasId,
+          title: component.title,
           cwd: cwdRef.current,
           shell: asString(component.config.shell),
           cols: instance.cols,
@@ -779,7 +781,9 @@ export function TerminalComponent({ component, updateState, isNodeSelected = fal
     }
   }, [
     clearScheduledFocus,
+    canvasId,
     component.id,
+    component.title,
     component.config.cwd,
     component.config.shell,
     pasteClipboardIntoTerminal,

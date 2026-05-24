@@ -6,6 +6,7 @@ describe('keyboard shortcuts', () => {
     expect(normalizeKeyboardShortcut('control + q')).toBe('Ctrl+Q')
     expect(normalizeKeyboardShortcut('cmd + shift + f')).toBe('Cmd+Shift+F')
     expect(normalizeKeyboardShortcut('Ctrl+Space')).toBe('Ctrl+Space')
+    expect(normalizeKeyboardShortcut('tab')).toBe('Tab')
   })
 
   it('matches keyboard events exactly against configured modifiers', () => {

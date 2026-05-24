@@ -1,5 +1,7 @@
 import { clipboard, contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } from '@shared/plugins'
+import type { LauncherOpenInput, PetAgentEventInput } from '@shared/ipc'
+import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
 import type { AppSettings, AtlasAppState, CanvasDocument } from '@shared/schema'
 
 type Listener<T> = (payload: T) => void
@@ -36,7 +38,8 @@ function on<T>(channel: string, listener: Listener<T>): () => void {
 
 const atlasApi = {
   app: {
-    onOpenSettings: (listener: Listener<OpenSettingsRequest | undefined>) => on('app:open-settings', listener)
+    onOpenSettings: (listener: Listener<OpenSettingsRequest | undefined>) => on('app:open-settings', listener),
+    onOpenTarget: (listener: Listener<PetAlertTarget>) => on('app:open-target', listener)
   },
   appState: {
     get: () => ipcRenderer.invoke('app-state:get', {}) as Promise<AtlasAppState>
@@ -82,7 +85,7 @@ const atlasApi = {
     onWatchEvent: (listener: Listener<{ watchId: string; eventName: string; path: string }>) => on('filesystem:watch-event', listener)
   },
   terminal: {
-    create: (input: { componentId: string; cwd?: string; shell?: string; cols?: number; rows?: number }) =>
+    create: (input: { componentId: string; canvasId?: string; title?: string; cwd?: string; shell?: string; cols?: number; rows?: number }) =>
       ipcRenderer.invoke('terminal:create', input) as Promise<{ sessionId: string; cwd: string; shell: string }>,
     write: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', { sessionId, data }),
     resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { sessionId, cols, rows }),
@@ -108,6 +111,22 @@ const atlasApi = {
   clipboard: {
     readText: () => clipboard.readText(),
     writeText: (text: string) => clipboard.writeText(text)
+  },
+  launcher: {
+    chooseFile: (input: { kind: 'app' | 'file' }) => ipcRenderer.invoke('launcher:choose-file', input) as Promise<string | null>,
+    open: (input: LauncherOpenInput) => ipcRenderer.invoke('launcher:open', input) as Promise<{ ok: true }>
+  },
+  pet: {
+    getState: () => ipcRenderer.invoke('pet:get-state', {}) as Promise<PetRuntimeState>,
+    updateSettings: (settings: PetSettings) => ipcRenderer.invoke('pet:update-settings', { settings }) as Promise<PetSettings>,
+    ackAlert: (alertId: string) => ipcRenderer.invoke('pet:ack-alert', { alertId }) as Promise<{ ok: true }>,
+    snoozeAlert: (alertId: string, minutes: number) => ipcRenderer.invoke('pet:snooze-alert', { alertId, minutes }) as Promise<{ ok: true }>,
+    setPosition: (position: { x: number; y: number }) => ipcRenderer.invoke('pet:set-position', position) as Promise<{ x: number; y: number }>,
+    setInteractive: (interactive: boolean) => ipcRenderer.invoke('pet:set-interactive', { interactive }) as Promise<{ ok: true }>,
+    openTarget: (target: PetAlertTarget) => ipcRenderer.invoke('pet:open-target', { target }) as Promise<{ ok: true }>,
+    sendAgentEvent: (event: PetAgentEventInput) => ipcRenderer.invoke('pet:agent-event', event) as Promise<{ ok: true }>,
+    listAgentSessions: () => ipcRenderer.invoke('pet:list-agent-sessions', {}) as Promise<PetRuntimeState['agentSessions']>,
+    onStateUpdated: (listener: Listener<PetRuntimeState>) => on('pet:state-updated', listener)
   },
   browser: {
     createTab: (input: { componentId: string; url: string; partition?: string }) => ipcRenderer.invoke('browser:create-tab', input),

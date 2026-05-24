@@ -11,7 +11,7 @@ export type ComponentDefinitionMeta = {
   creatable?: boolean
 }
 
-export const CREATABLE_BUILTIN_COMPONENT_TYPES = ['terminal', 'file-tree', 'browser', 'markdown-note', 'kanban'] as const satisfies readonly BuiltInComponentType[]
+export const CREATABLE_BUILTIN_COMPONENT_TYPES = ['terminal', 'file-tree', 'browser', 'markdown-note', 'kanban', 'quick-launcher'] as const satisfies readonly BuiltInComponentType[]
 
 export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefinitionMeta> = {
   terminal: {
@@ -59,6 +59,14 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     titleKey: 'component.kanban',
     defaultFrame: { x: 280, y: 220, width: 920, height: 620 },
     permissions: ['kanban:edit'],
+    creatable: true
+  },
+  'quick-launcher': {
+    type: 'quick-launcher',
+    title: 'Quick Launcher',
+    titleKey: 'component.quickLauncher',
+    defaultFrame: { x: 320, y: 240, width: 680, height: 520 },
+    permissions: ['launcher:open'],
     creatable: true
   }
 }

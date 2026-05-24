@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { extname, isAbsolute, join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { app, dialog, protocol, utilityProcess, type UtilityProcess } from 'electron'
@@ -67,7 +67,15 @@ function isoTimeMs(value: string): number {
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
   await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-  await rename(tmpPath, filePath)
+  try {
+    await rename(tmpPath, filePath)
+  } catch (error) {
+    const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
+    if (code !== 'EEXIST' && code !== 'EPERM') throw error
+
+    await rm(filePath, { force: true })
+    await rename(tmpPath, filePath)
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

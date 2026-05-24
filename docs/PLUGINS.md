@@ -23,6 +23,8 @@ AtlasOS loads plugins in three steps:
 
 Plugin component data is saved inside normal canvas documents. If a plugin is disabled, missing, or fails to load, AtlasOS keeps the node data and shows a missing-plugin placeholder.
 
+Built-in nodes are registered as the privileged `atlas.builtins` system plugin through the same renderer-side `registerNode` adapter used by external plugins. They keep stable built-in component types such as `terminal` and `browser` for document compatibility, while external plugins use namespaced types such as `plugin:acme.calculator/calculator`.
+
 ## Quick Start
 
 Use the calculator example as the shortest working reference:

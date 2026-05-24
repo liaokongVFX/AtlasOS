@@ -17,6 +17,7 @@ import {
   terminalWriteInputSchema
 } from '@shared/ipc'
 import { terminalCreateSchema } from '@shared/schema'
+import type { PetAgentSession, PetAgentSource, PetAgentStatus } from '@shared/pet'
 import { parseFileUriListPaths, readClipboardFilePathsFromNativeFormats } from './clipboard-files'
 import { handleValidated } from './ipc-helpers'
 import { buildPowerShellBootstrapScript, extractCwdMarkers } from './pty-cwd'
@@ -24,13 +25,29 @@ import { readWindowsClipboardFileDropPaths } from './windows-clipboard-files'
 
 type TerminalSession = {
   id: string
+  canvasId?: string
   componentId: string
+  title?: string
   ownerId: number
   pty: pty.IPty
   shell: string
   cwd: string
   dataBuffer: string
+  inputBuffer: string
+  agentSource?: PetAgentSource
+  agentStatus?: PetAgentStatus
+  attentionReason?: string
 }
+
+type PtyAgentSessionEvent =
+  | {
+      type: 'upsert'
+      session: PetAgentSession
+    }
+  | {
+      type: 'remove'
+      sessionId: string
+    }
 
 type SavedClipboardImageResult =
   | {
@@ -72,6 +89,10 @@ const PASTED_IMAGE_EXTENSIONS_BY_MIME_TYPE = new Map([
   ['image/x-icon', '.ico'],
   ['image/vnd.microsoft.icon', '.ico']
 ])
+
+function nowIso(): string {
+  return new Date().toISOString()
+}
 
 function defaultShell(): string {
   if (process.platform === 'win32') return 'powershell.exe'
@@ -128,15 +149,68 @@ function uniqueExistingPaths(paths: string[]): string[] {
   return result
 }
 
+function stripAnsi(value: string): string {
+  return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
+}
+
+function detectAgentSource(value: string): PetAgentSource | null {
+  if (/\bcodex\b/i.test(value)) return 'codex'
+  if (/\bclaude(?:\s+code)?\b/i.test(value)) return 'claude'
+  return null
+}
+
+function detectAgentStatusFromOutput(value: string): { status: PetAgentStatus; reason?: string } | null {
+  const text = stripAnsi(value).toLowerCase()
+  if (/(permission|approve|approval|confirm|continue\?|do you want|allow|y\/n|yes\/no)/i.test(text)) {
+    return { status: 'waiting_for_confirmation', reason: 'Waiting for confirmation' }
+  }
+  if (/(failed|error|exception|cancelled|canceled)/i.test(text)) {
+    return { status: 'error', reason: 'Reported an error' }
+  }
+  if (/(completed|complete|finished|done|all set)/i.test(text)) {
+    return { status: 'completed', reason: 'Completed' }
+  }
+  return null
+}
+
+function updateInputBuffer(buffer: string, data: string): { buffer: string; commands: string[] } {
+  const commands: string[] = []
+  let nextBuffer = buffer
+
+  for (const character of data) {
+    if (character === '\r' || character === '\n') {
+      const command = nextBuffer.trim()
+      if (command) commands.push(command)
+      nextBuffer = ''
+      continue
+    }
+
+    if (character === '\b' || character === '\x7f') {
+      nextBuffer = nextBuffer.slice(0, -1)
+      continue
+    }
+
+    if (character >= ' ') nextBuffer += character
+  }
+
+  return { buffer: nextBuffer.slice(-512), commands }
+}
+
 export class PtyService {
   private readonly sessionsById = new Map<string, TerminalSession>()
   private readonly sessionsByComponentId = new Map<string, TerminalSession>()
+  private readonly agentSessionListeners = new Set<(event: PtyAgentSessionEvent) => void>()
   private cleanupStarted = false
+
+  onAgentSessionChanged(listener: (event: PtyAgentSessionEvent) => void): () => void {
+    this.agentSessionListeners.add(listener)
+    return () => this.agentSessionListeners.delete(listener)
+  }
 
   registerIpc(): void {
     this.ensureAttachmentDir()
     handleValidated('terminal:create', terminalCreateSchema, (event, input) => {
-      return this.acquireOrCreate(event.sender.id, input.componentId, input.cwd, input.shell, input.cols, input.rows)
+      return this.acquireOrCreate(event.sender.id, input.componentId, input.canvasId, input.title, input.cwd, input.shell, input.cols, input.rows)
     })
 
     handleValidated('terminal:write', terminalWriteInputSchema, (_, input) => {
@@ -187,6 +261,8 @@ export class PtyService {
   private acquireOrCreate(
     ownerId: number,
     componentId: string,
+    canvasId: string | undefined,
+    title: string | undefined,
     cwdInput: string | undefined,
     shellInput: string | undefined,
     cols: number,
@@ -201,6 +277,8 @@ export class PtyService {
       }
 
       existing.ownerId = ownerId
+      existing.canvasId = canvasId ?? existing.canvasId
+      existing.title = title ?? existing.title
       return { sessionId: existing.id, cwd: existing.cwd, shell: existing.shell }
     }
 
@@ -225,12 +303,15 @@ export class PtyService {
     const sessionId = randomUUID()
     const session: TerminalSession = {
       id: sessionId,
+      canvasId,
       componentId,
+      title,
       ownerId,
       pty: term,
       shell,
       cwd,
-      dataBuffer: ''
+      dataBuffer: '',
+      inputBuffer: ''
     }
 
     this.sessionsById.set(sessionId, session)
@@ -238,10 +319,15 @@ export class PtyService {
 
     term.onData((data) => {
       this.updateCwdFromOutput(sessionId, data)
+      this.updateAgentFromOutput(sessionId, data)
       this.sendToOwner(session.ownerId, 'terminal:data', { sessionId, data })
     })
 
     term.onExit((exit) => {
+      const exitingSession = this.sessionsById.get(sessionId)
+      if (exitingSession?.agentSource) {
+        this.emitAgentSession(exitingSession, exit.exitCode === 0 ? 'completed' : 'error', exit.exitCode === 0 ? 'Completed' : `Exited with code ${exit.exitCode}`)
+      }
       this.closeBySessionId(sessionId, false)
       this.sendToOwner(session.ownerId, 'terminal:exit', { sessionId, ...exit })
     })
@@ -269,6 +355,7 @@ export class PtyService {
 
     this.sessionsById.delete(sessionId)
     this.sessionsByComponentId.delete(session.componentId)
+    if (session.agentSource) this.emitAgentSessionRemoved(sessionId)
 
     if (!kill) return
 
@@ -290,6 +377,7 @@ export class PtyService {
     if (!session) return false
 
     try {
+      this.updateAgentFromInput(session, data)
       session.pty.write(data)
       return true
     } catch (error) {
@@ -323,6 +411,56 @@ export class PtyService {
     const contents = webContents.fromId(ownerId)
     if (!contents || contents.isDestroyed()) return
     contents.send(channel, payload)
+  }
+
+  private updateAgentFromInput(session: TerminalSession, data: string): void {
+    const result = updateInputBuffer(session.inputBuffer, data)
+    session.inputBuffer = result.buffer
+
+    for (const command of result.commands) {
+      const source = detectAgentSource(command)
+      if (!source) continue
+
+      session.agentSource = source
+      this.emitAgentSession(session, 'running')
+    }
+  }
+
+  private updateAgentFromOutput(sessionId: string, data: string): void {
+    const session = this.sessionsById.get(sessionId)
+    if (!session) return
+
+    const source = session.agentSource ?? detectAgentSource(data)
+    if (!source) return
+
+    session.agentSource = source
+    const detectedStatus = detectAgentStatusFromOutput(data)
+    this.emitAgentSession(session, detectedStatus?.status ?? session.agentStatus ?? 'running', detectedStatus?.reason)
+  }
+
+  private emitAgentSession(session: TerminalSession, status: PetAgentStatus, attentionReason?: string): void {
+    if (!session.agentSource || !session.canvasId) return
+
+    session.agentStatus = status
+    session.attentionReason = attentionReason ?? session.attentionReason
+
+    const snapshot: PetAgentSession = {
+      id: session.id,
+      source: session.agentSource,
+      status,
+      canvasId: session.canvasId,
+      componentId: session.componentId,
+      title: session.title || (session.agentSource === 'codex' ? 'Codex' : 'Claude Code'),
+      cwd: session.cwd,
+      lastActivityAt: nowIso(),
+      attentionReason: session.attentionReason
+    }
+
+    for (const listener of this.agentSessionListeners) listener({ type: 'upsert', session: snapshot })
+  }
+
+  private emitAgentSessionRemoved(sessionId: string): void {
+    for (const listener of this.agentSessionListeners) listener({ type: 'remove', sessionId })
   }
 
   private async savePastedImageBuffer(buffer: Buffer, mimeType = 'image/png'): Promise<string> {

@@ -38,7 +38,19 @@ describe('AppSettingsService', () => {
       locale: 'zh-CN',
       shortcuts: {
         canvasDeselect: 'Ctrl+Q',
-        canvasFind: 'Ctrl+F'
+        canvasFind: 'Ctrl+F',
+        canvasCreateComponent: 'Tab'
+      },
+      pet: {
+        enabled: true,
+        showNativeNotifications: true,
+        showRunningAgents: true,
+        position: { x: 36, y: 120 },
+        size: 72,
+        kanban: { enabled: true },
+        agentBridge: { enabled: true },
+        assetPack: { id: 'atlas-orb', name: 'Atlas Orb', idleSrc: '', idleKind: 'image', attentionSrc: '', attentionKind: 'image' },
+        actionMap: { idle: 'float', attention: 'pulse' }
       }
     })
   })
@@ -51,7 +63,19 @@ describe('AppSettingsService', () => {
       locale: 'en-US',
       shortcuts: {
         canvasDeselect: 'ctrl + shift + x',
-        canvasFind: 'alt + f'
+        canvasFind: 'alt + f',
+        canvasCreateComponent: 'ctrl + alt + space'
+      },
+      pet: {
+        enabled: false,
+        showNativeNotifications: false,
+        showRunningAgents: true,
+        position: { x: 320, y: 240 },
+        size: 80,
+        kanban: { enabled: true },
+        agentBridge: { enabled: false },
+        assetPack: { id: 'atlas-orb', name: 'Atlas Orb', idleSrc: '', idleKind: 'image', attentionSrc: '', attentionKind: 'image' },
+        actionMap: { idle: 'float', attention: 'pulse' }
       }
     })
 
@@ -60,7 +84,19 @@ describe('AppSettingsService', () => {
       locale: 'en-US',
       shortcuts: {
         canvasDeselect: 'Ctrl+Shift+X',
-        canvasFind: 'Alt+F'
+        canvasFind: 'Alt+F',
+        canvasCreateComponent: 'Ctrl+Alt+Space'
+      },
+      pet: {
+        enabled: false,
+        showNativeNotifications: false,
+        showRunningAgents: true,
+        position: { x: 320, y: 240 },
+        size: 80,
+        kanban: { enabled: true },
+        agentBridge: { enabled: false },
+        assetPack: { id: 'atlas-orb', name: 'Atlas Orb', idleSrc: '', idleKind: 'image', attentionSrc: '', attentionKind: 'image' },
+        actionMap: { idle: 'float', attention: 'pulse' }
       }
     })
   })

@@ -31,6 +31,8 @@ type CanvasStore = {
   renameCanvas: (canvasId: string, name: string) => void
   deleteCanvas: (canvasId: string) => Promise<void>
   saveCanvasNow: (canvasId: string) => Promise<void>
+  beginCanvasInteraction: () => void
+  endCanvasInteraction: () => void
   updateCanvas: (canvasId: string, updater: (canvas: CanvasDocument) => void, immediate?: boolean) => void
   addComponent: (type: ComponentType, position?: { x: number; y: number }, patch?: ComponentCreatePatch) => void
   addComponents: (components: ComponentCreateInput[]) => void
@@ -42,10 +44,31 @@ type CanvasStore = {
   bringToFront: (canvasId: string, componentId: string) => void
 }
 
+const SAVE_DELAY_MS = 500
+
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const canvasRevisions = new Map<string, number>()
+const savedCanvasRevisions = new Map<string, number>()
+const deferredSaveCanvasIds = new Set<string>()
+const deferredSavedCanvasIds = new Set<string>()
+let canvasInteractionDepth = 0
 
 function nowIso(): string {
   return new Date().toISOString()
+}
+
+function canvasRevision(canvasId: string): number {
+  return canvasRevisions.get(canvasId) ?? 0
+}
+
+function bumpCanvasRevision(canvasId: string): number {
+  const revision = canvasRevision(canvasId) + 1
+  canvasRevisions.set(canvasId, revision)
+  return revision
+}
+
+function hasPendingSave(canvasId: string): boolean {
+  return saveTimers.has(canvasId) || deferredSaveCanvasIds.has(canvasId)
 }
 
 function createFallbackCanvas(): CanvasDocument {
@@ -139,9 +162,15 @@ export const useCanvasStore = create<CanvasStore>()(
       try {
         const [appState, canvases] = await Promise.all([window.atlas.appState.get(), window.atlas.canvas.list()])
         const canvasMap = Object.fromEntries(canvases.map((canvas) => [canvas.id, canvas]))
+        for (const canvas of canvases) {
+          canvasRevisions.set(canvas.id, 0)
+          savedCanvasRevisions.set(canvas.id, 0)
+        }
 
         if (canvases.length === 0) {
           const fallback = createFallbackCanvas()
+          canvasRevisions.set(fallback.id, 0)
+          savedCanvasRevisions.set(fallback.id, 0)
           set({
             appState: {
               schemaVersion: ATLAS_SCHEMA_VERSION,
@@ -178,6 +207,8 @@ export const useCanvasStore = create<CanvasStore>()(
         state.canvases[result.canvas.id] = result.canvas
         state.activeCanvasId = result.canvas.id
       })
+      canvasRevisions.set(result.canvas.id, 0)
+      savedCanvasRevisions.set(result.canvas.id, 0)
     },
 
     async setActiveCanvas(canvasId) {
@@ -247,25 +278,77 @@ export const useCanvasStore = create<CanvasStore>()(
     async saveCanvasNow(canvasId) {
       const canvas = get().canvases[canvasId]
       if (!canvas) return
+      const saveRevision = canvasRevision(canvasId)
 
       if (saveTimers.has(canvasId)) {
         clearTimeout(saveTimers.get(canvasId))
         saveTimers.delete(canvasId)
       }
+      deferredSaveCanvasIds.delete(canvasId)
 
       set({ saveState: 'saving' })
       try {
-        const saved = await window.atlas.canvas.save(canvas)
-        set((state) => {
-          state.canvases[canvasId] = saved
-          state.saveState = 'saved'
-          state.error = null
-        })
+        await window.atlas.canvas.save(canvas)
+        savedCanvasRevisions.set(canvasId, saveRevision)
+
+        if (canvasRevision(canvasId) === saveRevision) {
+          if (canvasInteractionDepth > 0 || hasPendingSave(canvasId)) {
+            deferredSavedCanvasIds.add(canvasId)
+            set({ error: null })
+          } else {
+            deferredSavedCanvasIds.delete(canvasId)
+            set({ saveState: 'saved', error: null })
+          }
+        } else {
+          set({ error: null })
+        }
       } catch (error) {
         set({
           saveState: 'error',
           error: error instanceof Error ? error.message : translateCurrent('app.error.saveCanvas')
         })
+      }
+    },
+
+    beginCanvasInteraction() {
+      canvasInteractionDepth += 1
+    },
+
+    endCanvasInteraction() {
+      if (canvasInteractionDepth > 0) {
+        canvasInteractionDepth -= 1
+      }
+
+      if (canvasInteractionDepth > 0) return
+
+      const deferredCanvasIds = [...deferredSaveCanvasIds]
+      deferredSaveCanvasIds.clear()
+
+      for (const canvasId of deferredCanvasIds) {
+        if (saveTimers.has(canvasId)) continue
+
+        saveTimers.set(
+          canvasId,
+          setTimeout(() => {
+            saveTimers.delete(canvasId)
+            if (canvasInteractionDepth > 0) {
+              deferredSaveCanvasIds.add(canvasId)
+              return
+            }
+            void get().saveCanvasNow(canvasId)
+          }, SAVE_DELAY_MS)
+        )
+      }
+
+      const activeCanvasId = get().activeCanvasId
+      if (
+        activeCanvasId &&
+        deferredSavedCanvasIds.has(activeCanvasId) &&
+        savedCanvasRevisions.get(activeCanvasId) === canvasRevision(activeCanvasId) &&
+        !hasPendingSave(activeCanvasId)
+      ) {
+        deferredSavedCanvasIds.delete(activeCanvasId)
+        set({ saveState: 'saved', error: null })
       }
     },
 
@@ -276,6 +359,7 @@ export const useCanvasStore = create<CanvasStore>()(
         updater(canvas)
         canvas.updatedAt = nowIso()
       })
+      bumpCanvasRevision(canvasId)
 
       if (immediate) {
         void get().saveCanvasNow(canvasId)
@@ -283,11 +367,17 @@ export const useCanvasStore = create<CanvasStore>()(
       }
 
       if (saveTimers.has(canvasId)) clearTimeout(saveTimers.get(canvasId))
+      deferredSaveCanvasIds.delete(canvasId)
       saveTimers.set(
         canvasId,
         setTimeout(() => {
+          saveTimers.delete(canvasId)
+          if (canvasInteractionDepth > 0) {
+            deferredSaveCanvasIds.add(canvasId)
+            return
+          }
           void get().saveCanvasNow(canvasId)
-        }, 500)
+        }, SAVE_DELAY_MS)
       )
     },
 

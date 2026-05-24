@@ -16,7 +16,15 @@ function nowIso(): string {
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
   await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-  await rename(tmpPath, filePath)
+  try {
+    await rename(tmpPath, filePath)
+  } catch (error) {
+    const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
+    if (code !== 'EEXIST' && code !== 'EPERM') throw error
+
+    await rm(filePath, { force: true })
+    await rename(tmpPath, filePath)
+  }
 }
 
 function createCanvasDocument(name: string): CanvasDocument {

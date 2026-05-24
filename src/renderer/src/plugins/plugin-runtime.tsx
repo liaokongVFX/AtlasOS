@@ -1,23 +1,12 @@
-import { Calculator, Puzzle } from 'lucide-react'
-import * as React from 'react'
 import {
-  pluginComponentType,
-  pluginNodeIdSchema,
   type AtlasPluginManifest,
   type PluginInfo
 } from '@shared/plugins'
+import { unregisterComponentDefinitionsByPlugin } from '../components/registry'
 import {
-  registerComponentDefinition,
-  unregisterComponentDefinitionsByPlugin,
-  type AtlasComponentRendererProps
-} from '../components/registry'
-import {
-  atlasPluginSdk,
-  type AtlasRendererPluginApi,
-  type AtlasRendererPluginContext,
-  type AtlasRendererPluginInvoke,
   type AtlasRendererPluginModule
 } from './sdk'
+import { createRendererPluginApi } from './registration'
 
 const loadedRendererPluginRevisions = new Map<string, string>()
 
@@ -29,63 +18,6 @@ function revisionedModuleUrl(url: string, revision: string): string {
   const parsed = new URL(url)
   parsed.searchParams.set('atlasPluginRevision', revision)
   return parsed.toString()
-}
-
-function uniquePermissions(...groups: Array<readonly string[] | undefined>): string[] {
-  return [...new Set(groups.flatMap((group) => group ?? []))]
-}
-
-function createRendererPluginApi(plugin: PluginInfo & { manifest: AtlasPluginManifest; rendererEntryUrl: string }): AtlasRendererPluginApi {
-  const pluginContext: AtlasRendererPluginContext = {
-    id: plugin.id,
-    manifest: plugin.manifest,
-    config: plugin.config
-  }
-  const invoke: AtlasRendererPluginInvoke = (command, input) => window.atlas.plugins.invoke(plugin.id, command, input)
-  const registeredNodeIds = new Set<string>()
-
-  return {
-    React,
-    icons: {
-      Calculator,
-      Puzzle
-    },
-    plugin: pluginContext,
-    invoke,
-    sdk: atlasPluginSdk,
-    registerNode: (definition) => {
-      const nodeId = pluginNodeIdSchema.parse(definition.id)
-      if (registeredNodeIds.has(nodeId)) throw new Error(`Plugin node is already registered: ${nodeId}`)
-
-      const manifestNode = plugin.manifest.nodes.find((node) => node.id === nodeId)
-      if (!manifestNode) throw new Error(`Plugin node is not declared in manifest: ${nodeId}`)
-      if (typeof definition.Renderer !== 'function') throw new Error(`Plugin node renderer is missing: ${nodeId}`)
-
-      const Renderer = (props: AtlasComponentRendererProps): JSX.Element =>
-        React.createElement(definition.Renderer, {
-          ...props,
-          plugin: pluginContext,
-          invoke
-        })
-
-      registeredNodeIds.add(nodeId)
-      registerComponentDefinition({
-        type: pluginComponentType(plugin.id, nodeId),
-        title: definition.title ?? manifestNode.title,
-        defaultFrame: definition.defaultFrame ?? manifestNode.defaultFrame,
-        permissions: uniquePermissions(plugin.manifest.permissions, manifestNode.permissions, definition.permissions),
-        creatable: definition.creatable ?? manifestNode.creatable,
-        icon: definition.icon ?? Puzzle,
-        Renderer,
-        pluginId: plugin.id,
-        create: definition.create,
-        duplicate: definition.duplicate,
-        getSearchTokens: definition.getSearchTokens,
-        getDetail: definition.getDetail,
-        getSubtitle: definition.getSubtitle
-      })
-    }
-  }
 }
 
 function isRenderablePlugin(plugin: PluginInfo): plugin is PluginInfo & { manifest: AtlasPluginManifest; rendererEntryUrl: string } {

@@ -206,7 +206,7 @@ export function TopBar(): JSX.Element {
         </div>
 
         <div className="top-bar__tools">
-          <SettingsDialog />
+          <SettingsDialog showTrigger={false} />
           <BackgroundPanel />
           <button
             className="tool-button"

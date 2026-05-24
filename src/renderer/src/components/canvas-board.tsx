@@ -14,9 +14,10 @@ import * as Dialog from '@radix-ui/react-dialog'
 import * as Popover from '@radix-ui/react-popover'
 import { Command } from 'cmdk'
 import { Maximize2, Search, ZoomIn, ZoomOut } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type RefObject } from 'react'
 import type { Measurable } from '@radix-ui/rect'
 import type { CanvasComponent, ComponentType, FileEntry } from '@shared/schema'
+import type { PetAlertTarget } from '@shared/pet'
 import { keyboardEventMatchesShortcut } from '@shared/keyboard-shortcuts'
 import { notifyCanvasViewportSync } from '../lib/canvas-viewport-sync'
 import { stackedFileComponentPosition, type CanvasFileSource } from '../lib/file-component-factory'
@@ -42,12 +43,18 @@ type ComponentNodeCacheEntry = {
   node: AtlasFlowNode
 }
 
+type ScreenPosition = {
+  x: number
+  y: number
+}
+
 const nodeTypes = {
   atlasComponent: ComponentNode
 }
 
 const NODE_FOCUS_DURATION = 180
 const NODE_FOCUS_ZOOM = 1.15
+const OPEN_KANBAN_CARD_EVENT = 'atlas:open-kanban-card'
 const CANVAS_SHORTCUT_BLOCKLIST_SELECTOR = [
   'input',
   'textarea',
@@ -209,7 +216,7 @@ function isSelectedNodeTarget(target: EventTarget | null, selectedNodeIds: Set<s
 function isCanvasShortcutBlocked(
   target: EventTarget | null,
   selectedNodeIds: Set<string>,
-  shortcut: 'delete' | 'deselect' | 'duplicate' | 'find'
+  shortcut: 'create' | 'delete' | 'deselect' | 'duplicate' | 'find'
 ): boolean {
   if (shortcut === 'delete' && isSelectedTerminalTarget(target, selectedNodeIds)) return false
   if (shortcut === 'deselect' && isSelectedNodeTarget(target, selectedNodeIds)) {
@@ -225,6 +232,14 @@ function focusFlowNodeElement(componentId: string): void {
   )
 
   nodeElement?.focus({ preventScroll: true })
+}
+
+function dispatchOpenKanbanCard(target: PetAlertTarget): void {
+  if (!target.componentId || !target.cardId) return
+
+  window.requestAnimationFrame(() => {
+    window.dispatchEvent(new CustomEvent(OPEN_KANBAN_CARD_EVENT, { detail: target }))
+  })
 }
 
 type DroppedCanvasFile = CanvasFileSource
@@ -587,7 +602,9 @@ export function CanvasBoard(): JSX.Element {
   const reactFlow = useReactFlow<AtlasFlowNode>()
   const componentRegistryVersion = useComponentRegistryVersion()
   const activeCanvasId = useCanvasStore((state) => state.activeCanvasId)
+  const canvases = useCanvasStore((state) => state.canvases)
   const canvas = useCanvasStore((state) => (state.activeCanvasId ? state.canvases[state.activeCanvasId] : null))
+  const setActiveCanvas = useCanvasStore((state) => state.setActiveCanvas)
   const updateCanvas = useCanvasStore((state) => state.updateCanvas)
   const updateComponentFrames = useCanvasStore((state) => state.updateComponentFrames)
   const addComponent = useCanvasStore((state) => state.addComponent)
@@ -595,6 +612,8 @@ export function CanvasBoard(): JSX.Element {
   const duplicateComponents = useCanvasStore((state) => state.duplicateComponents)
   const removeComponents = useCanvasStore((state) => state.removeComponents)
   const bringToFront = useCanvasStore((state) => state.bringToFront)
+  const beginCanvasInteraction = useCanvasStore((state) => state.beginCanvasInteraction)
+  const endCanvasInteraction = useCanvasStore((state) => state.endCanvasInteraction)
   const shortcuts = useAppSettingsStore((state) => state.settings.shortcuts)
   const [nodes, setNodes] = useState<AtlasFlowNode[]>(() =>
     canvas ? canvas.components.map((component) => componentToNode(canvas.id, component, componentRegistryVersion)) : []
@@ -604,17 +623,43 @@ export function CanvasBoard(): JSX.Element {
   const [isFileDragActive, setIsFileDragActive] = useState(false)
   const [isViewportInteracting, setIsViewportInteracting] = useState(false)
   const createMenuAnchorRef = useRef<Measurable>(createPointAnchor(0, 0))
+  const lastPointerScreenPositionRef = useRef<ScreenPosition | null>(null)
   const pendingSelectedNodeIdsRef = useRef<Set<string> | null>(null)
+  const pendingPetTargetRef = useRef<PetAlertTarget | null>(null)
   const componentNodeCacheRef = useRef(new Map<string, ComponentNodeCacheEntry>())
   const focusNodeFrameRef = useRef<number | null>(null)
+  const nodeDragInteractionActiveRef = useRef(false)
+  const viewportInteractionActiveRef = useRef(false)
 
   useEffect(() => {
     return () => {
       if (focusNodeFrameRef.current !== null) {
         window.cancelAnimationFrame(focusNodeFrameRef.current)
       }
+      if (nodeDragInteractionActiveRef.current) {
+        nodeDragInteractionActiveRef.current = false
+        endCanvasInteraction()
+      }
+      if (viewportInteractionActiveRef.current) {
+        viewportInteractionActiveRef.current = false
+        endCanvasInteraction()
+      }
     }
-  }, [])
+  }, [endCanvasInteraction])
+
+  const finishNodeDragInteraction = useCallback(() => {
+    if (!nodeDragInteractionActiveRef.current) return
+
+    nodeDragInteractionActiveRef.current = false
+    endCanvasInteraction()
+  }, [endCanvasInteraction])
+
+  const finishViewportInteraction = useCallback(() => {
+    if (!viewportInteractionActiveRef.current) return
+
+    viewportInteractionActiveRef.current = false
+    endCanvasInteraction()
+  }, [endCanvasInteraction])
 
   const selectComponentForContextMenu = useCallback(
     (componentId: string) => {
@@ -664,6 +709,30 @@ export function CanvasBoard(): JSX.Element {
     })
   }, [persistedNodes])
 
+  const closeCreateMenu = useCallback(() => {
+    setCreateMenu((currentMenu) => (currentMenu ? null : currentMenu))
+  }, [])
+
+  const trackPointerPosition = useCallback((event: PointerEvent<HTMLElement>) => {
+    if (event.pointerType && event.pointerType !== 'mouse') return
+    lastPointerScreenPositionRef.current = { x: event.clientX, y: event.clientY }
+  }, [])
+
+  const clearTrackedPointerPosition = useCallback(() => {
+    lastPointerScreenPositionRef.current = null
+  }, [])
+
+  const openCreateMenuAtScreenPosition = useCallback(
+    (screenPosition: ScreenPosition) => {
+      const flowPosition = reactFlow.screenToFlowPosition(screenPosition)
+      createMenuAnchorRef.current = createPointAnchor(screenPosition.x, screenPosition.y)
+      setCreateMenu({
+        flowPosition: { x: Math.round(flowPosition.x), y: Math.round(flowPosition.y) }
+      })
+    },
+    [reactFlow]
+  )
+
   const onNodesChange = useCallback(
     (changes: NodeChange<AtlasFlowNode>[]) => {
       setNodes((currentNodes) => applyNodeChanges(changes, currentNodes))
@@ -678,43 +747,51 @@ export function CanvasBoard(): JSX.Element {
     [activeCanvasId, removeComponents]
   )
 
+  const onNodeDragStart: OnNodeDrag<AtlasFlowNode> = useCallback(() => {
+    closeCreateMenu()
+    if (nodeDragInteractionActiveRef.current) return
+
+    nodeDragInteractionActiveRef.current = true
+    beginCanvasInteraction()
+  }, [beginCanvasInteraction, closeCreateMenu])
+
   const onNodeDragStop: OnNodeDrag<AtlasFlowNode> = useCallback(
     (_, node, draggedNodes) => {
-      const stoppedNodes = draggedNodes.length > 0 ? draggedNodes : [node]
-      const stoppedNodeIds = new Set(stoppedNodes.map((draggedNode) => draggedNode.id))
-      setNodes((currentNodes) => unselectNodeIds(currentNodes, stoppedNodeIds))
+      try {
+        const stoppedNodes = draggedNodes.length > 0 ? draggedNodes : [node]
+        const stoppedNodeIds = new Set(stoppedNodes.map((draggedNode) => draggedNode.id))
+        setNodes((currentNodes) => unselectNodeIds(currentNodes, stoppedNodeIds))
 
-      if (!activeCanvasId || !canvas) return
+        if (!activeCanvasId || !canvas) return
 
-      const componentById = new Map(canvas.components.map((component) => [component.id, component]))
-      const updatesById = new Map<string, { componentId: string; frame: { x: number; y: number } }>()
+        const componentById = new Map(canvas.components.map((component) => [component.id, component]))
+        const updatesById = new Map<string, { componentId: string; frame: { x: number; y: number } }>()
 
-      for (const draggedNode of stoppedNodes) {
-        const component = componentById.get(draggedNode.id)
-        if (!component) continue
+        for (const draggedNode of stoppedNodes) {
+          const component = componentById.get(draggedNode.id)
+          if (!component) continue
 
-        const x = Math.round(draggedNode.position.x)
-        const y = Math.round(draggedNode.position.y)
-        if (component.frame.x === x && component.frame.y === y) continue
+          const x = Math.round(draggedNode.position.x)
+          const y = Math.round(draggedNode.position.y)
+          if (component.frame.x === x && component.frame.y === y) continue
 
-        updatesById.set(draggedNode.id, {
-          componentId: draggedNode.id,
-          frame: { x, y }
-        })
+          updatesById.set(draggedNode.id, {
+            componentId: draggedNode.id,
+            frame: { x, y }
+          })
+        }
+
+        const updates = [...updatesById.values()]
+        if (updates.length === 0) return
+
+        updateComponentFrames(activeCanvasId, updates)
+        notifyCanvasViewportSync()
+      } finally {
+        finishNodeDragInteraction()
       }
-
-      const updates = [...updatesById.values()]
-      if (updates.length === 0) return
-
-      updateComponentFrames(activeCanvasId, updates)
-      notifyCanvasViewportSync()
     },
-    [activeCanvasId, canvas, updateComponentFrames]
+    [activeCanvasId, canvas, finishNodeDragInteraction, updateComponentFrames]
   )
-
-  const closeCreateMenu = useCallback(() => {
-    setCreateMenu((currentMenu) => (currentMenu ? null : currentMenu))
-  }, [])
 
   const openNodeFinder = useCallback(() => {
     closeCreateMenu()
@@ -724,7 +801,9 @@ export function CanvasBoard(): JSX.Element {
   useEffect(() => {
     setIsNodeFinderOpen(false)
     setIsViewportInteracting(false)
-  }, [activeCanvasId])
+    finishNodeDragInteraction()
+    finishViewportInteraction()
+  }, [activeCanvasId, finishNodeDragInteraction, finishViewportInteraction])
 
   const focusComponentNode = useCallback(
     (componentId: string) => {
@@ -759,6 +838,37 @@ export function CanvasBoard(): JSX.Element {
     },
     [activeCanvasId, bringToFront, canvas, closeCreateMenu, reactFlow]
   )
+
+  const focusPetTarget = useCallback(
+    (target: PetAlertTarget) => {
+      pendingPetTargetRef.current = target
+
+      if (target.canvasId && !canvases[target.canvasId]) {
+        pendingPetTargetRef.current = null
+        return
+      }
+
+      if (target.canvasId && target.canvasId !== activeCanvasId) {
+        void setActiveCanvas(target.canvasId)
+        return
+      }
+
+      if (target.componentId) {
+        focusComponentNode(target.componentId)
+      }
+      dispatchOpenKanbanCard(target)
+      pendingPetTargetRef.current = null
+    },
+    [activeCanvasId, canvases, focusComponentNode, setActiveCanvas]
+  )
+
+  useEffect(() => window.atlas.app?.onOpenTarget?.(focusPetTarget) ?? (() => undefined), [focusPetTarget])
+
+  useEffect(() => {
+    const target = pendingPetTargetRef.current
+    if (!target || (target.canvasId && target.canvasId !== activeCanvasId)) return
+    focusPetTarget(target)
+  }, [activeCanvasId, canvas, focusPetTarget])
 
   const deleteSelectedNodes = useCallback(
     (componentIds: string[]) => {
@@ -808,6 +918,18 @@ export function CanvasBoard(): JSX.Element {
     (event: KeyboardEvent) => {
       if (event.defaultPrevented || !activeCanvasId) return
 
+      if (keyboardEventMatchesShortcut(event, shortcuts.canvasCreateComponent)) {
+        if (isCanvasShortcutBlocked(event.target, new Set(), 'create')) return
+
+        const screenPosition = lastPointerScreenPositionRef.current
+        if (!screenPosition) return
+
+        event.preventDefault()
+        event.stopPropagation()
+        openCreateMenuAtScreenPosition(screenPosition)
+        return
+      }
+
       if (keyboardEventMatchesShortcut(event, shortcuts.canvasFind)) {
         if (isCanvasShortcutBlocked(event.target, new Set(), 'find')) return
 
@@ -854,6 +976,8 @@ export function CanvasBoard(): JSX.Element {
       duplicateSelectedNodes,
       getSelectedComponentIds,
       openNodeFinder,
+      openCreateMenuAtScreenPosition,
+      shortcuts.canvasCreateComponent,
       shortcuts.canvasDeselect,
       shortcuts.canvasFind
     ]
@@ -866,9 +990,13 @@ export function CanvasBoard(): JSX.Element {
 
   const onMoveStart: OnMoveStart = useCallback(() => {
     closeCreateMenu()
+    if (!viewportInteractionActiveRef.current) {
+      viewportInteractionActiveRef.current = true
+      beginCanvasInteraction()
+    }
     setIsViewportInteracting((current) => (current ? current : true))
     notifyCanvasViewportSync()
-  }, [closeCreateMenu])
+  }, [beginCanvasInteraction, closeCreateMenu])
 
   const onMove: OnMove = useCallback(() => {
     notifyCanvasViewportSync()
@@ -880,6 +1008,7 @@ export function CanvasBoard(): JSX.Element {
 
       if (!activeCanvasId) {
         notifyCanvasViewportSync()
+        finishViewportInteraction()
         return
       }
 
@@ -895,21 +1024,17 @@ export function CanvasBoard(): JSX.Element {
       }
 
       notifyCanvasViewportSync()
+      finishViewportInteraction()
     },
-    [activeCanvasId, canvas, updateCanvas]
+    [activeCanvasId, canvas, finishViewportInteraction, updateCanvas]
   )
 
   const openCreateMenuAtPointer = useCallback((event: MouseEvent) => {
     if (event.detail !== 2) return
     event.preventDefault()
 
-    const screenPosition = { x: event.clientX, y: event.clientY }
-    const flowPosition = reactFlow.screenToFlowPosition(screenPosition)
-    createMenuAnchorRef.current = createPointAnchor(screenPosition.x, screenPosition.y)
-    setCreateMenu({
-      flowPosition: { x: Math.round(flowPosition.x), y: Math.round(flowPosition.y) }
-    })
-  }, [reactFlow])
+    openCreateMenuAtScreenPosition({ x: event.clientX, y: event.clientY })
+  }, [openCreateMenuAtScreenPosition])
 
   const createComponentFromMenu = useCallback(
     (type: ComponentType) => {
@@ -998,6 +1123,9 @@ export function CanvasBoard(): JSX.Element {
         .filter(Boolean)
         .join(' ')}
       style={{ backgroundColor: canvas.background.color }}
+      onPointerEnter={trackPointerPosition}
+      onPointerMove={trackPointerPosition}
+      onPointerLeave={clearTrackedPointerPosition}
     >
       {backgroundImageStyle ? <div className="canvas-background-image" style={backgroundImageStyle} /> : null}
       <ReactFlow
@@ -1008,6 +1136,7 @@ export function CanvasBoard(): JSX.Element {
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onNodeClick={handleNodeClick}
+        onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
         onPaneClick={openCreateMenuAtPointer}
         onMoveStart={onMoveStart}

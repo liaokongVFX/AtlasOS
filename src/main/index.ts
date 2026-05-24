@@ -10,7 +10,10 @@ import { BrowserService } from './services/browser-service'
 import { AppSettingsService } from './services/app-settings-service'
 import { PluginService } from './services/plugin-service'
 import { WorkspaceDocumentService } from './services/workspace-document-service'
+import { LauncherService } from './services/launcher-service'
+import { PetService } from './services/pet-service'
 import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services/local-asset-protocol'
+import type { PetAlertTarget } from '@shared/pet'
 
 let mainWindow: BrowserWindow | null = null
 let mainWindowCreation: Promise<void> | null = null
@@ -20,6 +23,7 @@ let fileSystemService: FileSystemService | null = null
 let pluginService: PluginService | null = null
 let ptyService: PtyService | null = null
 let appSettingsService: AppSettingsService | null = null
+let petService: PetService | null = null
 let trayLocale: Locale = DEFAULT_LOCALE
 let isQuitting = false
 
@@ -63,14 +67,20 @@ function disposeWindowServices(): void {
   fileSystemService?.dispose()
   pluginService?.dispose()
   ptyService?.dispose()
+  petService?.dispose()
 
   browserService = null
   fileSystemService = null
   pluginService = null
   ptyService = null
+  petService = null
 }
 
 function configureAppRuntime(): void {
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('dev.atlasos.workbench')
+  }
+
   if (isDev) {
     const devUserData = join(process.cwd(), '.atlasos-dev', 'user-data')
     const devSessionData = join(process.cwd(), '.atlasos-dev', 'session-data')
@@ -125,6 +135,15 @@ async function showSettings(): Promise<void> {
   if (!window.isVisible()) window.show()
   window.focus()
   window.webContents.send('app:open-settings')
+}
+
+async function openPetTarget(target: PetAlertTarget): Promise<void> {
+  const window = await ensureMainWindow()
+
+  if (window.isMinimized()) window.restore()
+  if (!window.isVisible()) window.show()
+  window.focus()
+  window.webContents.send('app:open-target', target)
 }
 
 function quitApp(): void {
@@ -197,14 +216,16 @@ async function waitForRendererDevServer(url: string, timeoutMs = 10_000): Promis
   throw new Error(`Timed out waiting for renderer dev server: ${url}`)
 }
 
-async function loadRenderer(window: BrowserWindow): Promise<void> {
+async function loadRenderer(window: BrowserWindow, view?: 'pet'): Promise<void> {
   if (process.env.ELECTRON_RENDERER_URL) {
     const url = process.env.ELECTRON_RENDERER_URL
     await waitForRendererDevServer(url)
 
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        await window.loadURL(url)
+        const targetUrl = new URL(url)
+        if (view) targetUrl.searchParams.set('view', view)
+        await window.loadURL(targetUrl.toString())
         return
       } catch (error) {
         if (attempt === 3) throw error
@@ -213,7 +234,7 @@ async function loadRenderer(window: BrowserWindow): Promise<void> {
       }
     }
   } else {
-    await window.loadFile(join(__dirname, '../renderer/index.html'))
+    await window.loadFile(join(__dirname, '../renderer/index.html'), view ? { query: { view } } : undefined)
   }
 }
 
@@ -283,19 +304,32 @@ async function createWindow(): Promise<void> {
     return { action: 'deny' }
   })
 
-  new WorkspaceDocumentService(persistence).registerIpc()
+  petService = new PetService({
+    persistence,
+    appSettingsService,
+    loadPetRenderer: (targetWindow) => loadRenderer(targetWindow, 'pet'),
+    openTarget: openPetTarget
+  })
+
+  new WorkspaceDocumentService(persistence, () => petService?.scanKanban()).registerIpc()
   fileSystemService = new FileSystemService()
   fileSystemService.registerIpc()
   ptyService = new PtyService()
+  ptyService.onAgentSessionChanged((event) => {
+    if (event.type === 'upsert') petService?.upsertAgentSession(event.session)
+    if (event.type === 'remove') petService?.removeAgentSession(event.sessionId)
+  })
   ptyService.registerIpc()
   browserService = new BrowserService(window)
   browserService.registerIpc()
+  new LauncherService().registerIpc()
   appSettingsService.registerIpc((nextSettings) => {
     trayLocale = nextSettings.locale
     updateTrayMenu()
   })
   pluginService = new PluginService()
   pluginService.registerIpc()
+  await petService.start()
 
   window.on('close', (event) => {
     if (isQuitting) {
@@ -349,6 +383,7 @@ if (!hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     installSecurityDefaults()
     registerLocalAssetProtocol()
+    if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
     await createWindow()
     ensureTray()
 

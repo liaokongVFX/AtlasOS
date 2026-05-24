@@ -2,6 +2,7 @@
 import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
+import { DEFAULT_PET_SETTINGS } from '@shared/pet'
 import type { CanvasComponent, CanvasDocument } from '@shared/schema'
 import { I18nContext, setCurrentLocale, translate } from '../i18n'
 import { subscribeCanvasViewportSync } from '../lib/canvas-viewport-sync'
@@ -9,6 +10,9 @@ import { useAppSettingsStore } from '../store/app-settings-store'
 import { useCanvasStore } from '../store/canvas-store'
 import { CanvasBoard } from './canvas-board'
 import type { AtlasFlowNode } from './component-node'
+import { registerBuiltInComponentDefinitions } from './register-builtins'
+
+registerBuiltInComponentDefinitions()
 
 type CapturedReactFlowProps = {
   deleteKeyCode?: string | string[] | null
@@ -19,6 +23,7 @@ type CapturedReactFlowProps = {
   onMove?: (event: MouseEvent | TouchEvent | null, viewport: { x: number; y: number; zoom: number }) => void
   onMoveEnd?: (event: MouseEvent | TouchEvent | null, viewport: { x: number; y: number; zoom: number }) => void
   onMoveStart?: (event: MouseEvent | TouchEvent | null, viewport: { x: number; y: number; zoom: number }) => void
+  onNodeDragStart?: (event: ReactMouseEvent, node: AtlasFlowNode, nodes: AtlasFlowNode[]) => void
   onNodeDragStop?: (event: ReactMouseEvent, node: AtlasFlowNode, nodes: AtlasFlowNode[]) => void
   onPaneClick?: (event: ReactMouseEvent) => void
   selectNodesOnDrag?: boolean
@@ -222,7 +227,8 @@ describe('CanvasBoard', () => {
       settings: {
         schemaVersion: ATLAS_SCHEMA_VERSION,
         locale: 'en-US',
-        shortcuts: { ...DEFAULT_APP_SHORTCUTS }
+        shortcuts: { ...DEFAULT_APP_SHORTCUTS },
+        pet: { ...DEFAULT_PET_SETTINGS }
       }
     })
     useCanvasStore.setState({
@@ -236,6 +242,7 @@ describe('CanvasBoard', () => {
 
   afterEach(() => {
     cleanup()
+    vi.useRealTimers()
   })
 
   it('notifies native browser overlays during viewport moves', () => {
@@ -279,6 +286,45 @@ describe('CanvasBoard', () => {
     })
 
     expect(board).not.toHaveClass('canvas-board--viewport-interacting')
+  })
+
+  it('defers pending autosaves while the viewport is being dragged', async () => {
+    vi.useFakeTimers()
+    const saveCanvas = vi.mocked(window.atlas.canvas.save)
+
+    renderCanvasBoard()
+
+    act(() => {
+      useCanvasStore.getState().updateCanvas('canvas-1', (draft) => {
+        draft.name = 'Changed'
+      })
+    })
+
+    act(() => {
+      reactFlowProps.current?.onMoveStart?.(null, { x: 120, y: 80, zoom: 1 })
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+
+    expect(saveCanvas).not.toHaveBeenCalled()
+
+    act(() => {
+      reactFlowProps.current?.onMoveEnd?.(null, { x: 160, y: 95, zoom: 1 })
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(499)
+    })
+    expect(saveCanvas).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+
+    expect(saveCanvas).toHaveBeenCalledTimes(1)
+    expect(saveCanvas.mock.calls[0][0].viewport).toEqual({ x: 160, y: 95, zoom: 1 })
   })
 
   it('does not persist or notify native browser overlays during node position changes', () => {
@@ -428,6 +474,63 @@ describe('CanvasBoard', () => {
         y: 240
       }
     })
+  })
+
+  it('opens the component creation menu with Tab at the mouse position', async () => {
+    renderCanvasBoard()
+
+    fireEvent.pointerMove(screen.getByTestId('canvas-flow'), { clientX: 480, clientY: 360, pointerType: 'mouse' })
+
+    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    act(() => {
+      window.dispatchEvent(event)
+    })
+
+    expect(event.defaultPrevented).toBe(true)
+    const browserItem = await screen.findByRole('menuitem', { name: 'Browser' })
+
+    fireEvent.click(browserItem)
+
+    const components = useCanvasStore.getState().canvases['canvas-1'].components
+    expect(reactFlowMock.screenToFlowPosition).toHaveBeenCalledWith({ x: 480, y: 360 })
+    expect(components).toHaveLength(1)
+    expect(components[0]).toMatchObject({
+      type: 'browser',
+      frame: {
+        x: 480,
+        y: 360
+      }
+    })
+  })
+
+  it('uses the configured shortcut to open the component creation menu', async () => {
+    useAppSettingsStore.setState({
+      settings: {
+        schemaVersion: ATLAS_SCHEMA_VERSION,
+        locale: 'en-US',
+        shortcuts: {
+          canvasDeselect: 'Ctrl+Q',
+          canvasFind: 'Ctrl+F',
+          canvasCreateComponent: 'Ctrl+Alt+K'
+        },
+        pet: { ...DEFAULT_PET_SETTINGS }
+      }
+    })
+
+    renderCanvasBoard()
+
+    fireEvent.pointerMove(screen.getByTestId('canvas-flow'), { clientX: 520, clientY: 390, pointerType: 'mouse' })
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+    })
+    expect(screen.queryByRole('menu', { name: 'Create component' })).not.toBeInTheDocument()
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, altKey: true, bubbles: true, cancelable: true }))
+    })
+
+    expect(await screen.findByRole('menuitem', { name: 'Terminal' })).toBeInTheDocument()
   })
 
   it('deletes the selected component with Delete', () => {
@@ -621,8 +724,10 @@ describe('CanvasBoard', () => {
         locale: 'en-US',
         shortcuts: {
           canvasDeselect: 'Ctrl+Shift+X',
-          canvasFind: 'Ctrl+F'
-        }
+          canvasFind: 'Ctrl+F',
+          canvasCreateComponent: 'Tab'
+        },
+        pet: { ...DEFAULT_PET_SETTINGS }
       }
     })
     useCanvasStore.setState((state) => ({
@@ -742,8 +847,10 @@ describe('CanvasBoard', () => {
         locale: 'en-US',
         shortcuts: {
           canvasDeselect: 'Ctrl+Q',
-          canvasFind: 'Alt+K'
-        }
+          canvasFind: 'Alt+K',
+          canvasCreateComponent: 'Tab'
+        },
+        pet: { ...DEFAULT_PET_SETTINGS }
       }
     })
     useCanvasStore.setState((state) => ({

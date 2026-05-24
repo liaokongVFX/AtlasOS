@@ -2,6 +2,7 @@ import { cleanup, createEvent, fireEvent, render, screen } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
 import type { AtlasAppState, CanvasDocument } from '@shared/schema'
+import { I18nContext, translate } from '../i18n'
 import { useCanvasStore } from '../store/canvas-store'
 import { TopBar } from './top-bar'
 
@@ -110,6 +111,16 @@ describe('TopBar workspace tabs', () => {
     expect(screen.queryByRole('button', { name: 'Add Files' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Add Browser' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Add Note' })).not.toBeInTheDocument()
+  })
+
+  it('does not show the settings button in the top bar', () => {
+    render(
+      <I18nContext.Provider value={{ locale: 'en-US', setLocale: vi.fn(), t: (key, values) => translate('en-US', key, values) }}>
+        <TopBar />
+      </I18nContext.Provider>
+    )
+
+    expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument()
   })
 
   it('reorders workspace tabs by dragging after another tab', () => {

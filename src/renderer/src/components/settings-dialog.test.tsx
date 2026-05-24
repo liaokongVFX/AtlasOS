@@ -1,8 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS } from '@shared/constants'
+import { DEFAULT_PET_SETTINGS } from '@shared/pet'
 import { ATLAS_PLUGIN_API_VERSION, type PluginInfo } from '@shared/plugins'
-import { I18nContext, setCurrentLocale, translate } from '../i18n'
+import { I18nContext, setCurrentLocale, translate, type Locale } from '../i18n'
 import { useAppSettingsStore } from '../store/app-settings-store'
 import { SettingsDialog } from './settings-dialog'
 
@@ -76,19 +77,24 @@ const appSettingsApi = {
 const appApi = {
   onOpenSettings: vi.fn()
 }
+const petApi = {
+  getState: vi.fn(),
+  updateSettings: vi.fn(),
+  onStateUpdated: vi.fn()
+}
 
-function renderSettingsDialog(): ReturnType<typeof render> {
-  setCurrentLocale('en-US')
+function renderSettingsDialog(showTrigger = true, locale: Locale = 'en-US'): ReturnType<typeof render> {
+  setCurrentLocale(locale)
 
   return render(
     <I18nContext.Provider
       value={{
-        locale: 'en-US',
+        locale,
         setLocale: vi.fn(),
-        t: (key, values) => translate('en-US', key, values)
+        t: (key, values) => translate(locale, key, values)
       }}
     >
-      <SettingsDialog />
+      <SettingsDialog showTrigger={showTrigger} />
     </I18nContext.Provider>
   )
 }
@@ -99,6 +105,7 @@ describe('SettingsDialog', () => {
     for (const mock of Object.values(filesystemApi)) mock.mockReset()
     for (const mock of Object.values(appSettingsApi)) mock.mockReset()
     for (const mock of Object.values(appApi)) mock.mockReset()
+    for (const mock of Object.values(petApi)) mock.mockReset()
 
     useAppSettingsStore.setState({
       error: null,
@@ -106,16 +113,26 @@ describe('SettingsDialog', () => {
       settings: {
         schemaVersion: ATLAS_SCHEMA_VERSION,
         locale: 'en-US',
-        shortcuts: { ...DEFAULT_APP_SHORTCUTS }
+        shortcuts: { ...DEFAULT_APP_SHORTCUTS },
+        pet: { ...DEFAULT_PET_SETTINGS }
       }
     })
     pluginApi.getSettings.mockResolvedValue({ rootPath: 'D:\\AtlasOS\\plugins' })
     appSettingsApi.get.mockResolvedValue({
       schemaVersion: ATLAS_SCHEMA_VERSION,
       locale: 'en-US',
-      shortcuts: { ...DEFAULT_APP_SHORTCUTS }
+      shortcuts: { ...DEFAULT_APP_SHORTCUTS },
+      pet: { ...DEFAULT_PET_SETTINGS }
     })
     appSettingsApi.update.mockImplementation(async (settings) => settings)
+    petApi.getState.mockResolvedValue({
+      settings: { ...DEFAULT_PET_SETTINGS },
+      alerts: [],
+      agentSessions: [],
+      bridge: { enabled: true, port: 14201, token: 'test-token' }
+    })
+    petApi.updateSettings.mockImplementation(async (settings) => settings)
+    petApi.onStateUpdated.mockReturnValue(() => undefined)
 
     Object.defineProperty(window, 'atlas', {
       configurable: true,
@@ -123,6 +140,7 @@ describe('SettingsDialog', () => {
         app: appApi,
         appSettings: appSettingsApi,
         filesystem: filesystemApi,
+        pet: petApi,
         plugins: pluginApi
       }
     })
@@ -142,6 +160,7 @@ describe('SettingsDialog', () => {
     expect(screen.getByRole('button', { name: 'Plugins' })).toBeInTheDocument()
     expect(screen.getByLabelText('Deselect nodes')).toHaveValue('Ctrl+Q')
     expect(screen.getByLabelText('Find nodes')).toHaveValue('Ctrl+F')
+    expect(screen.getByLabelText('Open create menu')).toHaveValue('Tab')
     expect(pluginApi.list).not.toHaveBeenCalled()
   })
 
@@ -151,6 +170,7 @@ describe('SettingsDialog', () => {
 
     fireEvent.change(screen.getByLabelText('Deselect nodes'), { target: { value: 'Ctrl+Shift+X' } })
     fireEvent.change(screen.getByLabelText('Find nodes'), { target: { value: 'Alt+F' } })
+    fireEvent.change(screen.getByLabelText('Open create menu'), { target: { value: 'Ctrl+Alt+Space' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() =>
@@ -159,15 +179,21 @@ describe('SettingsDialog', () => {
         locale: 'en-US',
         shortcuts: {
           canvasDeselect: 'Ctrl+Shift+X',
-          canvasFind: 'Alt+F'
-        }
+          canvasFind: 'Alt+F',
+          canvasCreateComponent: 'Ctrl+Alt+Space'
+        },
+        pet: { ...DEFAULT_PET_SETTINGS }
       })
     )
   })
 
-  it('validates duplicate general shortcuts before saving', async () => {
+  it('captures bare Tab and validates duplicate general shortcuts before saving', async () => {
     renderSettingsDialog()
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+
+    fireEvent.change(screen.getByLabelText('Open create menu'), { target: { value: 'Alt+M' } })
+    fireEvent.keyDown(screen.getByLabelText('Open create menu'), { key: 'Tab' })
+    expect(screen.getByLabelText('Open create menu')).toHaveValue('Tab')
 
     fireEvent.change(screen.getByLabelText('Find nodes'), { target: { value: 'Ctrl+Q' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -189,6 +215,25 @@ describe('SettingsDialog', () => {
     expect(screen.getByText('native:timer')).toBeInTheDocument()
     expect(screen.getByLabelText('Plugin root directory')).toHaveValue('D:\\AtlasOS\\plugins')
     expect(screen.getByText('Interval minutes')).toBeInTheDocument()
+  })
+
+  it('renders localized pet settings', async () => {
+    const locale: Locale = 'zh-CN'
+
+    renderSettingsDialog(true, locale)
+    fireEvent.click(screen.getByRole('button', { name: translate(locale, 'settings.open') }))
+    fireEvent.click(screen.getByRole('button', { name: translate(locale, 'settings.pet') }))
+
+    expect(await screen.findByText(translate(locale, 'settings.petDescription'))).toBeInTheDocument()
+    expect(screen.getByText(translate(locale, 'settings.petEnableWindow'))).toBeInTheDocument()
+    expect(screen.getByText(translate(locale, 'settings.petHookBridge'))).toBeInTheDocument()
+    expect(screen.getByText(translate(locale, 'settings.petAssetPack'))).toBeInTheDocument()
+    expect(screen.getByText(translate(locale, 'settings.petActionMapping'))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: `${translate(locale, 'settings.petIdleAsset')} ${translate(locale, 'common.browse')}` })).toBeInTheDocument()
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: translate(locale, 'settings.petAttentionMotion') }), { button: 0, ctrlKey: false })
+    expect(await screen.findByRole('menuitemradio', { name: translate(locale, 'settings.petActionPulse') })).toBeInTheDocument()
   })
 
   it('enables a disabled plugin and refreshes the renderer registry view', async () => {
@@ -214,7 +259,9 @@ describe('SettingsDialog', () => {
     pluginApi.list.mockResolvedValueOnce([plugin]).mockResolvedValueOnce([{ ...plugin, config: { intervalMinutes: 45 } }])
     pluginApi.updateConfig.mockResolvedValue({ ...plugin, config: { intervalMinutes: 45 } })
 
-    renderSettingsDialog()
+    renderSettingsDialog(false)
+    expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument()
+
     act(() => {
       openSettingsCallbacks[0]?.({ sectionId: 'plugins' })
     })

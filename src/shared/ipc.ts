@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { pluginConfigSchema, pluginIdSchema } from './plugins'
+import { petAlertTargetSchema, petSettingsSchema, PET_AGENT_SOURCES } from './pet'
 import { appSettingsSchema, browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
 
 export const MAX_TERMINAL_PASTED_ASSET_BASE64_CHARS = 14 * 1024 * 1024
@@ -98,6 +99,65 @@ export const terminalSaveClipboardImageInputSchema = z.object({})
 
 export const terminalReadClipboardFilesInputSchema = z.object({})
 
+export const petUpdateSettingsInputSchema = z.object({
+  settings: petSettingsSchema
+})
+
+export const petAlertInputSchema = z.object({
+  alertId: z.string().min(1)
+})
+
+export const petSnoozeAlertInputSchema = petAlertInputSchema.extend({
+  minutes: z.number().int().min(1).max(60 * 24 * 14)
+})
+
+export const petSetPositionInputSchema = z.object({
+  x: z.number().int(),
+  y: z.number().int()
+})
+
+export const petSetInteractiveInputSchema = z.object({
+  interactive: z.boolean()
+})
+
+export const petOpenTargetInputSchema = z.object({
+  target: petAlertTargetSchema
+})
+
+export const petAgentEventInputSchema = z.object({
+  source: z.enum(PET_AGENT_SOURCES),
+  event: z.enum(['running', 'waiting_for_confirmation', 'completed', 'error']),
+  title: z.string().trim().min(1).max(160).optional(),
+  body: z.string().trim().max(1000).optional(),
+  sessionId: z.string().trim().min(1).optional(),
+  componentId: z.string().trim().min(1).optional(),
+  canvasId: z.string().trim().min(1).optional(),
+  cwd: z.string().trim().min(1).optional()
+})
+
+const launcherPathKindSchema = z.enum(['app', 'file', 'folder'])
+
+export const launcherChooseFileInputSchema = z.object({
+  kind: z.enum(['app', 'file']).default('file')
+})
+
+export const launcherOpenInputSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: launcherPathKindSchema,
+    targetPath: z.string().min(1)
+  }),
+  z.object({
+    kind: z.literal('url'),
+    url: z.string().min(1).max(4096)
+  }),
+  z.object({
+    kind: z.literal('command'),
+    shell: z.enum(['cmd', 'powershell']),
+    command: z.string().trim().min(1).max(8192),
+    cwd: z.string().trim().min(1).optional()
+  })
+])
+
 export const browserCreateTabInputSchema = z.object({
   componentId: z.string().min(1),
   url: z.string().url().default('https://example.com'),
@@ -151,3 +211,5 @@ export const pluginInvokeInputSchema = pluginIdInputSchema.extend({
 export type SaveCanvasInput = z.infer<typeof saveCanvasInputSchema>
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsInputSchema>
 export type TerminalCreateInput = z.infer<typeof terminalCreateSchema>
+export type LauncherOpenInput = z.infer<typeof launcherOpenInputSchema>
+export type PetAgentEventInput = z.infer<typeof petAgentEventInputSchema>

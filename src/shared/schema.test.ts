@@ -108,7 +108,19 @@ describe('appSettingsSchema', () => {
       locale: DEFAULT_LOCALE,
       shortcuts: {
         canvasDeselect: 'Ctrl+Q',
-        canvasFind: 'Ctrl+F'
+        canvasFind: 'Ctrl+F',
+        canvasCreateComponent: 'Tab'
+      },
+      pet: {
+        enabled: true,
+        showNativeNotifications: true,
+        showRunningAgents: true,
+        position: { x: 36, y: 120 },
+        size: 72,
+        kanban: { enabled: true },
+        agentBridge: { enabled: true },
+        assetPack: { id: 'atlas-orb', name: 'Atlas Orb', idleSrc: '', idleKind: 'image', attentionSrc: '', attentionKind: 'image' },
+        actionMap: { idle: 'float', attention: 'pulse' }
       }
     })
   })
@@ -127,7 +139,8 @@ describe('appSettingsSchema', () => {
       }).shortcuts
     ).toEqual({
       canvasDeselect: 'Ctrl+Shift+X',
-      canvasFind: 'Alt+F'
+      canvasFind: 'Alt+F',
+      canvasCreateComponent: 'Tab'
     })
   })
 
@@ -136,7 +149,8 @@ describe('appSettingsSchema', () => {
       appSettingsSchema.parse({
         shortcuts: {
           canvasDeselect: 'Ctrl+K',
-          canvasFind: 'control + k'
+          canvasFind: 'Ctrl+F',
+          canvasCreateComponent: 'control + k'
         }
       })
     ).toThrow(/unique/)

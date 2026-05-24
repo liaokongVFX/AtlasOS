@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_LOCALE, DEFAULT_VIEWPORT, LOCALES } from './constants'
-import { keyboardShortcutsEqual, normalizeKeyboardShortcut } from './keyboard-shortcuts'
+import { normalizeKeyboardShortcut } from './keyboard-shortcuts'
+import { petSettingsSchema } from './pet'
 
 export const componentTypeSchema = z.string().min(1)
 
@@ -74,26 +75,37 @@ export const keyboardShortcutSchema = z.string().trim().min(1).max(80).transform
   return normalized
 })
 
+const appShortcutKeys = ['canvasDeselect', 'canvasFind', 'canvasCreateComponent'] as const
+
 export const appShortcutSettingsSchema = z
   .object({
     canvasDeselect: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasDeselect),
-    canvasFind: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasFind)
+    canvasFind: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasFind),
+    canvasCreateComponent: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasCreateComponent)
   })
   .default(DEFAULT_APP_SHORTCUTS)
   .superRefine((shortcuts, context) => {
-    if (keyboardShortcutsEqual(shortcuts.canvasDeselect, shortcuts.canvasFind)) {
-      context.addIssue({
-        code: 'custom',
-        message: 'Canvas shortcuts must be unique',
-        path: ['canvasFind']
-      })
+    const usedShortcuts = new Set<string>()
+
+    for (const key of appShortcutKeys) {
+      if (usedShortcuts.has(shortcuts[key])) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Canvas shortcuts must be unique',
+          path: [key]
+        })
+        continue
+      }
+
+      usedShortcuts.add(shortcuts[key])
     }
   })
 
 export const appSettingsSchema = z.object({
   schemaVersion: z.literal(ATLAS_SCHEMA_VERSION).default(ATLAS_SCHEMA_VERSION),
   locale: z.enum(LOCALES).default(DEFAULT_LOCALE),
-  shortcuts: appShortcutSettingsSchema
+  shortcuts: appShortcutSettingsSchema,
+  pet: petSettingsSchema
 })
 
 export type FileEntry = {
@@ -134,6 +146,8 @@ export const browserBoundsSchema = z.object({
 
 export const terminalCreateSchema = z.object({
   componentId: z.string(),
+  canvasId: z.string().optional(),
+  title: z.string().optional(),
   cwd: z.string().optional(),
   shell: z.string().optional(),
   cols: z.number().int().min(10).default(100),

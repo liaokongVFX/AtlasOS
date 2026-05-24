@@ -124,6 +124,22 @@ describe('KanbanComponent', () => {
     expect(lastKanbanState(deleteState).cards['card-1']).toBeUndefined()
   })
 
+  it('opens a card detail dialog from a pet target event', () => {
+    let state = createDefaultKanbanState(TIMESTAMP)
+    state = createKanbanCard(state, 'backlog', 'card-1', { title: 'Pet reminder target' }, TIMESTAMP)
+    renderKanban(createComponent(state))
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('atlas:open-kanban-card', {
+          detail: { componentId: 'kanban-1', cardId: 'card-1' }
+        })
+      )
+    })
+
+    expect(screen.getByDisplayValue('Pet reminder target')).toBeInTheDocument()
+  })
+
   it('creates and edits columns with WIP limits', async () => {
     const updateState = renderKanban()
 
