@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   listTreeInputSchema,
+  systemMetricsGetInputSchema,
   terminalPersistAssetInputSchema,
   terminalReadClipboardFilesInputSchema,
   terminalSaveClipboardImageInputSchema
@@ -60,5 +61,11 @@ describe('terminalSaveClipboardImageInputSchema', () => {
 describe('terminalReadClipboardFilesInputSchema', () => {
   it('accepts the empty clipboard-file read request', () => {
     expect(terminalReadClipboardFilesInputSchema.parse({})).toEqual({})
+  })
+})
+
+describe('systemMetricsGetInputSchema', () => {
+  it('accepts the empty system metrics request', () => {
+    expect(systemMetricsGetInputSchema.parse({})).toEqual({})
   })
 })

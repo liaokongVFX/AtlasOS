@@ -12,6 +12,7 @@ import { PluginService } from './services/plugin-service'
 import { WorkspaceDocumentService } from './services/workspace-document-service'
 import { LauncherService } from './services/launcher-service'
 import { PetService } from './services/pet-service'
+import { SystemMetricsService } from './services/system-metrics-service'
 import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services/local-asset-protocol'
 import type { PetAlertTarget } from '@shared/pet'
 
@@ -323,6 +324,7 @@ async function createWindow(): Promise<void> {
   browserService = new BrowserService(window)
   browserService.registerIpc()
   new LauncherService().registerIpc()
+  new SystemMetricsService().registerIpc()
   appSettingsService.registerIpc((nextSettings) => {
     trayLocale = nextSettings.locale
     updateTrayMenu()

@@ -99,6 +99,8 @@ export const terminalSaveClipboardImageInputSchema = z.object({})
 
 export const terminalReadClipboardFilesInputSchema = z.object({})
 
+export const systemMetricsGetInputSchema = z.object({})
+
 export const petUpdateSettingsInputSchema = z.object({
   settings: petSettingsSchema
 })

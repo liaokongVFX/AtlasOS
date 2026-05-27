@@ -3,6 +3,7 @@ import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } 
 import type { LauncherOpenInput, PetAgentEventInput } from '@shared/ipc'
 import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
 import type { AppSettings, AtlasAppState, CanvasDocument } from '@shared/schema'
+import type { SystemMetricsSnapshot } from '@shared/system-metrics'
 
 type Listener<T> = (payload: T) => void
 
@@ -115,6 +116,9 @@ const atlasApi = {
   launcher: {
     chooseFile: (input: { kind: 'app' | 'file' }) => ipcRenderer.invoke('launcher:choose-file', input) as Promise<string | null>,
     open: (input: LauncherOpenInput) => ipcRenderer.invoke('launcher:open', input) as Promise<{ ok: true }>
+  },
+  systemMetrics: {
+    get: () => ipcRenderer.invoke('system-metrics:get', {}) as Promise<SystemMetricsSnapshot>
   },
   pet: {
     getState: () => ipcRenderer.invoke('pet:get-state', {}) as Promise<PetRuntimeState>,

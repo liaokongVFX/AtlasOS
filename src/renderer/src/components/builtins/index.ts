@@ -1,12 +1,14 @@
 import type { AtlasSystemRendererPlugin } from '../../plugins/system-runtime'
 import type { HostRendererPluginNodeDefinition } from '../../plugins/registration'
 import { BUILT_IN_SYSTEM_PLUGIN_MANIFEST } from './manifest'
+import { createCalendarDefinition } from './calendar'
 import { createBrowserDefinition } from './browser'
 import { createFilePreviewDefinition } from './file-preview'
 import { createFileTreeDefinition } from './file-tree'
 import { createKanbanDefinition } from './kanban'
 import { createMarkdownNoteDefinition } from './markdown-note'
 import { createQuickLauncherDefinition } from './quick-launcher'
+import { createSystemMonitorDefinition } from './system-monitor'
 import { createTerminalDefinition } from './terminal'
 
 export function createBuiltInComponentDefinitions(): HostRendererPluginNodeDefinition[] {
@@ -17,7 +19,9 @@ export function createBuiltInComponentDefinitions(): HostRendererPluginNodeDefin
     createMarkdownNoteDefinition(),
     createFilePreviewDefinition(),
     createKanbanDefinition(),
-    createQuickLauncherDefinition()
+    createQuickLauncherDefinition(),
+    createSystemMonitorDefinition(),
+    createCalendarDefinition()
   ]
 }
 

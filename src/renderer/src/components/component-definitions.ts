@@ -11,7 +11,7 @@ export type ComponentDefinitionMeta = {
   creatable?: boolean
 }
 
-export const CREATABLE_BUILTIN_COMPONENT_TYPES = ['terminal', 'file-tree', 'browser', 'markdown-note', 'kanban', 'quick-launcher'] as const satisfies readonly BuiltInComponentType[]
+export const CREATABLE_BUILTIN_COMPONENT_TYPES = ['terminal', 'file-tree', 'browser', 'markdown-note', 'kanban', 'quick-launcher', 'system-monitor', 'calendar'] as const satisfies readonly BuiltInComponentType[]
 
 export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefinitionMeta> = {
   terminal: {
@@ -67,6 +67,22 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     titleKey: 'component.quickLauncher',
     defaultFrame: { x: 320, y: 240, width: 680, height: 520 },
     permissions: ['launcher:open'],
+    creatable: true
+  },
+  'system-monitor': {
+    type: 'system-monitor',
+    title: 'System Monitor',
+    titleKey: 'component.systemMonitor',
+    defaultFrame: { x: 340, y: 260, width: 520, height: 360 },
+    permissions: ['system:metrics'],
+    creatable: true
+  },
+  calendar: {
+    type: 'calendar',
+    title: 'Calendar',
+    titleKey: 'component.calendar',
+    defaultFrame: { x: 360, y: 280, width: 560, height: 460 },
+    permissions: [],
     creatable: true
   }
 }
