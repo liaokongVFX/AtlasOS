@@ -101,6 +101,66 @@ export const terminalReadClipboardFilesInputSchema = z.object({})
 
 export const systemMetricsGetInputSchema = z.object({})
 
+export const gitRepositoryInputSchema = z.object({
+  repoPath: z.string().min(1)
+})
+
+export const gitLogInputSchema = gitRepositoryInputSchema.extend({
+  ref: z.string().min(1).max(240).optional(),
+  limit: z.number().int().min(1).max(500).default(200),
+  skip: z.number().int().min(0).max(100_000).default(0)
+})
+
+export const gitDiffInputSchema = gitRepositoryInputSchema.extend({
+  target: z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('worktree'),
+      filePath: z.string().min(1).optional()
+    }),
+    z.object({
+      kind: z.literal('staged'),
+      filePath: z.string().min(1).optional()
+    }),
+    z.object({
+      kind: z.literal('commit'),
+      commitHash: z.string().min(1).max(80),
+      filePath: z.string().min(1).optional(),
+      oldPath: z.string().min(1).optional()
+    })
+  ])
+})
+
+export const gitCommitDetailInputSchema = gitRepositoryInputSchema.extend({
+  commitHash: z.string().min(1).max(80)
+})
+
+export const gitPathsInputSchema = gitRepositoryInputSchema.extend({
+  filePaths: z.array(z.string().min(1)).min(1).max(200)
+})
+
+export const gitCommitInputSchema = gitRepositoryInputSchema.extend({
+  message: z.string().trim().min(1).max(10_000),
+  filePaths: z.array(z.string().min(1)).min(1).max(200).optional()
+})
+
+export const gitBranchInputSchema = gitRepositoryInputSchema.extend({
+  name: z.string().trim().min(1).max(240),
+  startPoint: z.string().trim().min(1).max(240).optional()
+})
+
+export const gitSwitchBranchInputSchema = gitRepositoryInputSchema.extend({
+  name: z.string().trim().min(1).max(240),
+  remote: z.boolean().default(false)
+})
+
+export const gitStashPushInputSchema = gitRepositoryInputSchema.extend({
+  message: z.string().trim().max(240).optional()
+})
+
+export const gitStashRefInputSchema = gitRepositoryInputSchema.extend({
+  ref: z.string().trim().min(1).max(80)
+})
+
 export const petUpdateSettingsInputSchema = z.object({
   settings: petSettingsSchema
 })
@@ -215,3 +275,4 @@ export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsInputSchema
 export type TerminalCreateInput = z.infer<typeof terminalCreateSchema>
 export type LauncherOpenInput = z.infer<typeof launcherOpenInputSchema>
 export type PetAgentEventInput = z.infer<typeof petAgentEventInputSchema>
+export type GitDiffInput = z.infer<typeof gitDiffInputSchema>

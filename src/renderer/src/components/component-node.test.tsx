@@ -163,6 +163,17 @@ describe('ComponentNode', () => {
     expect(document.querySelector('.component-node__interaction-shield')).not.toBeInTheDocument()
   })
 
+  it('keeps resize affordance styling in CSS-controlled hit targets', () => {
+    renderNode(createComponent(), true)
+
+    expect(nodeResizerProps.current).toMatchObject({
+      handleClassName: 'component-node__resize-handle',
+      isVisible: true,
+      lineClassName: 'component-node__resize-line'
+    })
+    expect(nodeResizerProps.current?.color).toBeUndefined()
+  })
+
   it('renders a missing plugin placeholder for unknown component types', () => {
     renderNode(createComponent({ type: 'acme.tools/timer' }))
 

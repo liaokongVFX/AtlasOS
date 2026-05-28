@@ -1,9 +1,10 @@
 import { clipboard, contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } from '@shared/plugins'
-import type { LauncherOpenInput, PetAgentEventInput } from '@shared/ipc'
+import type { GitDiffInput, LauncherOpenInput, PetAgentEventInput } from '@shared/ipc'
 import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
 import type { AppSettings, AtlasAppState, CanvasDocument } from '@shared/schema'
 import type { SystemMetricsSnapshot } from '@shared/system-metrics'
+import type { GitBranchSummary, GitCommitSummary, GitDiffResult, GitOperationResult, GitStashEntry, GitStatusSnapshot, GitSummary } from '@shared/git'
 
 type Listener<T> = (payload: T) => void
 
@@ -119,6 +120,34 @@ const atlasApi = {
   },
   systemMetrics: {
     get: () => ipcRenderer.invoke('system-metrics:get', {}) as Promise<SystemMetricsSnapshot>
+  },
+  git: {
+    chooseRepository: (title?: string) => ipcRenderer.invoke('git:choose-repository', { title }) as Promise<string | null>,
+    summary: (repoPath: string) => ipcRenderer.invoke('git:summary', { repoPath }) as Promise<GitSummary>,
+    status: (repoPath: string) => ipcRenderer.invoke('git:status', { repoPath }) as Promise<GitStatusSnapshot>,
+    branches: (repoPath: string) => ipcRenderer.invoke('git:branches', { repoPath }) as Promise<GitBranchSummary[]>,
+    log: (repoPath: string, input: { ref?: string; limit?: number; skip?: number } = {}) =>
+      ipcRenderer.invoke('git:log', { repoPath, ...input }) as Promise<GitCommitSummary[]>,
+    commitDetail: (repoPath: string, commitHash: string) =>
+      ipcRenderer.invoke('git:commit-detail', { repoPath, commitHash }) as Promise<GitCommitSummary>,
+    diff: (repoPath: string, target: GitDiffInput['target']) => ipcRenderer.invoke('git:diff', { repoPath, target }) as Promise<GitDiffResult>,
+    stage: (repoPath: string, filePaths: string[]) => ipcRenderer.invoke('git:stage', { repoPath, filePaths }) as Promise<GitOperationResult>,
+    unstage: (repoPath: string, filePaths: string[]) => ipcRenderer.invoke('git:unstage', { repoPath, filePaths }) as Promise<GitOperationResult>,
+    commit: (repoPath: string, message: string, filePaths?: string[]) =>
+      ipcRenderer.invoke('git:commit', { repoPath, message, filePaths }) as Promise<GitOperationResult>,
+    createBranch: (repoPath: string, name: string, startPoint?: string) =>
+      ipcRenderer.invoke('git:branch-create', { repoPath, name, startPoint }) as Promise<GitOperationResult>,
+    switchBranch: (repoPath: string, name: string, remote = false) =>
+      ipcRenderer.invoke('git:branch-switch', { repoPath, name, remote }) as Promise<GitOperationResult>,
+    deleteBranch: (repoPath: string, name: string) => ipcRenderer.invoke('git:branch-delete', { repoPath, name }) as Promise<GitOperationResult>,
+    fetch: (repoPath: string) => ipcRenderer.invoke('git:fetch', { repoPath }) as Promise<GitOperationResult>,
+    pull: (repoPath: string) => ipcRenderer.invoke('git:pull', { repoPath }) as Promise<GitOperationResult>,
+    push: (repoPath: string) => ipcRenderer.invoke('git:push', { repoPath }) as Promise<GitOperationResult>,
+    stashes: (repoPath: string) => ipcRenderer.invoke('git:stash-list', { repoPath }) as Promise<GitStashEntry[]>,
+    pushStash: (repoPath: string, message?: string) => ipcRenderer.invoke('git:stash-push', { repoPath, message }) as Promise<GitOperationResult>,
+    applyStash: (repoPath: string, ref: string) => ipcRenderer.invoke('git:stash-apply', { repoPath, ref }) as Promise<GitOperationResult>,
+    popStash: (repoPath: string, ref: string) => ipcRenderer.invoke('git:stash-pop', { repoPath, ref }) as Promise<GitOperationResult>,
+    dropStash: (repoPath: string, ref: string) => ipcRenderer.invoke('git:stash-drop', { repoPath, ref }) as Promise<GitOperationResult>
   },
   pet: {
     getState: () => ipcRenderer.invoke('pet:get-state', {}) as Promise<PetRuntimeState>,

@@ -17,7 +17,6 @@ type AtlasNodeData = Record<string, unknown> & {
 
 export type AtlasFlowNode = Node<AtlasNodeData, 'atlasComponent'>
 
-const NODE_SELECTION_RESIZER_COLOR = 'var(--component-node-selected-handle)'
 const DEFAULT_NODE_MIN_HEIGHT = 160
 const SHIELD_CONTEXT_MENU_TRIGGER_SELECTOR = '[data-component-context-menu-trigger]'
 
@@ -226,7 +225,6 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
       onContextMenuCapture={selectComponentForContextMenu}
     >
       <NodeResizer
-        color={NODE_SELECTION_RESIZER_COLOR}
         handleClassName="component-node__resize-handle"
         isVisible={selected}
         lineClassName="component-node__resize-line"

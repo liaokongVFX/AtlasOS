@@ -10,6 +10,7 @@ import { createMarkdownNoteDefinition } from './markdown-note'
 import { createQuickLauncherDefinition } from './quick-launcher'
 import { createSystemMonitorDefinition } from './system-monitor'
 import { createTerminalDefinition } from './terminal'
+import { createGitManagerDefinition } from './git-manager'
 
 export function createBuiltInComponentDefinitions(): HostRendererPluginNodeDefinition[] {
   return [
@@ -21,7 +22,8 @@ export function createBuiltInComponentDefinitions(): HostRendererPluginNodeDefin
     createKanbanDefinition(),
     createQuickLauncherDefinition(),
     createSystemMonitorDefinition(),
-    createCalendarDefinition()
+    createCalendarDefinition(),
+    createGitManagerDefinition()
   ]
 }
 

@@ -20,6 +20,7 @@ type BrowserWebviewOpenTabRequest = {
 type BrowserWebviewElement = Electron.WebviewTag
 
 const DEFAULT_BROWSER_URL = 'https://example.com'
+const BROWSER_CONTENT_BACKGROUND = '#ffffff'
 const WEBVIEW_PREFERENCES = 'contextIsolation=yes,sandbox=yes'
 
 function readTabs(state: Record<string, unknown>, defaultTitle: string): BrowserTabState[] {
@@ -64,6 +65,7 @@ function BrowserWebview({
   const style = useMemo<CSSProperties>(
     () => ({
       display: active ? 'flex' : 'none',
+      backgroundColor: BROWSER_CONTENT_BACKGROUND,
       pointerEvents: active && interactive ? 'auto' : 'none'
     }),
     [active, interactive]

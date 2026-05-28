@@ -1,6 +1,7 @@
 import '@xyflow/react/dist/style.css'
 import '@xterm/xterm/css/xterm.css'
 import 'katex/dist/katex.min.css'
+import 'react-diff-view/style/index.css'
 import './styles.css'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'

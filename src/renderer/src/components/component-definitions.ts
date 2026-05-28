@@ -11,7 +11,17 @@ export type ComponentDefinitionMeta = {
   creatable?: boolean
 }
 
-export const CREATABLE_BUILTIN_COMPONENT_TYPES = ['terminal', 'file-tree', 'browser', 'markdown-note', 'kanban', 'quick-launcher', 'system-monitor', 'calendar'] as const satisfies readonly BuiltInComponentType[]
+export const CREATABLE_BUILTIN_COMPONENT_TYPES = [
+  'terminal',
+  'file-tree',
+  'browser',
+  'markdown-note',
+  'kanban',
+  'quick-launcher',
+  'system-monitor',
+  'calendar',
+  'git-manager'
+] as const satisfies readonly BuiltInComponentType[]
 
 export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefinitionMeta> = {
   terminal: {
@@ -83,6 +93,14 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     titleKey: 'component.calendar',
     defaultFrame: { x: 360, y: 280, width: 560, height: 460 },
     permissions: [],
+    creatable: true
+  },
+  'git-manager': {
+    type: 'git-manager',
+    title: 'Git Manager',
+    titleKey: 'component.gitManager',
+    defaultFrame: { x: 220, y: 180, width: 980, height: 680 },
+    permissions: ['git:read', 'git:write', 'git:network'],
     creatable: true
   }
 }

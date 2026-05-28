@@ -6,6 +6,8 @@ const electronMocks = vi.hoisted(() => ({
   ipcHandle: vi.fn(),
   loadURL: vi.fn(() => Promise.resolve()),
   openExternal: vi.fn(),
+  viewSetBackgroundColor: vi.fn(),
+  webContentsViewSetBackgroundColor: vi.fn(),
   windowOpenHandler: null as ((details: { url: string }) => { action: 'deny' }) | null
 }))
 
@@ -14,9 +16,11 @@ vi.mock('electron', () => ({
   View: class View {
     addChildView = vi.fn()
     removeChildView = vi.fn()
+    setBackgroundColor = electronMocks.viewSetBackgroundColor
     setBounds = vi.fn()
   },
   WebContentsView: class WebContentsView {
+    setBackgroundColor = electronMocks.webContentsViewSetBackgroundColor
     setBounds = vi.fn()
     webContents = {
       setWindowOpenHandler: vi.fn((handler) => {
@@ -43,6 +47,8 @@ describe('BrowserService', () => {
     electronMocks.ipcHandle.mockClear()
     electronMocks.loadURL.mockReset()
     electronMocks.loadURL.mockReturnValue(new Promise(() => undefined))
+    electronMocks.viewSetBackgroundColor.mockClear()
+    electronMocks.webContentsViewSetBackgroundColor.mockClear()
 
     const window = {
       isDestroyed: () => false,
@@ -68,6 +74,8 @@ describe('BrowserService', () => {
       url: 'https://slow.example.com'
     })
     expect(electronMocks.loadURL).toHaveBeenCalledWith('https://slow.example.com')
+    expect(electronMocks.viewSetBackgroundColor).toHaveBeenCalledWith('#ffffff')
+    expect(electronMocks.webContentsViewSetBackgroundColor).toHaveBeenCalledWith('#ffffff')
   })
 
   it('routes embedded new-window requests into Atlas browser tabs instead of the system browser', async () => {

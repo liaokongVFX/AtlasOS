@@ -31,6 +31,7 @@ type BrowserBounds = {
 }
 
 const HIDDEN_BOUNDS: BrowserBounds = { x: 0, y: 0, width: 0, height: 0 }
+const BROWSER_CONTENT_BACKGROUND = '#ffffff'
 
 function childBoundsForClippedContainer(containerBounds: BrowserBounds, contentBounds: BrowserBounds): BrowserBounds {
   return {
@@ -59,6 +60,8 @@ export class BrowserService {
           sandbox: true
         }
       })
+      container.setBackgroundColor(BROWSER_CONTENT_BACKGROUND)
+      view.setBackgroundColor(BROWSER_CONTENT_BACKGROUND)
 
       view.webContents.setWindowOpenHandler(({ url }) => {
         this.emitOpenTabRequested({

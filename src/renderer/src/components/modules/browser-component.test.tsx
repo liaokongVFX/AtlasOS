@@ -75,7 +75,7 @@ describe('BrowserComponent', () => {
 
     expect(webview).toBeInTheDocument()
     expect(webview).toHaveAttribute('src', 'https://example.com')
-    expect(webview).toHaveStyle({ display: 'flex', pointerEvents: 'none' })
+    expect(webview).toHaveStyle({ display: 'flex', backgroundColor: '#ffffff', pointerEvents: 'none' })
   })
 
   it('makes the active browser webview interactive when the node is selected', () => {
