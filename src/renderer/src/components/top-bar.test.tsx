@@ -20,6 +20,7 @@ function createCanvas(id: string, name: string): CanvasDocument {
       image: { ...DEFAULT_CANVAS_BACKGROUND.image }
     },
     components: [],
+    groups: [],
     createdAt: timestamp,
     updatedAt: timestamp
   }

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { fileExtension, fileName } from '../../lib/file-types'
 import { useI18n, type TFunction } from '../../i18n'
 import { writeClipboardText } from '../../lib/clipboard'
-import { asString } from '../../lib/utils'
+import { asBoolean, asString } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
 
 type Disposable = {
@@ -282,6 +282,8 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
   const sessionIdRef = useRef<string | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const cwdRef = useRef(asString(component.state.cwd, asString(component.config.cwd)))
+  const initialCommand = asString(component.config.initialCommand)
+  const initialCommandDispatched = asBoolean(component.state.initialCommandDispatched)
   const pendingFocusRef = useRef(false)
   const focusFrameRef = useRef<number | null>(null)
   const feedbackTimerRef = useRef<number | null>(null)
@@ -715,6 +717,7 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
           title: component.title,
           cwd: cwdRef.current,
           shell: asString(component.config.shell),
+          initialCommand: initialCommand && !initialCommandDispatched ? initialCommand : undefined,
           cols: instance.cols,
           rows: instance.rows
         })
@@ -728,6 +731,9 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
           if (session.cwd !== cwdRef.current) {
             cwdRef.current = session.cwd
             updateState({ cwd: session.cwd }, false)
+          }
+          if (session.didRunInitialCommand) {
+            updateState({ initialCommandDispatched: true }, true)
           }
           if (isNodeSelectedRef.current) {
             requestFocus()
@@ -785,6 +791,7 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
     component.id,
     component.title,
     component.config.cwd,
+    component.config.initialCommand,
     component.config.shell,
     pasteClipboardIntoTerminal,
     pasteFilesIntoTerminal,

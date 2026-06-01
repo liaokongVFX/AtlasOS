@@ -14,6 +14,9 @@ import { LauncherService } from './services/launcher-service'
 import { PetService } from './services/pet-service'
 import { SystemMetricsService } from './services/system-metrics-service'
 import { GitService } from './services/git-service'
+import { ClaudeHistoryService } from './services/claude-history-service'
+import { CodexHistoryService } from './services/codex-history-service'
+import { applyAtlasBrowserNetworkPolicy, applyAtlasBrowserWebPreferences } from './services/browser-network-policy'
 import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services/local-asset-protocol'
 import type { PetAlertTarget } from '@shared/pet'
 
@@ -46,6 +49,8 @@ function isExternalProtocolUrl(url: string): boolean {
 
 app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() !== 'webview') return
+
+  applyAtlasBrowserNetworkPolicy(contents)
 
   contents.setWindowOpenHandler(({ url }) => {
     if (isBrowserNavigableUrl(url)) {
@@ -295,7 +300,7 @@ async function createWindow(): Promise<void> {
       return
     }
 
-    delete webPreferences.preload
+    applyAtlasBrowserWebPreferences(webPreferences)
     webPreferences.contextIsolation = true
     webPreferences.nodeIntegration = false
     webPreferences.sandbox = true
@@ -316,10 +321,10 @@ async function createWindow(): Promise<void> {
   new WorkspaceDocumentService(persistence, () => petService?.scanKanban()).registerIpc()
   fileSystemService = new FileSystemService()
   fileSystemService.registerIpc()
-  ptyService = new PtyService()
-  ptyService.onAgentSessionChanged((event) => {
-    if (event.type === 'upsert') petService?.upsertAgentSession(event.session)
-    if (event.type === 'remove') petService?.removeAgentSession(event.sessionId)
+  ptyService = new PtyService({
+    getAgentHookEnvironment: (context) => petService?.getAgentHookEnvironment(context) ?? {},
+    onAgentCommandStarted: (context) => petService?.recordAgentCommandStarted(context),
+    onSessionClosed: (sessionId) => petService?.removeAgentSession(sessionId)
   })
   ptyService.registerIpc()
   browserService = new BrowserService(window)
@@ -327,6 +332,8 @@ async function createWindow(): Promise<void> {
   new LauncherService().registerIpc()
   new SystemMetricsService().registerIpc()
   new GitService().registerIpc()
+  new ClaudeHistoryService().registerIpc()
+  new CodexHistoryService().registerIpc()
   appSettingsService.registerIpc((nextSettings) => {
     trayLocale = nextSettings.locale
     updateTrayMenu()

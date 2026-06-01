@@ -23,7 +23,7 @@ export const canvasBackgroundSchema = z.object({
   image: z
     .object({
       src: z.string().default(''),
-      opacity: z.number().min(0).max(1).default(DEFAULT_CANVAS_BACKGROUND.image.opacity),
+      blur: z.number().min(0).max(24).default(DEFAULT_CANVAS_BACKGROUND.image.blur),
       fit: z.enum(['cover', 'contain', 'repeat']).default(DEFAULT_CANVAS_BACKGROUND.image.fit),
       fixed: z.boolean().default(DEFAULT_CANVAS_BACKGROUND.image.fixed)
     })
@@ -43,6 +43,15 @@ export const canvasComponentSchema = z.object({
   updatedAt: z.string()
 })
 
+export const canvasGroupSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().trim().min(1).default('Group'),
+  notes: z.string().default(''),
+  frame: frameSchema,
+  zIndex: z.number().int().nonnegative().default(0),
+  memberIds: z.array(z.string().min(1)).default([])
+})
+
 export const canvasDocumentSchema = z.object({
   schemaVersion: z.literal(ATLAS_SCHEMA_VERSION),
   id: z.string().min(1),
@@ -50,6 +59,7 @@ export const canvasDocumentSchema = z.object({
   viewport: viewportSchema.default(DEFAULT_VIEWPORT),
   background: canvasBackgroundSchema.default(DEFAULT_CANVAS_BACKGROUND),
   components: z.array(canvasComponentSchema).default([]),
+  groups: z.array(canvasGroupSchema).default([]),
   createdAt: z.string(),
   updatedAt: z.string()
 })
@@ -75,13 +85,15 @@ export const keyboardShortcutSchema = z.string().trim().min(1).max(80).transform
   return normalized
 })
 
-const appShortcutKeys = ['canvasDeselect', 'canvasFind', 'canvasCreateComponent'] as const
+const appShortcutKeys = ['canvasDeselect', 'canvasFind', 'canvasCreateComponent', 'canvasGroupSelection', 'canvasUngroupSelection'] as const
 
 export const appShortcutSettingsSchema = z
   .object({
     canvasDeselect: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasDeselect),
     canvasFind: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasFind),
-    canvasCreateComponent: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasCreateComponent)
+    canvasCreateComponent: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasCreateComponent),
+    canvasGroupSelection: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasGroupSelection),
+    canvasUngroupSelection: keyboardShortcutSchema.default(DEFAULT_APP_SHORTCUTS.canvasUngroupSelection)
   })
   .default(DEFAULT_APP_SHORTCUTS)
   .superRefine((shortcuts, context) => {
@@ -150,6 +162,7 @@ export const terminalCreateSchema = z.object({
   title: z.string().optional(),
   cwd: z.string().optional(),
   shell: z.string().optional(),
+  initialCommand: z.string().trim().min(1).max(8192).optional(),
   cols: z.number().int().min(10).default(100),
   rows: z.number().int().min(4).default(30)
 })
@@ -159,6 +172,7 @@ export type Frame = z.infer<typeof frameSchema>
 export type Viewport = z.infer<typeof viewportSchema>
 export type CanvasBackground = z.infer<typeof canvasBackgroundSchema>
 export type CanvasComponent = z.infer<typeof canvasComponentSchema>
+export type CanvasGroup = z.infer<typeof canvasGroupSchema>
 export type CanvasDocument = z.infer<typeof canvasDocumentSchema>
 export type AtlasAppState = z.infer<typeof appStateSchema>
 export type AppShortcutSettings = z.infer<typeof appShortcutSettingsSchema>

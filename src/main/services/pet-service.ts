@@ -2,22 +2,24 @@ import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { homedir } from 'node:os'
 import { app, BrowserWindow, Notification, screen, type WebContents } from 'electron'
 import { z } from 'zod'
 import {
-  petAgentEventInputSchema,
   petAlertInputSchema,
+  petClearAlertsInputSchema,
   petOpenTargetInputSchema,
   petSetInteractiveInputSchema,
   petSetPositionInputSchema,
   petSnoozeAlertInputSchema,
-  petUpdateSettingsInputSchema,
-  type PetAgentEventInput
+  petUpdateSettingsInputSchema
 } from '@shared/ipc'
 import {
   petAlertSchema,
   petAgentSessionSchema,
   petRuntimeStateSchema,
+  type PetAgentSource,
+  type PetAgentStatus,
   type PetAgentSession,
   type PetAlert,
   type PetAlertTarget,
@@ -40,10 +42,94 @@ type StoredPetState = {
   alerts: PetAlert[]
 }
 
+type AgentHookBridgeEnvironmentContext = {
+  sessionId: string
+  canvasId?: string
+  componentId: string
+  title?: string
+  cwd: string
+}
+
+type AgentCommandStartedContext = AgentHookBridgeEnvironmentContext & {
+  source: PetAgentSource
+}
+
+type AgentHookRequestContext = {
+  hookName?: string
+  sessionId?: string
+  componentId?: string
+  canvasId?: string
+  cwd?: string
+  title?: string
+}
+
+type AgentBridgeRoute = {
+  source: PetAgentSource
+  context: AgentHookRequestContext
+}
+
+type AgentHookEventKind = Extract<PetAgentStatus, 'running' | 'waiting_for_confirmation' | 'completed' | 'error' | 'idle_unknown'>
+
+type AgentHookEventInput = {
+  source: PetAgentSource
+  event: AgentHookEventKind
+  hookName: string
+  title?: string
+  sessionTitle?: string
+  body?: string
+  sessionId?: string
+  componentId?: string
+  canvasId?: string
+  cwd?: string
+}
+
+type NormalizedAgentHookEvent = { kind: 'event'; event: AgentHookEventInput } | { kind: 'ignored' }
+
 const PET_STATE_DIR = 'pet'
 const PET_STATE_FILE = 'state.json'
+const PET_HOOK_FORWARDER_FILE = 'agent-hook-forwarder.cjs'
+const PET_HOOK_BRIDGE_FILE = 'agent-hook-bridge.json'
+const CLAUDE_SETTINGS_DIR = '.claude'
+const CLAUDE_SETTINGS_FILE = 'settings.json'
+const CODEX_SETTINGS_DIR = '.codex'
+const CODEX_HOOKS_FILE = 'hooks.json'
+const CODEX_CONFIG_FILE = 'config.toml'
+const CLAUDE_HOOK_EVENTS = [
+  'SessionStart',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'PostToolUseFailure',
+  'Notification',
+  'PermissionRequest',
+  'PermissionDenied',
+  'Elicitation',
+  'ElicitationResult',
+  'Stop',
+  'StopFailure',
+  'SessionEnd',
+  'TaskCreated',
+  'TaskCompleted',
+  'PreCompact',
+  'PostCompact',
+  'SubagentStart',
+  'SubagentStop'
+] as const
+const CODEX_HOOK_EVENTS = [
+  'SessionStart',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PermissionRequest',
+  'PostToolUse',
+  'PreCompact',
+  'PostCompact',
+  'SubagentStart',
+  'SubagentStop',
+  'Stop'
+] as const
 const MAX_ALERTS = 100
 const KANBAN_SCAN_INTERVAL_MS = 60_000
+const CODEX_HOOK_TIMEOUT_SEC = 5
 const PET_ORB_SIZE = 72
 const PET_WINDOW_PADDING = 12
 const PET_PANEL_GAP = 12
@@ -51,6 +137,85 @@ const PET_PANEL_WIDTH = 260
 const PET_ORB_OFFSET_X = PET_WINDOW_PADDING + PET_PANEL_WIDTH + PET_PANEL_GAP
 const PET_WINDOW_WIDTH = PET_WINDOW_PADDING * 2 + PET_PANEL_WIDTH * 2 + PET_PANEL_GAP * 2 + PET_ORB_SIZE
 const PET_WINDOW_HEIGHT = 420
+const AGENT_HOOK_FORWARDER_SCRIPT = String.raw`#!/usr/bin/env node
+const fs = require('node:fs')
+const http = require('node:http')
+const path = require('node:path')
+const { URL, URLSearchParams } = require('node:url')
+
+const source = String(process.argv[2] || process.env.ATLAS_PET_SOURCE || '').toLowerCase()
+const hookName = String(process.argv[3] || process.env.ATLAS_PET_HOOK_EVENT || '')
+const bridgeConfigPath = process.env.ATLAS_PET_BRIDGE_CONFIG || path.join(__dirname, 'agent-hook-bridge.json')
+
+function readBridgeConfig() {
+  try {
+    const config = JSON.parse(fs.readFileSync(bridgeConfigPath, 'utf8'))
+    if (!config || config.enabled === false) return {}
+    return config
+  } catch {
+    return {}
+  }
+}
+
+const bridgeConfig = readBridgeConfig()
+const bridgeUrl = process.env.ATLAS_PET_BRIDGE_URL || bridgeConfig.bridgeUrl
+const token = process.env.ATLAS_PET_BRIDGE_TOKEN || bridgeConfig.token
+
+if (!bridgeUrl || !token || !['claude', 'codex'].includes(source)) process.exit(0)
+
+let input = ''
+process.stdin.setEncoding('utf8')
+process.stdin.on('data', (chunk) => {
+  input += chunk
+})
+process.stdin.on('end', () => {
+  const query = new URLSearchParams()
+  const fields = {
+    sessionId: 'ATLAS_TERMINAL_SESSION_ID',
+    componentId: 'ATLAS_TERMINAL_COMPONENT_ID',
+    canvasId: 'ATLAS_CANVAS_ID',
+    cwd: 'ATLAS_TERMINAL_CWD',
+    title: 'ATLAS_TERMINAL_TITLE'
+  }
+
+  for (const [key, envName] of Object.entries(fields)) {
+    const value = process.env[envName]
+    if (value) query.set(key, value)
+  }
+  if (hookName) query.set('hookName', hookName)
+
+  const baseUrl = bridgeUrl.endsWith('/') ? bridgeUrl.slice(0, -1) : bridgeUrl
+  const endpoint = new URL(baseUrl + '/' + source)
+  endpoint.search = query.toString()
+  const body = input.trim() || '{}'
+  const request = http.request(
+    endpoint,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+        'x-atlas-pet-token': token
+      }
+    },
+    (response) => {
+      response.resume()
+      response.on('end', () => process.exit(0))
+    }
+  )
+
+  request.setTimeout(2000, () => {
+    request.destroy()
+    process.exit(0)
+  })
+  request.on('error', () => process.exit(0))
+  request.end(body)
+})
+
+if (process.stdin.isTTY) process.stdin.emit('end')
+`
+
+const JSON_WRITE_RETRY_DELAYS_MS = [10, 25, 50]
 
 type PetPanelSide = 'left' | 'right'
 
@@ -84,16 +249,28 @@ function todayDate(): string {
 }
 
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`
   await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-  try {
-    await rename(tmpPath, filePath)
-  } catch (error) {
-    const code = isRecord(error) ? error.code : undefined
-    if (code !== 'EEXIST' && code !== 'EPERM') throw error
 
-    await rm(filePath, { force: true })
-    await rename(tmpPath, filePath)
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(tmpPath, filePath)
+      return
+    } catch (error) {
+      const code = isRecord(error) ? error.code : undefined
+      if (code !== 'EEXIST' && code !== 'EPERM') throw error
+
+      await rm(filePath, { force: true })
+      try {
+        await rename(tmpPath, filePath)
+        return
+      } catch (renameError) {
+        const renameCode = isRecord(renameError) ? renameError.code : undefined
+        const delay = JSON_WRITE_RETRY_DELAYS_MS[attempt]
+        if (delay === undefined || (renameCode !== 'EPERM' && renameCode !== 'ENOENT')) throw renameError
+        await new Promise((resolve) => setTimeout(resolve, delay))
+      }
+    }
   }
 }
 
@@ -103,6 +280,382 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function asOptionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed || undefined
+}
+
+function isAgentAttentionAlert(alert: PetAlert): boolean {
+  return alert.kind === 'agent_waiting' || alert.kind === 'agent_error'
+}
+
+function firstString(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = asOptionalString(record[key])
+    if (value) return value
+  }
+  return undefined
+}
+
+function canonicalHookEventName(value: unknown): string | undefined {
+  const raw = asOptionalString(value)
+  if (!raw) return undefined
+
+  const compact = raw.replace(/[^a-z0-9]/gi, '').toLowerCase()
+  const known: Record<string, string> = {
+    elicitation: 'Elicitation',
+    elicitationrequest: 'Elicitation',
+    elicitationresult: 'ElicitationResult',
+    notification: 'Notification',
+    permissiondenied: 'PermissionDenied',
+    permissionrequest: 'PermissionRequest',
+    postcompact: 'PostCompact',
+    posttooluse: 'PostToolUse',
+    posttoolusefailure: 'PostToolUseFailure',
+    precompact: 'PreCompact',
+    pretooluse: 'PreToolUse',
+    sessionend: 'SessionEnd',
+    sessionstart: 'SessionStart',
+    stop: 'Stop',
+    stopfailure: 'StopFailure',
+    subagentstart: 'SubagentStart',
+    subagentstop: 'SubagentStop',
+    taskcreated: 'TaskCreated',
+    taskcompleted: 'TaskCompleted',
+    userpromptsubmit: 'UserPromptSubmit'
+  }
+  return known[compact] ?? raw
+}
+
+function isAgentSource(value: string | undefined): value is PetAgentSource {
+  return value === 'codex' || value === 'claude'
+}
+
+function notificationStatus(payload: Record<string, unknown>): AgentHookEventKind | null {
+  const notificationType = firstString(payload, ['notification_type', 'notificationType', 'type'])
+  const compactType = notificationType?.replace(/[^a-z0-9]/gi, '').toLowerCase()
+  if (compactType === 'permissionprompt' || compactType === 'elicitationdialog') return 'waiting_for_confirmation'
+  if (compactType === 'idleprompt') return null
+  if (compactType === 'sessionend' || compactType === 'taskcompleted' || compactType === 'completed') return 'completed'
+  if (compactType === 'error' || compactType === 'failure' || compactType === 'failed') return 'error'
+
+  const message = firstString(payload, ['message', 'notification_message', 'notificationMessage', 'body', 'reason'])
+  if (!message) return null
+
+  if (/\b(completed?|done|finished|succeeded|succeeds?|success|ended|stopped)\b/i.test(message)) return 'completed'
+  if (/\b(api error|errors?|failed|failure|exception|crashed|rate[-\s]?limit|quota|billing|authentication|unauthorized|timeout|timed out|connection)\b/i.test(message)) {
+    return 'error'
+  }
+
+  return null
+}
+
+function isAgentInputRequestToolName(toolName: string): boolean {
+  return /^(askuserquestion|elicitation|requestuserinput)$/i.test(toolName.replace(/[^a-z0-9]/gi, ''))
+}
+
+function hookToolInputDetail(toolInput: Record<string, unknown>): string | undefined {
+  const detail = firstString(toolInput, ['command', 'description', 'question', 'prompt', 'file_path', 'path'])
+  if (detail) return detail
+
+  const question = Array.isArray(toolInput.questions) ? toolInput.questions.find(isRecord) : undefined
+  return question ? firstString(question, ['question', 'header', 'prompt', 'description']) : undefined
+}
+
+function hookEventStatus(hookName: string, payload: Record<string, unknown>): AgentHookEventKind | null {
+  if (hookName === 'Notification') return notificationStatus(payload)
+
+  if (hookName === 'PermissionRequest' || hookName === 'Elicitation') {
+    return 'waiting_for_confirmation'
+  }
+
+  if (hookName === 'PreToolUse') {
+    const toolName = firstString(payload, ['tool_name', 'toolName'])
+    if (toolName && isAgentInputRequestToolName(toolName)) return 'waiting_for_confirmation'
+  }
+
+  if (hookName === 'StopFailure') return 'error'
+  if (hookName === 'Stop' || hookName === 'SessionEnd' || hookName === 'TaskCompleted') return 'completed'
+  if (hookName === 'SessionStart') return 'idle_unknown'
+  if (
+    hookName === 'UserPromptSubmit' ||
+    hookName === 'PreToolUse' ||
+    hookName === 'PostToolUse' ||
+    hookName === 'PostToolUseFailure' ||
+    hookName === 'PermissionDenied' ||
+    hookName === 'ElicitationResult' ||
+    hookName === 'TaskCreated' ||
+    hookName === 'PreCompact' ||
+    hookName === 'PostCompact' ||
+    hookName === 'SubagentStart' ||
+    hookName === 'SubagentStop'
+  ) {
+    return 'running'
+  }
+
+  return null
+}
+
+function hookBody(hookName: string, payload: Record<string, unknown>): string | undefined {
+  if (hookName === 'StopFailure') {
+    const error = firstString(payload, ['error', 'error_type', 'errorType'])
+    const detail = firstString(payload, ['error_details', 'errorDetails', 'error_message', 'errorMessage', 'message', 'last_assistant_message', 'lastAssistantMessage'])
+    const body = error && detail ? `${error}: ${detail}` : detail || error
+    if (body) return body.slice(0, 1000)
+  }
+
+  const message = firstString(payload, [
+    'message',
+    'notification_message',
+    'reason',
+    'stopReason',
+    'error_details',
+    'errorDetails',
+    'error',
+    'error_message',
+    'permissionDecisionReason'
+  ])
+  if (message) return message.slice(0, 1000)
+
+  const toolName = firstString(payload, ['tool_name', 'toolName'])
+  const toolInput = isRecord(payload.tool_input) ? payload.tool_input : isRecord(payload.toolInput) ? payload.toolInput : null
+  const detail = toolInput ? hookToolInputDetail(toolInput) : undefined
+  if (toolName) return detail ? `${toolName}: ${detail}`.slice(0, 1000) : toolName
+
+  return hookName
+}
+
+function hookSessionId(payload: Record<string, unknown>, context: AgentHookRequestContext): string | undefined {
+  return (
+    context.sessionId ||
+    firstString(payload, ['atlas_session_id', 'atlasSessionId', 'terminal_session_id', 'terminalSessionId']) ||
+    firstString(payload, ['session_id', 'sessionId', 'thread_id', 'threadId', 'conversation_id', 'conversationId'])
+  )
+}
+
+function normalizeAgentHookEvent(source: PetAgentSource, payload: unknown, context: AgentHookRequestContext): NormalizedAgentHookEvent | null {
+  if (!isRecord(payload)) return null
+
+  const hookName = canonicalHookEventName(firstString(payload, ['hook_event_name', 'hookEventName', 'event_name', 'eventName', 'event']) || context.hookName)
+  if (!hookName) return null
+
+  const event = hookEventStatus(hookName, payload)
+  if (!event) return hookName === 'Notification' ? { kind: 'ignored' } : null
+
+  const componentId = context.componentId || firstString(payload, ['component_id', 'componentId', 'atlas_component_id', 'atlasComponentId'])
+  const canvasId = context.canvasId || firstString(payload, ['canvas_id', 'canvasId', 'atlas_canvas_id', 'atlasCanvasId'])
+  const cwd = context.cwd || firstString(payload, ['cwd', 'workspace_dir', 'workspaceDir'])
+  const sessionId = hookSessionId(payload, context)
+
+  return {
+    kind: 'event',
+    event: {
+      source,
+      event,
+      hookName,
+      sessionId,
+      componentId,
+      canvasId,
+      sessionTitle: context.title || firstString(payload, ['session_title', 'sessionTitle', 'thread_title', 'threadTitle', 'title']),
+      cwd,
+      body: hookBody(hookName, payload)
+    }
+  }
+}
+
+function routeContext(url: URL): AgentHookRequestContext {
+  return {
+    hookName: canonicalHookEventName(url.searchParams.get('hookName') ?? url.searchParams.get('eventName') ?? undefined),
+    sessionId: asOptionalString(url.searchParams.get('sessionId') ?? undefined),
+    componentId: asOptionalString(url.searchParams.get('componentId') ?? undefined),
+    canvasId: asOptionalString(url.searchParams.get('canvasId') ?? undefined),
+    cwd: asOptionalString(url.searchParams.get('cwd') ?? undefined),
+    title: asOptionalString(url.searchParams.get('title') ?? undefined)
+  }
+}
+
+function parseAgentBridgeRoute(requestUrl: string | undefined): AgentBridgeRoute | null {
+  const url = new URL(requestUrl || '/', 'http://127.0.0.1')
+  const context = routeContext(url)
+
+  const hookMatch = /^\/agent-hook\/([^/]+)$/.exec(url.pathname)
+  const hookSource = hookMatch?.[1]?.toLowerCase()
+  if (isAgentSource(hookSource)) {
+    return { source: hookSource, context }
+  }
+
+  return null
+}
+
+function claudeSettingsDir(): string {
+  return join(homedir(), CLAUDE_SETTINGS_DIR)
+}
+
+function claudeSettingsPath(): string {
+  return join(claudeSettingsDir(), CLAUDE_SETTINGS_FILE)
+}
+
+function codexSettingsDir(): string {
+  return join(homedir(), CODEX_SETTINGS_DIR)
+}
+
+function codexHooksPath(): string {
+  return join(codexSettingsDir(), CODEX_HOOKS_FILE)
+}
+
+function codexConfigPath(): string {
+  return join(codexSettingsDir(), CODEX_CONFIG_FILE)
+}
+
+function quoteCommandArgument(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`
+}
+
+function hookArgs(value: unknown): string[] {
+  return Array.isArray(value) ? value.flatMap((item) => (typeof item === 'string' ? [item] : [])) : []
+}
+
+function commandContainsAtlasProviderHook(source: PetAgentSource, command: string): boolean {
+  return command.includes(PET_HOOK_FORWARDER_FILE) && new RegExp(`\\b${source}\\b`, 'i').test(command)
+}
+
+function isAtlasProviderHook(source: PetAgentSource, value: unknown): boolean {
+  if (!isRecord(value)) return false
+
+  const command = asString(value.command)
+  if (commandContainsAtlasProviderHook(source, command)) return true
+
+  const args = hookArgs(value.args)
+  return args.some((arg) => arg.includes(PET_HOOK_FORWARDER_FILE)) && args.some((arg) => new RegExp(`^${source}$`, 'i').test(arg))
+}
+
+function isRunnableAtlasProviderHook(source: PetAgentSource, value: unknown, eventName?: string): boolean {
+  if (!isAtlasProviderHook(source, value)) return false
+  if (source !== 'codex') return true
+  if (!isRecord(value)) return false
+
+  return (
+    value.type === 'command' &&
+    typeof value.command === 'string' &&
+    value.async === false &&
+    (!eventName || commandContainsAtlasProviderHook('codex', value.command) && new RegExp(`\\b${eventName}\\b`, 'i').test(value.command))
+  )
+}
+
+function atlasClaudeHook(command: string, args: string[]): Record<string, unknown> {
+  return {
+    type: 'command',
+    command,
+    args,
+    async: true,
+    timeout: 5
+  }
+}
+
+function atlasCodexHook(command: string): Record<string, unknown> {
+  return {
+    type: 'command',
+    command,
+    commandWindows: null,
+    async: false,
+    timeoutSec: CODEX_HOOK_TIMEOUT_SEC,
+    statusMessage: null
+  }
+}
+
+function normalizeHookGroup(source: PetAgentSource, value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null
+
+  const hooks = Array.isArray(value.hooks) ? value.hooks.filter((hook) => !isAtlasProviderHook(source, hook)) : []
+  const nextGroup = { ...value, hooks }
+  return hooks.length > 0 ? nextGroup : null
+}
+
+function installHookForEvent(source: PetAgentSource, value: unknown, hook: Record<string, unknown>): Array<Record<string, unknown>> {
+  const groups = Array.isArray(value) ? value : []
+  const preservedGroups = groups.flatMap((group) => {
+    const normalized = normalizeHookGroup(source, group)
+    return normalized ? [normalized] : []
+  })
+
+  return [
+    ...preservedGroups,
+    {
+      matcher: '',
+      hooks: [hook]
+    }
+  ]
+}
+
+const pendingJsonWrites = new Map<string, Promise<void>>()
+
+async function writeJsonQueued(filePath: string, value: unknown): Promise<void> {
+  const previous = pendingJsonWrites.get(filePath) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(() => writeJsonAtomic(filePath, value))
+  pendingJsonWrites.set(filePath, next)
+  try {
+    await next
+  } finally {
+    if (pendingJsonWrites.get(filePath) === next) pendingJsonWrites.delete(filePath)
+  }
+}
+
+function removeAtlasProviderHooks(source: PetAgentSource, hooks: Record<string, unknown>): Record<string, unknown> {
+  const nextHooks: Record<string, unknown> = { ...hooks }
+  for (const [eventName, value] of Object.entries(hooks)) {
+    if (!Array.isArray(value)) continue
+
+    const groups = value.flatMap((group) => {
+      const normalized = normalizeHookGroup(source, group)
+      return normalized ? [normalized] : []
+    })
+    if (groups.length > 0) {
+      nextHooks[eventName] = groups
+    } else {
+      delete nextHooks[eventName]
+    }
+  }
+  return nextHooks
+}
+
+function eventHasAtlasProviderHook(source: PetAgentSource, value: unknown): boolean {
+  if (!Array.isArray(value)) return false
+
+  return value.some((group) => {
+    if (!isRecord(group) || !Array.isArray(group.hooks)) return false
+    return group.hooks.some((hook) => isAtlasProviderHook(source, hook))
+  })
+}
+
+function eventHasRunnableAtlasProviderHook(source: PetAgentSource, value: unknown, eventName?: string): boolean {
+  if (!Array.isArray(value)) return false
+
+  return value.some((group) => {
+    if (!isRecord(group) || !Array.isArray(group.hooks)) return false
+    return group.hooks.some((hook) => isRunnableAtlasProviderHook(source, hook, eventName))
+  })
+}
+
+function codexHooksDisabled(configText: string): boolean {
+  let section = ''
+  for (const rawLine of configText.split(/\r?\n/)) {
+    const line = rawLine.replace(/#.*/, '').trim()
+    if (!line) continue
+
+    const sectionMatch = /^\[([^\]]+)\]$/.exec(line)
+    if (sectionMatch) {
+      section = sectionMatch[1].trim()
+      continue
+    }
+
+    if (section === 'features' && /^hooks\s*=\s*false\b/i.test(line)) return true
+    if (!section && /^codex_hooks\s*=\s*false\b/i.test(line)) return true
+  }
+
+  return false
 }
 
 function readCards(component: CanvasComponent): Record<string, Record<string, unknown>> {
@@ -172,7 +725,8 @@ function normalizeStoredState(value: unknown): StoredPetState {
   const alerts = Array.isArray(value.alerts)
     ? value.alerts.flatMap((alert) => {
         const result = petAlertSchema.safeParse(alert)
-        return result.success ? [result.data] : []
+        if (!result.success) return []
+        return isAgentAttentionAlert(result.data) && !result.data.readAt ? [{ ...result.data, readAt: nowIso() }] : [result.data]
       })
     : []
 
@@ -182,20 +736,42 @@ function normalizeStoredState(value: unknown): StoredPetState {
   }
 }
 
-function eventStatus(event: PetAgentEventInput['event']): PetAgentSession['status'] {
+function eventStatus(event: AgentHookEventInput['event']): PetAgentSession['status'] {
   if (event === 'waiting_for_confirmation') return 'waiting_for_confirmation'
   if (event === 'completed') return 'completed'
   if (event === 'error') return 'error'
+  if (event === 'idle_unknown') return 'idle_unknown'
   return 'running'
 }
 
-function alertForAgentEvent(event: PetAgentEventInput, session: PetAgentSession): PetAlert | null {
-  if (event.event === 'running') return null
+function isTerminalAgentStatus(status: PetAgentSession['status'] | undefined): boolean {
+  return status === 'completed' || status === 'error'
+}
+
+function canRestartTerminalAgentStatus(event: AgentHookEventInput): boolean {
+  return event.hookName === 'UserPromptSubmit' || event.hookName === 'SessionStart'
+}
+
+function shouldIgnoreAgentStatusTransition(current: PetAgentSession | undefined, event: AgentHookEventInput): boolean {
+  const nextStatus = eventStatus(event.event)
+  return isTerminalAgentStatus(current?.status) && (nextStatus === 'running' || nextStatus === 'idle_unknown') && !canRestartTerminalAgentStatus(event)
+}
+
+function agentEventLabel(event: AgentHookEventInput['event']): string {
+  if (event === 'waiting_for_confirmation') return 'is asking'
+  if (event === 'completed') return 'completed'
+  if (event === 'error') return 'reported an error'
+  if (event === 'idle_unknown') return 'is ready'
+  return 'is running'
+}
+
+function alertForAgentEvent(event: AgentHookEventInput, session: PetAgentSession): PetAlert | null {
+  if (event.event === 'running' || event.event === 'idle_unknown') return null
 
   const createdAt = nowIso()
   const severity = event.event === 'error' ? 'danger' : event.event === 'waiting_for_confirmation' ? 'warning' : 'info'
   const kind = event.event === 'error' ? 'agent_error' : event.event === 'completed' ? 'agent_completed' : 'agent_waiting'
-  const title = event.title || `${event.source === 'codex' ? 'Codex' : 'Claude Code'} ${event.event.replace(/_/g, ' ')}`
+  const title = event.title || `${event.source === 'codex' ? 'Codex' : 'Claude Code'} ${agentEventLabel(event.event)}`
 
   return {
     id: randomUUID(),
@@ -209,13 +785,15 @@ function alertForAgentEvent(event: PetAgentEventInput, session: PetAgentSession)
       sessionId: session.id
     },
     createdAt,
-    dedupeKey: `agent:${session.id}:${event.event}:${createdAt.slice(0, 16)}`
+    dedupeKey: `agent:${session.id}:${event.event}:${session.lastActivityAt}`
   }
 }
 
 export class PetService {
   private readonly stateDir = join(app.getPath('userData'), PET_STATE_DIR)
   private readonly statePath = join(this.stateDir, PET_STATE_FILE)
+  private readonly hookForwarderPath = join(this.stateDir, PET_HOOK_FORWARDER_FILE)
+  private readonly hookBridgeConfigPath = join(this.stateDir, PET_HOOK_BRIDGE_FILE)
   private petWindow: BrowserWindow | null = null
   private storedState: StoredPetState = { bridgeToken: randomUUID(), alerts: [] }
   private agentSessions = new Map<string, PetAgentSession>()
@@ -227,8 +805,10 @@ export class PetService {
 
   async start(): Promise<void> {
     this.storedState = await this.readStoredState()
+    await this.writeHookForwarder()
     this.registerIpc()
     await this.ensureBridge()
+    await this.writeHookBridgeConfig()
     await this.ensurePetWindow()
     await this.scanKanban()
 
@@ -237,6 +817,74 @@ export class PetService {
         void this.scanKanban()
       }, KANBAN_SCAN_INTERVAL_MS)
     }
+  }
+
+  getAgentHookEnvironment(context: AgentHookBridgeEnvironmentContext): Record<string, string> {
+    if (!this.bridgePort) return {}
+
+    const env: Record<string, string> = {
+      ATLAS_PET_BRIDGE_URL: `http://127.0.0.1:${this.bridgePort}/agent-hook`,
+      ATLAS_PET_BRIDGE_TOKEN: this.storedState.bridgeToken,
+      ATLAS_PET_BRIDGE_CONFIG: this.hookBridgeConfigPath,
+      ATLAS_PET_HOOK_FORWARDER: this.hookForwarderPath,
+      ATLAS_TERMINAL_SESSION_ID: context.sessionId,
+      ATLAS_TERMINAL_COMPONENT_ID: context.componentId,
+      ATLAS_TERMINAL_CWD: context.cwd
+    }
+
+    if (context.canvasId) env.ATLAS_CANVAS_ID = context.canvasId
+    if (context.title) env.ATLAS_TERMINAL_TITLE = context.title
+    return env
+  }
+
+  recordAgentCommandStarted(context: AgentCommandStartedContext): void {
+    const current = this.agentSessions.get(context.sessionId)
+    if (current && current.status !== 'completed' && current.status !== 'error') return
+
+    this.upsertAgentSession({
+      id: context.sessionId,
+      source: context.source,
+      status: 'idle_unknown',
+      canvasId: context.canvasId || 'unknown-canvas',
+      componentId: context.componentId,
+      title: context.title || (context.source === 'codex' ? 'Codex' : 'Claude Code'),
+      cwd: context.cwd,
+      lastActivityAt: nowIso()
+    })
+  }
+
+  async installClaudeHooks(): Promise<PetRuntimeState['bridge']['claudeHook']> {
+    const settings = await this.readClaudeSettingsFile()
+    const hooks = isRecord(settings.hooks) ? removeAtlasProviderHooks('claude', settings.hooks) : {}
+    const command = this.claudeHookCommand()
+    const args = this.claudeHookArgs()
+    const hook = atlasClaudeHook(command, args)
+
+    for (const eventName of CLAUDE_HOOK_EVENTS) {
+      hooks[eventName] = installHookForEvent('claude', hooks[eventName], hook)
+    }
+
+    await mkdir(claudeSettingsDir(), { recursive: true })
+    await writeJsonAtomic(claudeSettingsPath(), { ...settings, hooks })
+    const status = await this.getClaudeHookStatus()
+    await this.broadcastState()
+    return status
+  }
+
+  async installCodexHooks(): Promise<PetRuntimeState['bridge']['codexHook']> {
+    const settings = await this.readCodexHooksFile()
+    const hooks = isRecord(settings.hooks) ? removeAtlasProviderHooks('codex', settings.hooks) : {}
+
+    for (const eventName of CODEX_HOOK_EVENTS) {
+      const hook = atlasCodexHook(this.codexHookCommand(eventName))
+      hooks[eventName] = installHookForEvent('codex', hooks[eventName], hook)
+    }
+
+    await mkdir(codexSettingsDir(), { recursive: true })
+    await writeJsonAtomic(codexHooksPath(), { ...settings, hooks })
+    const status = await this.getCodexHookStatus()
+    await this.broadcastState()
+    return status
   }
 
   dispose(): void {
@@ -278,10 +926,13 @@ export class PetService {
     const previous = this.agentSessions.get(parsed.data.id)
     this.agentSessions.set(parsed.data.id, parsed.data)
     const statusChanged = previous?.status !== parsed.data.status
-    if (statusChanged && ['waiting_for_confirmation', 'completed', 'error'].includes(parsed.data.status)) {
-      this.addAlert(this.alertForAgentSession(parsed.data))
+    if (statusChanged) {
+      this.markAgentAttentionAlertsRead(parsed.data.id)
+      if (['waiting_for_confirmation', 'completed', 'error'].includes(parsed.data.status)) {
+        this.addAlert(this.alertForAgentSession(parsed.data))
+      }
     }
-    void this.persistAndBroadcast()
+    this.persistAndBroadcastInBackground()
   }
 
   removeAgentSession(sessionId: string): void {
@@ -308,6 +959,12 @@ export class PetService {
 
     handleValidated('pet:ack-alert', petAlertInputSchema, async (_, input) => {
       this.markAlertRead(input.alertId)
+      await this.persistAndBroadcast()
+      return { ok: true }
+    })
+
+    handleValidated('pet:clear-alerts', petClearAlertsInputSchema, async (_, input) => {
+      this.markAlertsRead(input.alertIds)
       await this.persistAndBroadcast()
       return { ok: true }
     })
@@ -351,10 +1008,8 @@ export class PetService {
       return { ok: true }
     })
 
-    handleValidated('pet:agent-event', petAgentEventInputSchema, async (_, input) => {
-      await this.applyAgentEvent(input)
-      return { ok: true }
-    })
+    handleValidated('pet:install-claude-hooks', z.object({}), () => this.installClaudeHooks())
+    handleValidated('pet:install-codex-hooks', z.object({}), () => this.installCodexHooks())
 
     handleValidated('pet:list-agent-sessions', z.object({}), () => [...this.agentSessions.values()])
   }
@@ -427,6 +1082,7 @@ export class PetService {
       this.bridgeServer = null
       this.bridgePort = 0
     }
+    await this.writeHookBridgeConfig()
   }
 
   private scanKanbanComponent(canvas: CanvasDocument, component: CanvasComponent, dueDate: string): void {
@@ -464,16 +1120,31 @@ export class PetService {
   }
 
   private markAlertRead(alertId: string): void {
-    const alert = this.storedState.alerts.find((item) => item.id === alertId)
-    if (!alert || alert.readAt) return
-    alert.readAt = nowIso()
+    this.markAlertsRead([alertId])
+  }
+
+  private markAlertsRead(alertIds?: string[]): void {
+    const ids = alertIds ? new Set(alertIds) : null
+    const timestamp = nowIso()
+    for (const alert of this.storedState.alerts) {
+      if (alert.readAt || (ids && !ids.has(alert.id))) continue
+      alert.readAt = timestamp
+    }
+  }
+
+  private markAgentAttentionAlertsRead(sessionId: string): void {
+    const timestamp = nowIso()
+    for (const alert of this.storedState.alerts) {
+      if (alert.readAt || alert.target.sessionId !== sessionId || !isAgentAttentionAlert(alert)) continue
+      alert.readAt = timestamp
+    }
   }
 
   private alertForAgentSession(session: PetAgentSession): PetAlert {
     const titlePrefix = session.source === 'codex' ? 'Codex' : 'Claude Code'
     const statusLabel =
       session.status === 'waiting_for_confirmation'
-        ? 'needs confirmation'
+        ? 'is asking'
         : session.status === 'completed'
           ? 'completed'
           : session.status === 'error'
@@ -485,14 +1156,14 @@ export class PetService {
       kind: session.status === 'error' ? 'agent_error' : session.status === 'completed' ? 'agent_completed' : 'agent_waiting',
       severity: session.status === 'error' ? 'danger' : session.status === 'waiting_for_confirmation' ? 'warning' : 'info',
       title: `${titlePrefix} ${statusLabel}`,
-      body: session.title,
+      body: session.attentionReason || session.title,
       target: {
         canvasId: session.canvasId,
         componentId: session.componentId,
         sessionId: session.id
       },
       createdAt: nowIso(),
-      dedupeKey: `agent:${session.id}:${session.status}:${todayDate()}`
+      dedupeKey: `agent:${session.id}:${session.status}:${session.lastActivityAt}`
     }
   }
 
@@ -504,14 +1175,16 @@ export class PetService {
     notification.on('click', () => {
       this.markAlertRead(alert.id)
       void this.options.openTarget(alert.target)
-      void this.persistAndBroadcast()
+      this.persistAndBroadcastInBackground()
     })
     notification.show()
   }
 
-  private async applyAgentEvent(event: PetAgentEventInput): Promise<void> {
+  private async applyAgentEvent(event: AgentHookEventInput): Promise<void> {
     const sessionId = event.sessionId || event.componentId || randomUUID()
     const current = this.agentSessions.get(sessionId)
+    if (shouldIgnoreAgentStatusTransition(current, event)) return
+
     const timestamp = nowIso()
     const session: PetAgentSession = {
       id: sessionId,
@@ -519,18 +1192,139 @@ export class PetService {
       status: eventStatus(event.event),
       canvasId: event.canvasId || current?.canvasId || 'unknown-canvas',
       componentId: event.componentId || current?.componentId || sessionId,
-      title: event.title || current?.title || (event.source === 'codex' ? 'Codex' : 'Claude Code'),
+      title: event.sessionTitle || current?.title || event.title || (event.source === 'codex' ? 'Codex' : 'Claude Code'),
       cwd: event.cwd || current?.cwd,
       lastActivityAt: timestamp,
-      attentionReason: event.body || current?.attentionReason
+      attentionReason: event.event === 'waiting_for_confirmation' || event.event === 'error' ? event.body || current?.attentionReason : undefined
     }
 
     const parsed = petAgentSessionSchema.safeParse(session)
     if (parsed.success) {
+      const previous = this.agentSessions.get(parsed.data.id)
       this.agentSessions.set(parsed.data.id, parsed.data)
-      const alert = alertForAgentEvent(event, parsed.data)
-      if (alert) this.addAlert(alert)
+      const statusChanged = previous?.status !== parsed.data.status
+      if (statusChanged) {
+        this.markAgentAttentionAlertsRead(parsed.data.id)
+        const alert = alertForAgentEvent(event, parsed.data)
+        if (alert) this.addAlert(alert)
+      }
       await this.persistAndBroadcast()
+    }
+  }
+
+  private claudeHookCommand(): string {
+    return 'node'
+  }
+
+  private claudeHookArgs(): string[] {
+    return [this.hookForwarderPath, 'claude']
+  }
+
+  private claudeHookDisplayCommand(): string {
+    return [this.claudeHookCommand(), ...this.claudeHookArgs().map(quoteCommandArgument)].join(' ')
+  }
+
+  private codexHookCommand(eventName?: string): string {
+    return ['node', quoteCommandArgument(this.hookForwarderPath), 'codex', eventName].filter(Boolean).join(' ')
+  }
+
+  private async readClaudeSettingsFile(): Promise<Record<string, unknown>> {
+    try {
+      const raw = await readFile(claudeSettingsPath(), 'utf8')
+      if (!raw.trim()) return {}
+
+      const parsed = JSON.parse(raw)
+      if (!isRecord(parsed)) throw new Error('Claude Code settings must be a JSON object')
+      return parsed
+    } catch (error) {
+      const code = isRecord(error) ? error.code : undefined
+      if (code === 'ENOENT') return {}
+      throw error
+    }
+  }
+
+  private async readCodexHooksFile(): Promise<Record<string, unknown>> {
+    try {
+      const raw = await readFile(codexHooksPath(), 'utf8')
+      if (!raw.trim()) return {}
+
+      const parsed = JSON.parse(raw)
+      if (!isRecord(parsed)) throw new Error('Codex hooks file must be a JSON object')
+      return parsed
+    } catch (error) {
+      const code = isRecord(error) ? error.code : undefined
+      if (code === 'ENOENT') return {}
+      throw error
+    }
+  }
+
+  private async getCodexHookIssue(): Promise<string | undefined> {
+    try {
+      const config = await readFile(codexConfigPath(), 'utf8')
+      if (codexHooksDisabled(config)) return 'Codex hooks are disabled in config.toml.'
+    } catch (error) {
+      const code = isRecord(error) ? error.code : undefined
+      if (code !== 'ENOENT') return error instanceof Error ? error.message : String(error)
+    }
+
+    return undefined
+  }
+
+  private async getClaudeHookStatus(): Promise<PetRuntimeState['bridge']['claudeHook']> {
+    const command = this.claudeHookCommand()
+    const args = this.claudeHookArgs()
+    let installedEvents: string[] = []
+    let issue: string | undefined
+
+    try {
+      const settings = await this.readClaudeSettingsFile()
+      const hooks = isRecord(settings.hooks) ? settings.hooks : {}
+      installedEvents = CLAUDE_HOOK_EVENTS.filter((eventName) => eventHasAtlasProviderHook('claude', hooks[eventName]))
+      if (settings.disableAllHooks === true) {
+        issue = 'Claude Code hooks are disabled by disableAllHooks.'
+      }
+    } catch (error) {
+      issue = error instanceof Error ? error.message : String(error)
+    }
+
+    return {
+      installed: installedEvents.length === CLAUDE_HOOK_EVENTS.length && !issue,
+      settingsPath: claudeSettingsPath(),
+      command,
+      args,
+      displayCommand: this.claudeHookDisplayCommand(),
+      events: [...CLAUDE_HOOK_EVENTS],
+      installedEvents,
+      issue
+    }
+  }
+
+  private async getCodexHookStatus(): Promise<PetRuntimeState['bridge']['codexHook']> {
+    const command = this.codexHookCommand()
+    let installedEvents: string[] = []
+    let issue = await this.getCodexHookIssue()
+
+    try {
+      const settings = await this.readCodexHooksFile()
+      const hooks = isRecord(settings.hooks) ? settings.hooks : {}
+      const configuredEvents = CODEX_HOOK_EVENTS.filter((eventName) => eventHasAtlasProviderHook('codex', hooks[eventName]))
+      installedEvents = CODEX_HOOK_EVENTS.filter((eventName) => eventHasRunnableAtlasProviderHook('codex', hooks[eventName], eventName))
+      if (!issue && configuredEvents.length > 0 && installedEvents.length < CODEX_HOOK_EVENTS.length) {
+        issue = 'Atlas Codex hooks need reinstalling.'
+      }
+    } catch (error) {
+      issue = error instanceof Error ? error.message : String(error)
+    }
+
+    return {
+      installed: installedEvents.length === CODEX_HOOK_EVENTS.length && !issue,
+      settingsPath: codexHooksPath(),
+      command,
+      args: [],
+      displayCommand: command,
+      events: [...CODEX_HOOK_EVENTS],
+      installedEvents,
+      issue
     }
   }
 
@@ -554,7 +1348,8 @@ export class PetService {
   }
 
   private async handleBridgeRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    if (request.method !== 'POST' || request.url !== '/agent-event') {
+    const route = parseAgentBridgeRoute(request.url)
+    if (request.method !== 'POST' || !route) {
       response.writeHead(404)
       response.end('not found')
       return
@@ -578,8 +1373,10 @@ export class PetService {
     }
 
     try {
-      const event = petAgentEventInputSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
-      await this.applyAgentEvent(event)
+      const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const normalized = normalizeAgentHookEvent(route.source, payload, route.context)
+      if (!normalized) throw new Error('Unsupported agent hook payload')
+      if (normalized.kind === 'event') await this.applyAgentEvent(normalized.event)
       response.writeHead(200, { 'Content-Type': 'application/json' })
       response.end('{"ok":true}')
     } catch {
@@ -591,6 +1388,7 @@ export class PetService {
   private async getRuntimeState(): Promise<PetRuntimeState> {
     const settings = await this.options.appSettingsService.getSettings()
     const layout = petWindowLayout(settings)
+    const [claudeHook, codexHook] = await Promise.all([this.getClaudeHookStatus(), this.getCodexHookStatus()])
     return petRuntimeStateSchema.parse({
       settings: settings.pet,
       alerts: this.storedState.alerts,
@@ -601,7 +1399,9 @@ export class PetService {
       bridge: {
         enabled: settings.pet.agentBridge.enabled,
         port: this.bridgePort,
-        token: this.storedState.bridgeToken
+        token: this.storedState.bridgeToken,
+        claudeHook,
+        codexHook
       }
     })
   }
@@ -620,6 +1420,12 @@ export class PetService {
     await this.broadcastState()
   }
 
+  private persistAndBroadcastInBackground(): void {
+    void this.persistAndBroadcast().catch((error) => {
+      console.warn('Failed to persist pet state:', error)
+    })
+  }
+
   private async readStoredState(): Promise<StoredPetState> {
     await mkdir(this.stateDir, { recursive: true })
 
@@ -632,8 +1438,27 @@ export class PetService {
     }
   }
 
+  private async writeHookForwarder(): Promise<void> {
+    await mkdir(this.stateDir, { recursive: true })
+    await writeFile(this.hookForwarderPath, AGENT_HOOK_FORWARDER_SCRIPT, 'utf8')
+  }
+
+  private async writeHookBridgeConfig(): Promise<void> {
+    await mkdir(this.stateDir, { recursive: true })
+    await writeJsonAtomic(
+      this.hookBridgeConfigPath,
+      this.bridgePort
+        ? {
+            enabled: true,
+            bridgeUrl: `http://127.0.0.1:${this.bridgePort}/agent-hook`,
+            token: this.storedState.bridgeToken
+          }
+        : { enabled: false }
+    )
+  }
+
   private async writeStoredState(state = this.storedState): Promise<void> {
     await mkdir(this.stateDir, { recursive: true })
-    await writeJsonAtomic(this.statePath, state)
+    await writeJsonQueued(this.statePath, state)
   }
 }

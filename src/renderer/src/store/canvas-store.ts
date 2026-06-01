@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid'
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
-import type { AtlasAppState, CanvasComponent, CanvasDocument, ComponentType, Frame } from '@shared/schema'
+import type { AtlasAppState, CanvasComponent, CanvasDocument, CanvasGroup, ComponentType, Frame } from '@shared/schema'
 import {
   componentDefinitionTitle,
   getComponentDefinition,
@@ -16,6 +16,12 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 type ComponentFrameUpdate = {
   componentId: string
   frame: Partial<Frame>
+  reconcileGroup?: boolean
+}
+
+type DuplicateSelectionResult = {
+  componentIds: string[]
+  groupIds: string[]
 }
 
 type CanvasStore = {
@@ -37,14 +43,29 @@ type CanvasStore = {
   addComponent: (type: ComponentType, position?: { x: number; y: number }, patch?: ComponentCreatePatch) => void
   addComponents: (components: ComponentCreateInput[]) => void
   duplicateComponents: (canvasId: string, componentIds: string[]) => string[]
+  duplicateSelection: (canvasId: string, componentIds: string[], groupIds: string[]) => DuplicateSelectionResult
   updateComponent: (canvasId: string, componentId: string, updater: (component: CanvasComponent) => void, immediate?: boolean) => void
   updateComponentFrames: (canvasId: string, updates: ComponentFrameUpdate[], immediate?: boolean) => void
   removeComponent: (canvasId: string, componentId: string) => void
   removeComponents: (canvasId: string, componentIds: string[]) => void
   bringToFront: (canvasId: string, componentId: string) => void
+  createGroup: (canvasId: string, componentIds: string[]) => string | null
+  updateGroup: (canvasId: string, groupId: string, patch: Partial<Pick<CanvasGroup, 'title' | 'notes'>>, immediate?: boolean) => void
+  updateGroupFrame: (canvasId: string, groupId: string, frame: Frame, immediate?: boolean) => void
+  moveGroup: (canvasId: string, groupId: string, position: { x: number; y: number }, immediate?: boolean) => void
+  ungroupGroups: (canvasId: string, groupIds: string[]) => string[]
+  removeGroups: (canvasId: string, groupIds: string[]) => void
+  deleteGroupsWithMembers: (canvasId: string, groupIds: string[]) => string[]
+  bringGroupToFront: (canvasId: string, groupId: string) => void
 }
 
 const SAVE_DELAY_MS = 500
+export const CANVAS_GROUP_PADDING_X = 20
+export const CANVAS_GROUP_PADDING_TOP = 58
+export const CANVAS_GROUP_PADDING_BOTTOM = 20
+export const CANVAS_GROUP_MIN_WIDTH = 220
+export const CANVAS_GROUP_MIN_HEIGHT = 132
+const CANVAS_GROUP_DUPLICATE_OFFSET = 32
 
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const canvasRevisions = new Map<string, number>()
@@ -83,6 +104,7 @@ function createFallbackCanvas(): CanvasDocument {
       image: { ...DEFAULT_CANVAS_BACKGROUND.image }
     },
     components: [],
+    groups: [],
     createdAt: timestamp,
     updatedAt: timestamp
   }
@@ -90,6 +112,118 @@ function createFallbackCanvas(): CanvasDocument {
 
 function nextZIndex(canvas: CanvasDocument): number {
   return canvas.components.reduce((max, component) => Math.max(max, component.zIndex), 0) + 1
+}
+
+function nextGroupZIndex(canvas: CanvasDocument): number {
+  return canvas.groups.reduce((max, group) => Math.max(max, group.zIndex), 0) + 1
+}
+
+function selectedComponentBounds(components: CanvasComponent[]): Frame | null {
+  if (components.length === 0) return null
+
+  const left = Math.min(...components.map((component) => component.frame.x))
+  const top = Math.min(...components.map((component) => component.frame.y))
+  const right = Math.max(...components.map((component) => component.frame.x + component.frame.width))
+  const bottom = Math.max(...components.map((component) => component.frame.y + component.frame.height))
+
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top
+  }
+}
+
+function paddedGroupFrame(components: CanvasComponent[]): Frame {
+  const bounds = selectedComponentBounds(components)
+  if (!bounds) {
+    return { x: 0, y: 0, width: CANVAS_GROUP_MIN_WIDTH, height: CANVAS_GROUP_MIN_HEIGHT }
+  }
+
+  return {
+    x: Math.round(bounds.x - CANVAS_GROUP_PADDING_X),
+    y: Math.round(bounds.y - CANVAS_GROUP_PADDING_TOP),
+    width: Math.max(CANVAS_GROUP_MIN_WIDTH, Math.round(bounds.width + CANVAS_GROUP_PADDING_X * 2)),
+    height: Math.max(CANVAS_GROUP_MIN_HEIGHT, Math.round(bounds.height + CANVAS_GROUP_PADDING_TOP + CANVAS_GROUP_PADDING_BOTTOM))
+  }
+}
+
+function memberComponents(canvas: CanvasDocument, group: CanvasGroup): CanvasComponent[] {
+  const memberIds = new Set(group.memberIds)
+  return canvas.components.filter((component) => memberIds.has(component.id))
+}
+
+function clampGroupFrame(canvas: CanvasDocument, group: CanvasGroup, frame: Frame): Frame {
+  const roundedFrame = {
+    x: Math.round(frame.x),
+    y: Math.round(frame.y),
+    width: Math.max(CANVAS_GROUP_MIN_WIDTH, Math.round(frame.width)),
+    height: Math.max(CANVAS_GROUP_MIN_HEIGHT, Math.round(frame.height))
+  }
+  const members = memberComponents(canvas, group)
+  const bounds = selectedComponentBounds(members)
+  if (!bounds) return roundedFrame
+
+  const requiredLeft = bounds.x - CANVAS_GROUP_PADDING_X
+  const requiredTop = bounds.y - CANVAS_GROUP_PADDING_TOP
+  const requiredRight = bounds.x + bounds.width + CANVAS_GROUP_PADDING_X
+  const requiredBottom = bounds.y + bounds.height + CANVAS_GROUP_PADDING_BOTTOM
+  const x = Math.min(roundedFrame.x, requiredLeft)
+  const y = Math.min(roundedFrame.y, requiredTop)
+  const right = Math.max(roundedFrame.x + roundedFrame.width, requiredRight)
+  const bottom = Math.max(roundedFrame.y + roundedFrame.height, requiredBottom)
+
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: Math.max(CANVAS_GROUP_MIN_WIDTH, Math.round(right - x)),
+    height: Math.max(CANVAS_GROUP_MIN_HEIGHT, Math.round(bottom - y))
+  }
+}
+
+function removeMemberIdsFromGroups(canvas: CanvasDocument, memberIds: Set<string>, exceptGroupId?: string): void {
+  if (memberIds.size === 0) return
+
+  for (const group of canvas.groups) {
+    if (group.id === exceptGroupId) continue
+    group.memberIds = group.memberIds.filter((memberId) => !memberIds.has(memberId))
+  }
+}
+
+function pointInsideFrame(point: { x: number; y: number }, frame: Frame): boolean {
+  return point.x >= frame.x && point.x <= frame.x + frame.width && point.y >= frame.y && point.y <= frame.y + frame.height
+}
+
+function topmostGroupAtPoint(canvas: CanvasDocument, point: { x: number; y: number }): CanvasGroup | null {
+  let matchedGroup: CanvasGroup | null = null
+  let matchedIndex = -1
+
+  canvas.groups.forEach((group, index) => {
+    if (!pointInsideFrame(point, group.frame)) return
+    if (!matchedGroup || group.zIndex > matchedGroup.zIndex || (group.zIndex === matchedGroup.zIndex && index > matchedIndex)) {
+      matchedGroup = group
+      matchedIndex = index
+    }
+  })
+
+  return matchedGroup
+}
+
+function reconcileComponentGroup(canvas: CanvasDocument, componentId: string): void {
+  const component = canvas.components.find((item) => item.id === componentId)
+  if (!component) return
+
+  const center = {
+    x: component.frame.x + component.frame.width / 2,
+    y: component.frame.y + component.frame.height / 2
+  }
+  const targetGroup = topmostGroupAtPoint(canvas, center)
+  const componentIds = new Set([componentId])
+  removeMemberIdsFromGroups(canvas, componentIds, targetGroup?.id)
+
+  if (targetGroup && !targetGroup.memberIds.includes(componentId)) {
+    targetGroup.memberIds.push(componentId)
+  }
 }
 
 function cloneRecord<T extends Record<string, unknown>>(record: T): T {
@@ -147,6 +281,30 @@ function createComponent(type: ComponentType, canvas: CanvasDocument, position?:
     config: { ...base.config, ...createPatch?.config },
     state: { ...base.state, ...createPatch?.state },
     bindings: { ...base.bindings, ...createPatch?.bindings }
+  }
+}
+
+function duplicateComponent(component: CanvasComponent, zIndex: number): CanvasComponent {
+  const timestamp = nowIso()
+  const definition = getComponentDefinition(component.type)
+  const duplicatePatch = definition.duplicate?.(component) ?? undefined
+
+  return {
+    ...component,
+    ...duplicatePatch,
+    id: nanoid(),
+    frame: {
+      ...component.frame,
+      ...duplicatePatch?.frame,
+      x: component.frame.x + CANVAS_GROUP_DUPLICATE_OFFSET,
+      y: component.frame.y + CANVAS_GROUP_DUPLICATE_OFFSET
+    },
+    zIndex,
+    config: { ...cloneRecord(component.config), ...duplicatePatch?.config },
+    state: hasPatchKey(duplicatePatch, 'state') ? cloneRecord(duplicatePatch.state ?? {}) : cloneRecord(component.state),
+    bindings: { ...cloneRecord(component.bindings), ...duplicatePatch?.bindings },
+    createdAt: timestamp,
+    updatedAt: timestamp
   }
 }
 
@@ -424,27 +582,7 @@ export const useCanvasStore = create<CanvasStore>()(
           let zIndex = nextZIndex(draft)
 
           for (const component of componentsToDuplicate) {
-            const timestamp = nowIso()
-            const definition = getComponentDefinition(component.type)
-            const duplicatePatch = definition.duplicate?.(component) ?? undefined
-            const duplicatedComponent: CanvasComponent = {
-              ...component,
-              ...duplicatePatch,
-              id: nanoid(),
-              frame: {
-                ...component.frame,
-                ...duplicatePatch?.frame,
-                x: component.frame.x + 32,
-                y: component.frame.y + 32
-              },
-              zIndex,
-              config: { ...cloneRecord(component.config), ...duplicatePatch?.config },
-              state: hasPatchKey(duplicatePatch, 'state') ? cloneRecord(duplicatePatch.state ?? {}) : cloneRecord(component.state),
-              bindings: { ...cloneRecord(component.bindings), ...duplicatePatch?.bindings },
-              createdAt: timestamp,
-              updatedAt: timestamp
-            }
-
+            const duplicatedComponent = duplicateComponent(component, zIndex)
             zIndex += 1
             duplicatedComponentIds.push(duplicatedComponent.id)
             draft.components.push(duplicatedComponent)
@@ -454,6 +592,77 @@ export const useCanvasStore = create<CanvasStore>()(
       )
 
       return duplicatedComponentIds
+    },
+
+    duplicateSelection(canvasId, componentIds, groupIds) {
+      const canvas = get().canvases[canvasId]
+      if (!canvas || (componentIds.length === 0 && groupIds.length === 0)) {
+        return { componentIds: [], groupIds: [] }
+      }
+
+      const requestedGroupIds = new Set(groupIds)
+      const requestedComponentIds = new Set(componentIds)
+      const groupsToDuplicate = canvas.groups.filter((group) => requestedGroupIds.has(group.id))
+      const groupedMemberIds = new Set(groupsToDuplicate.flatMap((group) => group.memberIds))
+      const looseComponentsToDuplicate = canvas.components.filter(
+        (component) => requestedComponentIds.has(component.id) && !groupedMemberIds.has(component.id)
+      )
+
+      if (groupsToDuplicate.length === 0 && looseComponentsToDuplicate.length === 0) {
+        return { componentIds: [], groupIds: [] }
+      }
+
+      const duplicated: DuplicateSelectionResult = { componentIds: [], groupIds: [] }
+
+      get().updateCanvas(
+        canvasId,
+        (draft) => {
+          let componentZIndex = nextZIndex(draft)
+          let groupZIndex = nextGroupZIndex(draft)
+          const sourceComponentById = new Map(draft.components.map((component) => [component.id, component]))
+
+          for (const group of groupsToDuplicate) {
+            const memberIdMap = new Map<string, string>()
+
+            for (const memberId of group.memberIds) {
+              const component = sourceComponentById.get(memberId)
+              if (!component) continue
+
+              const duplicatedComponent = duplicateComponent(component, componentZIndex)
+              componentZIndex += 1
+              memberIdMap.set(memberId, duplicatedComponent.id)
+              duplicated.componentIds.push(duplicatedComponent.id)
+              draft.components.push(duplicatedComponent)
+            }
+
+            const duplicatedGroup: CanvasGroup = {
+              ...group,
+              id: nanoid(),
+              frame: {
+                ...group.frame,
+                x: group.frame.x + CANVAS_GROUP_DUPLICATE_OFFSET,
+                y: group.frame.y + CANVAS_GROUP_DUPLICATE_OFFSET
+              },
+              zIndex: groupZIndex,
+              memberIds: group.memberIds.map((memberId) => memberIdMap.get(memberId)).filter((memberId): memberId is string => Boolean(memberId))
+            }
+
+            groupZIndex += 1
+            duplicated.groupIds.push(duplicatedGroup.id)
+            draft.groups.push(duplicatedGroup)
+          }
+
+          for (const component of looseComponentsToDuplicate) {
+            const duplicatedComponent = duplicateComponent(component, componentZIndex)
+            componentZIndex += 1
+            duplicated.componentIds.push(duplicatedComponent.id)
+            draft.components.push(duplicatedComponent)
+          }
+        },
+        true
+      )
+
+      return duplicated
     },
 
     updateComponent(canvasId, componentId, updater, immediate = false) {
@@ -482,6 +691,7 @@ export const useCanvasStore = create<CanvasStore>()(
         canvasId,
         (canvas) => {
           const updatedAt = nowIso()
+          const reconcileIds = new Set(updates.filter((update) => update.reconcileGroup).map((update) => update.componentId))
 
           for (const component of canvas.components) {
             const frame = updatesById.get(component.id)
@@ -489,6 +699,10 @@ export const useCanvasStore = create<CanvasStore>()(
 
             component.frame = { ...component.frame, ...frame }
             component.updatedAt = updatedAt
+          }
+
+          for (const componentId of reconcileIds) {
+            reconcileComponentGroup(canvas, componentId)
           }
         },
         immediate
@@ -515,6 +729,7 @@ export const useCanvasStore = create<CanvasStore>()(
         canvasId,
         (canvas) => {
           canvas.components = canvas.components.filter((component) => !removableIds.has(component.id))
+          removeMemberIdsFromGroups(canvas, removableIds)
         },
         true
       )
@@ -524,6 +739,175 @@ export const useCanvasStore = create<CanvasStore>()(
       get().updateComponent(canvasId, componentId, (component) => {
         const canvas = get().canvases[canvasId]
         if (canvas) component.zIndex = nextZIndex(canvas)
+      })
+    },
+
+    createGroup(canvasId, componentIds) {
+      const canvas = get().canvases[canvasId]
+      if (!canvas || componentIds.length === 0) return null
+
+      const requestedIds = new Set(componentIds)
+      const componentsToGroup = canvas.components.filter((component) => requestedIds.has(component.id))
+      if (componentsToGroup.length === 0) return null
+
+      const groupId = nanoid()
+      const memberIds = new Set(componentsToGroup.map((component) => component.id))
+      const groupIndex = canvas.groups.length + 1
+
+      get().updateCanvas(
+        canvasId,
+        (draft) => {
+          removeMemberIdsFromGroups(draft, memberIds)
+          draft.groups.push({
+            id: groupId,
+            title: translateCurrent('canvas.groupDefaultTitle', { index: groupIndex }),
+            notes: '',
+            frame: paddedGroupFrame(componentsToGroup),
+            zIndex: nextGroupZIndex(draft),
+            memberIds: componentsToGroup.map((component) => component.id)
+          })
+        },
+        true
+      )
+
+      return groupId
+    },
+
+    updateGroup(canvasId, groupId, patch, immediate = false) {
+      get().updateCanvas(
+        canvasId,
+        (canvas) => {
+          const group = canvas.groups.find((item) => item.id === groupId)
+          if (!group) return
+
+          if (patch.title !== undefined) {
+            group.title = patch.title.trim() || translateCurrent('canvas.untitledGroup')
+          }
+          if (patch.notes !== undefined) {
+            group.notes = patch.notes
+          }
+        },
+        immediate
+      )
+    },
+
+    updateGroupFrame(canvasId, groupId, frame, immediate = false) {
+      get().updateCanvas(
+        canvasId,
+        (canvas) => {
+          const group = canvas.groups.find((item) => item.id === groupId)
+          if (!group) return
+
+          group.frame = clampGroupFrame(canvas, group, frame)
+        },
+        immediate
+      )
+    },
+
+    moveGroup(canvasId, groupId, position, immediate = false) {
+      const canvas = get().canvases[canvasId]
+      const group = canvas?.groups.find((item) => item.id === groupId)
+      if (!canvas || !group) return
+
+      const x = Math.round(position.x)
+      const y = Math.round(position.y)
+      const dx = x - group.frame.x
+      const dy = y - group.frame.y
+      if (dx === 0 && dy === 0) return
+
+      get().updateCanvas(
+        canvasId,
+        (draft) => {
+          const draftGroup = draft.groups.find((item) => item.id === groupId)
+          if (!draftGroup) return
+
+          const updatedAt = nowIso()
+          const memberIds = new Set(draftGroup.memberIds)
+          draftGroup.frame = { ...draftGroup.frame, x, y }
+
+          for (const component of draft.components) {
+            if (!memberIds.has(component.id)) continue
+
+            component.frame = {
+              ...component.frame,
+              x: component.frame.x + dx,
+              y: component.frame.y + dy
+            }
+            component.updatedAt = updatedAt
+          }
+        },
+        immediate
+      )
+    },
+
+    ungroupGroups(canvasId, groupIds) {
+      const canvas = get().canvases[canvasId]
+      if (!canvas || groupIds.length === 0) return []
+
+      const removableIds = new Set(groupIds)
+      const groupsToRemove = canvas.groups.filter((group) => removableIds.has(group.id))
+      if (groupsToRemove.length === 0) return []
+
+      const memberIds = [...new Set(groupsToRemove.flatMap((group) => group.memberIds))]
+      get().updateCanvas(
+        canvasId,
+        (draft) => {
+          draft.groups = draft.groups.filter((group) => !removableIds.has(group.id))
+        },
+        true
+      )
+
+      return memberIds
+    },
+
+    removeGroups(canvasId, groupIds) {
+      const canvas = get().canvases[canvasId]
+      if (!canvas || groupIds.length === 0) return
+
+      const removableIds = new Set(groupIds)
+      if (!canvas.groups.some((group) => removableIds.has(group.id))) return
+
+      get().updateCanvas(
+        canvasId,
+        (draft) => {
+          draft.groups = draft.groups.filter((group) => !removableIds.has(group.id))
+        },
+        true
+      )
+    },
+
+    deleteGroupsWithMembers(canvasId, groupIds) {
+      const canvas = get().canvases[canvasId]
+      if (!canvas || groupIds.length === 0) return []
+
+      const removableGroupIds = new Set(groupIds)
+      const groupsToRemove = canvas.groups.filter((group) => removableGroupIds.has(group.id))
+      if (groupsToRemove.length === 0) return []
+
+      const removableComponentIds = new Set(groupsToRemove.flatMap((group) => group.memberIds))
+      for (const component of canvas.components) {
+        if (removableComponentIds.has(component.id)) void getComponentDefinition(component.type).dispose?.(component)
+      }
+
+      get().updateCanvas(
+        canvasId,
+        (draft) => {
+          draft.groups = draft.groups.filter((group) => !removableGroupIds.has(group.id))
+          draft.components = draft.components.filter((component) => !removableComponentIds.has(component.id))
+          removeMemberIdsFromGroups(draft, removableComponentIds)
+        },
+        true
+      )
+
+      return [...removableComponentIds]
+    },
+
+    bringGroupToFront(canvasId, groupId) {
+      get().updateCanvas(canvasId, (canvas) => {
+        const group = canvas.groups.find((item) => item.id === groupId)
+        if (!group) return
+
+        group.zIndex = nextGroupZIndex(canvas)
       })
     }
   }))

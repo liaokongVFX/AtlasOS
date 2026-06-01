@@ -4,9 +4,14 @@ export const PET_ALERT_KINDS = ['kanban_due', 'agent_waiting', 'agent_completed'
 export const PET_ALERT_SEVERITIES = ['info', 'warning', 'danger'] as const
 export const PET_AGENT_SOURCES = ['codex', 'claude'] as const
 export const PET_AGENT_STATUSES = ['running', 'waiting_for_confirmation', 'completed', 'error', 'idle_unknown'] as const
-export const PET_MEDIA_KINDS = ['image', 'video'] as const
+export const PET_MEDIA_KINDS = ['image', 'video', 'sprite'] as const
 export const PET_ACTIONS = ['none', 'float', 'pulse', 'bounce', 'shake'] as const
 export const PET_PANEL_SIDES = ['left', 'right'] as const
+
+export const DEFAULT_PET_SPRITE_ANIMATION = {
+  frameCount: 8,
+  fps: 8
+} as const
 
 export const DEFAULT_PET_SETTINGS = {
   enabled: true,
@@ -25,11 +30,17 @@ export const DEFAULT_PET_SETTINGS = {
     name: 'Atlas Orb',
     idleSrc: '',
     idleKind: 'image',
+    idleSprite: DEFAULT_PET_SPRITE_ANIMATION,
+    runningSrc: '',
+    runningKind: 'image',
+    runningSprite: DEFAULT_PET_SPRITE_ANIMATION,
     attentionSrc: '',
-    attentionKind: 'image'
+    attentionKind: 'image',
+    attentionSprite: DEFAULT_PET_SPRITE_ANIMATION
   },
   actionMap: {
     idle: 'float',
+    running: 'bounce',
     attention: 'pulse'
   }
 } as const
@@ -66,6 +77,11 @@ export const petAgentSessionSchema = z.object({
   attentionReason: z.string().optional()
 })
 
+export const petSpriteAnimationSchema = z.object({
+  frameCount: z.number().int().min(1).max(64).default(DEFAULT_PET_SPRITE_ANIMATION.frameCount),
+  fps: z.number().int().min(1).max(30).default(DEFAULT_PET_SPRITE_ANIMATION.fps)
+})
+
 export const petSettingsSchema = z
   .object({
     enabled: z.boolean().default(DEFAULT_PET_SETTINGS.enabled),
@@ -94,18 +110,35 @@ export const petSettingsSchema = z
         name: z.string().min(1).default(DEFAULT_PET_SETTINGS.assetPack.name),
         idleSrc: z.string().default(DEFAULT_PET_SETTINGS.assetPack.idleSrc),
         idleKind: z.enum(PET_MEDIA_KINDS).default(DEFAULT_PET_SETTINGS.assetPack.idleKind),
+        idleSprite: petSpriteAnimationSchema.default(DEFAULT_PET_SETTINGS.assetPack.idleSprite),
+        runningSrc: z.string().default(DEFAULT_PET_SETTINGS.assetPack.runningSrc),
+        runningKind: z.enum(PET_MEDIA_KINDS).default(DEFAULT_PET_SETTINGS.assetPack.runningKind),
+        runningSprite: petSpriteAnimationSchema.default(DEFAULT_PET_SETTINGS.assetPack.runningSprite),
         attentionSrc: z.string().default(DEFAULT_PET_SETTINGS.assetPack.attentionSrc),
-        attentionKind: z.enum(PET_MEDIA_KINDS).default(DEFAULT_PET_SETTINGS.assetPack.attentionKind)
+        attentionKind: z.enum(PET_MEDIA_KINDS).default(DEFAULT_PET_SETTINGS.assetPack.attentionKind),
+        attentionSprite: petSpriteAnimationSchema.default(DEFAULT_PET_SETTINGS.assetPack.attentionSprite)
       })
       .default(DEFAULT_PET_SETTINGS.assetPack),
     actionMap: z
       .object({
         idle: z.enum(PET_ACTIONS).default(DEFAULT_PET_SETTINGS.actionMap.idle),
+        running: z.enum(PET_ACTIONS).default(DEFAULT_PET_SETTINGS.actionMap.running),
         attention: z.enum(PET_ACTIONS).default(DEFAULT_PET_SETTINGS.actionMap.attention)
       })
       .default(DEFAULT_PET_SETTINGS.actionMap)
   })
   .default(DEFAULT_PET_SETTINGS)
+
+export const petHookInstallStatusSchema = z.object({
+  installed: z.boolean(),
+  settingsPath: z.string(),
+  command: z.string(),
+  args: z.array(z.string()),
+  displayCommand: z.string(),
+  events: z.array(z.string()),
+  installedEvents: z.array(z.string()),
+  issue: z.string().optional()
+})
 
 export const petRuntimeStateSchema = z.object({
   settings: petSettingsSchema,
@@ -119,7 +152,9 @@ export const petRuntimeStateSchema = z.object({
   bridge: z.object({
     enabled: z.boolean(),
     port: z.number().int().min(0),
-    token: z.string().min(1)
+    token: z.string().min(1),
+    claudeHook: petHookInstallStatusSchema,
+    codexHook: petHookInstallStatusSchema
   })
 })
 

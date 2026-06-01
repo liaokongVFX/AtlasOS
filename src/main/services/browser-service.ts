@@ -9,6 +9,7 @@ import {
   browserTabInputSchema,
   browserTypeInputSchema
 } from '@shared/ipc'
+import { applyAtlasBrowserNetworkPolicy, applyAtlasBrowserWebPreferences } from './browser-network-policy'
 import { handleValidated } from './ipc-helpers'
 
 type BrowserTab = {
@@ -52,16 +53,17 @@ export class BrowserService {
       const tabId = randomUUID()
       const partition = input.partition || `persist:atlas-browser-${input.componentId}-${tabId}`
       const container = new View()
-      const view = new WebContentsView({
-        webPreferences: {
-          partition,
-          nodeIntegration: false,
-          contextIsolation: true,
-          sandbox: true
-        }
-      })
+      const webPreferences = {
+        partition,
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true
+      }
+      applyAtlasBrowserWebPreferences(webPreferences)
+      const view = new WebContentsView({ webPreferences })
       container.setBackgroundColor(BROWSER_CONTENT_BACKGROUND)
       view.setBackgroundColor(BROWSER_CONTENT_BACKGROUND)
+      applyAtlasBrowserNetworkPolicy(view.webContents)
 
       view.webContents.setWindowOpenHandler(({ url }) => {
         this.emitOpenTabRequested({

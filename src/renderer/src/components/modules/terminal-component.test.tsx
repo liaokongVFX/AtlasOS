@@ -235,6 +235,66 @@ describe('TerminalComponent', () => {
     })
   })
 
+  it('passes an undispatched initial command and marks it dispatched', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+    component.config.initialCommand = 'claude --resume alpha-session'
+    vi.mocked(window.atlas.terminal.create).mockResolvedValue({
+      sessionId: 'session-1',
+      cwd: 'C:\\Users\\xhwz2',
+      shell: 'powershell.exe',
+      didRunInitialCommand: true
+    })
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.atlas.terminal.create).toHaveBeenCalledWith(expect.objectContaining({ initialCommand: 'claude --resume alpha-session' }))
+    expect(updateState).toHaveBeenCalledWith({ initialCommandDispatched: true }, true)
+  })
+
+  it('does not pass an initial command after it has been dispatched', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+    component.config.initialCommand = 'claude --resume alpha-session'
+    component.state.initialCommandDispatched = true
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(window.atlas.terminal.create).toHaveBeenCalledWith(expect.objectContaining({ initialCommand: undefined }))
+    expect(updateState).not.toHaveBeenCalledWith({ initialCommandDispatched: true }, true)
+  })
+
   it('normalizes xterm mouse coordinates when the canvas is zoomed', async () => {
     const updateState = vi.fn()
     const updateConfig = vi.fn()

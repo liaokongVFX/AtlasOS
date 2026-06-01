@@ -38,7 +38,8 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/preload/index.ts')
+          index: resolve(__dirname, 'src/preload/index.ts'),
+          'browser-webview-policy': resolve(__dirname, 'src/preload/browser-webview-policy.ts')
         },
         output: {
           format: 'cjs',

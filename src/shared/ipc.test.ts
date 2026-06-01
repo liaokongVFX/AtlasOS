@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   listTreeInputSchema,
+  claudeHistoryListInputSchema,
+  claudeHistorySessionInputSchema,
+  codexHistoryListInputSchema,
+  codexHistorySessionInputSchema,
   gitCommitInputSchema,
   gitDiffInputSchema,
   gitLogInputSchema,
+  launcherChooseFileResultSchema,
+  petClearAlertsInputSchema,
   systemMetricsGetInputSchema,
   terminalPersistAssetInputSchema,
   terminalReadClipboardFilesInputSchema,
@@ -70,6 +76,63 @@ describe('terminalReadClipboardFilesInputSchema', () => {
 describe('systemMetricsGetInputSchema', () => {
   it('accepts the empty system metrics request', () => {
     expect(systemMetricsGetInputSchema.parse({})).toEqual({})
+  })
+})
+
+describe('petClearAlertsInputSchema', () => {
+  it('accepts optional alert ids for scoped alert clearing', () => {
+    expect(petClearAlertsInputSchema.parse({})).toEqual({})
+    expect(petClearAlertsInputSchema.parse({ alertIds: ['alert-1'] })).toEqual({ alertIds: ['alert-1'] })
+  })
+})
+
+describe('launcherChooseFileResultSchema', () => {
+  it('accepts selected files with optional png icon data', () => {
+    expect(
+      launcherChooseFileResultSchema.parse({
+        path: 'C:\\Tools\\tool.exe',
+        iconDataUrl: 'data:image/png;base64,aWNvbg=='
+      })
+    ).toEqual({
+      path: 'C:\\Tools\\tool.exe',
+      iconDataUrl: 'data:image/png;base64,aWNvbg=='
+    })
+    expect(launcherChooseFileResultSchema.parse({ path: 'C:\\Tools\\tool.exe', iconDataUrl: null })).toEqual({
+      path: 'C:\\Tools\\tool.exe',
+      iconDataUrl: null
+    })
+    expect(launcherChooseFileResultSchema.parse(null)).toBeNull()
+  })
+
+  it('rejects non-png icon payloads', () => {
+    expect(() =>
+      launcherChooseFileResultSchema.parse({
+        path: 'C:\\Tools\\tool.exe',
+        iconDataUrl: 'data:text/plain;base64,aWNvbg=='
+      })
+    ).toThrow()
+  })
+})
+
+describe('Claude history IPC schemas', () => {
+  it('accepts the empty list request', () => {
+    expect(claudeHistoryListInputSchema.parse({})).toEqual({})
+  })
+
+  it('trims and validates session detail requests', () => {
+    expect(claudeHistorySessionInputSchema.parse({ sessionId: '  alpha-session  ' })).toEqual({ sessionId: 'alpha-session' })
+    expect(() => claudeHistorySessionInputSchema.parse({ sessionId: '   ' })).toThrow()
+  })
+})
+
+describe('Codex history IPC schemas', () => {
+  it('accepts the empty list request', () => {
+    expect(codexHistoryListInputSchema.parse({})).toEqual({})
+  })
+
+  it('trims and validates session detail requests', () => {
+    expect(codexHistorySessionInputSchema.parse({ sessionId: '  codex-session  ' })).toEqual({ sessionId: 'codex-session' })
+    expect(() => codexHistorySessionInputSchema.parse({ sessionId: '   ' })).toThrow()
   })
 })
 

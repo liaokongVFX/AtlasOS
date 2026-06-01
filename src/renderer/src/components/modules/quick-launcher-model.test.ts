@@ -7,7 +7,6 @@ import {
   moveQuickLauncherItem,
   moveQuickLauncherTab,
   normalizeQuickLauncherState,
-  searchQuickLauncherItems,
   updateQuickLauncherItem
 } from './quick-launcher-model'
 
@@ -92,7 +91,7 @@ describe('quick launcher model', () => {
     expect(deleteQuickLauncherTab(state, 'default')).toBe(state)
   })
 
-  it('sorts tabs and shortcuts and searches across all tabs', () => {
+  it('sorts tabs and shortcuts', () => {
     let state = createDefaultQuickLauncherState(TIMESTAMP, TEXT)
     state = createQuickLauncherTab(state, 'docs', 'Docs', TIMESTAMP, TEXT)
     state = createQuickLauncherItem(state, 'default', 'terminal', { kind: 'app', name: 'Terminal', targetPath: 'C:\\Windows\\System32\\cmd.exe' }, TIMESTAMP, TEXT)
@@ -104,7 +103,45 @@ describe('quick launcher model', () => {
 
     expect(state.tabs.map((tab) => tab.id)).toEqual(['docs', 'default'])
     expect(state.tabs.find((tab) => tab.id === 'default')?.itemIds).toEqual(['notes', 'terminal'])
-    expect(searchQuickLauncherItems(state, 'api').map((result) => result.item.id)).toEqual(['api'])
-    expect(searchQuickLauncherItems(state, 'docs').map((result) => result.item.id)).toEqual(['api'])
+  })
+
+  it('preserves safe native icon data for path shortcuts', () => {
+    const iconDataUrl = 'data:image/png;base64,aWNvbg=='
+    let state = createDefaultQuickLauncherState(TIMESTAMP, TEXT)
+    state = createQuickLauncherItem(
+      state,
+      'default',
+      'terminal',
+      { kind: 'app', name: 'Terminal', targetPath: 'C:\\Windows\\System32\\cmd.exe', iconDataUrl },
+      TIMESTAMP,
+      TEXT
+    )
+    state = updateQuickLauncherItem(
+      state,
+      'terminal',
+      { kind: 'app', name: 'Command Prompt', targetPath: 'C:\\Windows\\System32\\cmd.exe', iconDataUrl },
+      TIMESTAMP,
+      TEXT
+    )
+
+    expect(state.items.terminal).toMatchObject({
+      kind: 'app',
+      iconDataUrl
+    })
+
+    const normalized = normalizeQuickLauncherState(
+      {
+        tabs: [{ id: 'default', itemIds: ['terminal'] }],
+        items: {
+          terminal: { kind: 'app', targetPath: 'C:\\Windows\\System32\\cmd.exe', iconDataUrl },
+          unsafe: { kind: 'app', targetPath: 'C:\\Tools\\unsafe.exe', iconDataUrl: 'data:text/plain;base64,aWNvbg==' }
+        }
+      },
+      TIMESTAMP,
+      TEXT
+    )
+
+    expect(normalized.items.terminal).toMatchObject({ iconDataUrl })
+    expect(normalized.items.unsafe).not.toHaveProperty('iconDataUrl')
   })
 })

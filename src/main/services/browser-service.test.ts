@@ -6,7 +6,9 @@ const electronMocks = vi.hoisted(() => ({
   ipcHandle: vi.fn(),
   loadURL: vi.fn(() => Promise.resolve()),
   openExternal: vi.fn(),
+  setWebRTCIPHandlingPolicy: vi.fn(),
   viewSetBackgroundColor: vi.fn(),
+  webContentsViewOptions: [] as unknown[],
   webContentsViewSetBackgroundColor: vi.fn(),
   windowOpenHandler: null as ((details: { url: string }) => { action: 'deny' }) | null
 }))
@@ -20,12 +22,17 @@ vi.mock('electron', () => ({
     setBounds = vi.fn()
   },
   WebContentsView: class WebContentsView {
+    constructor(options: unknown) {
+      electronMocks.webContentsViewOptions.push(options)
+    }
+
     setBackgroundColor = electronMocks.webContentsViewSetBackgroundColor
     setBounds = vi.fn()
     webContents = {
       setWindowOpenHandler: vi.fn((handler) => {
         electronMocks.windowOpenHandler = handler
       }),
+      setWebRTCIPHandlingPolicy: electronMocks.setWebRTCIPHandlingPolicy,
       on: vi.fn(),
       loadURL: electronMocks.loadURL
     }
@@ -47,7 +54,9 @@ describe('BrowserService', () => {
     electronMocks.ipcHandle.mockClear()
     electronMocks.loadURL.mockReset()
     electronMocks.loadURL.mockReturnValue(new Promise(() => undefined))
+    electronMocks.setWebRTCIPHandlingPolicy.mockClear()
     electronMocks.viewSetBackgroundColor.mockClear()
+    electronMocks.webContentsViewOptions = []
     electronMocks.webContentsViewSetBackgroundColor.mockClear()
 
     const window = {
@@ -76,6 +85,12 @@ describe('BrowserService', () => {
     expect(electronMocks.loadURL).toHaveBeenCalledWith('https://slow.example.com')
     expect(electronMocks.viewSetBackgroundColor).toHaveBeenCalledWith('#ffffff')
     expect(electronMocks.webContentsViewSetBackgroundColor).toHaveBeenCalledWith('#ffffff')
+    expect(electronMocks.webContentsViewOptions[0]).toMatchObject({
+      webPreferences: {
+        preload: expect.stringMatching(/[\\/]preload[\\/]browser-webview-policy\.js$/)
+      }
+    })
+    expect(electronMocks.setWebRTCIPHandlingPolicy).toHaveBeenCalledWith('disable_non_proxied_udp')
   })
 
   it('routes embedded new-window requests into Atlas browser tabs instead of the system browser', async () => {

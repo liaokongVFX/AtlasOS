@@ -3,12 +3,12 @@ import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
 import { DEFAULT_PET_SETTINGS } from '@shared/pet'
-import type { CanvasComponent, CanvasDocument } from '@shared/schema'
+import type { CanvasComponent, CanvasDocument, CanvasGroup } from '@shared/schema'
 import { I18nContext, setCurrentLocale, translate } from '../i18n'
 import { subscribeCanvasViewportSync } from '../lib/canvas-viewport-sync'
 import { useAppSettingsStore } from '../store/app-settings-store'
 import { useCanvasStore } from '../store/canvas-store'
-import { CanvasBoard } from './canvas-board'
+import { CanvasBoard, type CanvasFlowNode } from './canvas-board'
 import type { AtlasFlowNode } from './component-node'
 import { registerBuiltInComponentDefinitions } from './register-builtins'
 
@@ -16,15 +16,15 @@ registerBuiltInComponentDefinitions()
 
 type CapturedReactFlowProps = {
   deleteKeyCode?: string | string[] | null
-  nodes?: AtlasFlowNode[]
+  nodes?: CanvasFlowNode[]
   onNodesChange?: (changes: Array<Record<string, unknown>>) => void
   onDragOver?: (event: ReactDragEvent) => void
   onDrop?: (event: ReactDragEvent) => void | Promise<void>
   onMove?: (event: MouseEvent | TouchEvent | null, viewport: { x: number; y: number; zoom: number }) => void
   onMoveEnd?: (event: MouseEvent | TouchEvent | null, viewport: { x: number; y: number; zoom: number }) => void
   onMoveStart?: (event: MouseEvent | TouchEvent | null, viewport: { x: number; y: number; zoom: number }) => void
-  onNodeDragStart?: (event: ReactMouseEvent, node: AtlasFlowNode, nodes: AtlasFlowNode[]) => void
-  onNodeDragStop?: (event: ReactMouseEvent, node: AtlasFlowNode, nodes: AtlasFlowNode[]) => void
+  onNodeDragStart?: (event: ReactMouseEvent, node: CanvasFlowNode, nodes: CanvasFlowNode[]) => void
+  onNodeDragStop?: (event: ReactMouseEvent, node: CanvasFlowNode, nodes: CanvasFlowNode[]) => void
   onPaneClick?: (event: ReactMouseEvent) => void
   selectNodesOnDrag?: boolean
   snapGrid?: [number, number]
@@ -104,6 +104,18 @@ function createComponent(id: string, patch: Partial<CanvasComponent> = {}): Canv
   }
 }
 
+function createGroup(id: string, patch: Partial<CanvasGroup> = {}): CanvasGroup {
+  return {
+    id,
+    title: 'Group',
+    notes: '',
+    frame: { x: 80, y: 80, width: 500, height: 380 },
+    zIndex: 1,
+    memberIds: [],
+    ...patch
+  }
+}
+
 function createCanvas(): CanvasDocument {
   const timestamp = '2026-05-21T00:00:00.000Z'
 
@@ -117,6 +129,7 @@ function createCanvas(): CanvasDocument {
       image: { ...DEFAULT_CANVAS_BACKGROUND.image }
     },
     components: [],
+    groups: [],
     createdAt: timestamp,
     updatedAt: timestamp
   }
@@ -267,6 +280,49 @@ describe('CanvasBoard', () => {
 
     expect(reactFlowProps.current?.snapToGrid).toBeUndefined()
     expect(reactFlowProps.current?.snapGrid).toBeUndefined()
+  })
+
+  it('renders CSS gradients as the canvas background fill', () => {
+    const canvas = createCanvas()
+    canvas.background.color = 'linear-gradient(135deg, #010102, #11141b)'
+    useCanvasStore.setState({ canvases: { 'canvas-1': canvas } })
+
+    const { container } = renderCanvasBoard()
+
+    expect(container.querySelector('.canvas-board')?.getAttribute('style')).toContain('background: linear-gradient(135deg, #010102, #11141b)')
+  })
+
+  it('renders background image blur with extra bleed to avoid edge halos', () => {
+    const canvas = createCanvas()
+    canvas.background.image.src = 'atlas-file://preview?rootPath=C%3A%5Cimage.png&path=C%3A%5Cimage.png'
+    canvas.background.image.blur = 12
+    canvas.background.image.fit = 'contain'
+    useCanvasStore.setState({ canvases: { 'canvas-1': canvas } })
+
+    const { container } = renderCanvasBoard()
+    const backgroundImage = container.querySelector('.canvas-background-image')
+
+    expect(backgroundImage?.getAttribute('style')).toContain('filter: blur(12px)')
+    expect(backgroundImage?.getAttribute('style')).toContain('top: -36px')
+    expect(backgroundImage?.getAttribute('style')).toContain('right: -36px')
+    expect(backgroundImage?.getAttribute('style')).toContain('bottom: -36px')
+    expect(backgroundImage?.getAttribute('style')).toContain('left: -36px')
+    expect(backgroundImage?.getAttribute('style')).toContain('background-size: cover')
+    expect(backgroundImage?.getAttribute('style')).toContain('background-repeat: no-repeat')
+    expect(backgroundImage?.getAttribute('style')).toContain('background-attachment: scroll')
+  })
+
+  it('keeps fixed background attachment when the background image is not blurred', () => {
+    const canvas = createCanvas()
+    canvas.background.image.src = 'atlas-file://preview?rootPath=C%3A%5Cimage.png&path=C%3A%5Cimage.png'
+    canvas.background.image.blur = 0
+    canvas.background.image.fixed = true
+    useCanvasStore.setState({ canvases: { 'canvas-1': canvas } })
+
+    const { container } = renderCanvasBoard()
+    const backgroundImage = container.querySelector('.canvas-background-image')
+
+    expect(backgroundImage?.getAttribute('style')).toContain('background-attachment: fixed')
   })
 
   it('disables browser webview hit testing while the viewport is being dragged', () => {
@@ -509,6 +565,7 @@ describe('CanvasBoard', () => {
         schemaVersion: ATLAS_SCHEMA_VERSION,
         locale: 'en-US',
         shortcuts: {
+          ...DEFAULT_APP_SHORTCUTS,
           canvasDeselect: 'Ctrl+Q',
           canvasFind: 'Ctrl+F',
           canvasCreateComponent: 'Ctrl+Alt+K'
@@ -676,6 +733,121 @@ describe('CanvasBoard', () => {
     expect(components[1].id).not.toBe('component-1')
   })
 
+  it('groups selected components with Ctrl+G and selects the new group', async () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('component-1'),
+            createComponent('component-2', { frame: { x: 560, y: 160, width: 200, height: 160 } })
+          ]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([
+        { id: 'component-1', type: 'select', selected: true },
+        { id: 'component-2', type: 'select', selected: true }
+      ])
+    })
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+
+    const groups = useCanvasStore.getState().canvases['canvas-1'].groups
+    expect(groups).toHaveLength(1)
+    expect(groups[0].memberIds).toEqual(['component-1', 'component-2'])
+    await waitFor(() => expect(reactFlowProps.current?.nodes?.find((node) => node.id === groups[0].id)?.selected).toBe(true))
+  })
+
+  it('persists group dragging by moving the frame and member components together', () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [createComponent('component-1')],
+          groups: [createGroup('group-1', { memberIds: ['component-1'] })]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    const groupNode = reactFlowProps.current?.nodes?.find((node) => node.id === 'group-1')
+    expect(groupNode).toBeDefined()
+
+    act(() => {
+      reactFlowProps.current?.onNodeDragStop?.({} as ReactMouseEvent, { ...groupNode!, position: { x: 120, y: 100 } }, [
+        { ...groupNode!, position: { x: 120, y: 100 } }
+      ])
+    })
+
+    const canvas = useCanvasStore.getState().canvases['canvas-1']
+    expect(canvas.groups[0].frame).toMatchObject({ x: 120, y: 100 })
+    expect(canvas.components[0].frame).toMatchObject({ x: 140, y: 140 })
+  })
+
+  it('opens group-aware delete confirmation and can remove only the group frame', async () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [createComponent('component-1')],
+          groups: [createGroup('group-1', { memberIds: ['component-1'] })]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([{ id: 'group-1', type: 'select', selected: true }])
+    })
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }))
+    })
+
+    expect(await screen.findByRole('dialog', { name: 'Delete group?' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove group only' }))
+
+    const canvas = useCanvasStore.getState().canvases['canvas-1']
+    expect(canvas.groups).toHaveLength(0)
+    expect(canvas.components).toHaveLength(1)
+  })
+
+  it('finds groups by notes and focuses the selected group result', async () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          groups: [createGroup('group-1', { title: 'Research', notes: 'Launch checklist', frame: { x: 40, y: 60, width: 300, height: 180 } })]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+
+    const input = await screen.findByPlaceholderText('Find nodes')
+    fireEvent.change(input, { target: { value: 'checklist' } })
+    fireEvent.click(await screen.findByText('Research'))
+
+    expect(reactFlowMock.setCenter).toHaveBeenCalledWith(190, 150, expect.objectContaining({ zoom: 1.15 }))
+    expect(reactFlowProps.current?.nodes?.find((node) => node.id === 'group-1')?.selected).toBe(true)
+  })
+
   it('clears selected components with Ctrl+Q', () => {
     useCanvasStore.setState((state) => ({
       canvases: {
@@ -723,6 +895,7 @@ describe('CanvasBoard', () => {
         schemaVersion: ATLAS_SCHEMA_VERSION,
         locale: 'en-US',
         shortcuts: {
+          ...DEFAULT_APP_SHORTCUTS,
           canvasDeselect: 'Ctrl+Shift+X',
           canvasFind: 'Ctrl+F',
           canvasCreateComponent: 'Tab'
@@ -846,6 +1019,7 @@ describe('CanvasBoard', () => {
         schemaVersion: ATLAS_SCHEMA_VERSION,
         locale: 'en-US',
         shortcuts: {
+          ...DEFAULT_APP_SHORTCUTS,
           canvasDeselect: 'Ctrl+Q',
           canvasFind: 'Alt+K',
           canvasCreateComponent: 'Tab'
@@ -1116,7 +1290,8 @@ describe('CanvasBoard', () => {
 
     renderCanvasBoard()
 
-    const requestSelect = reactFlowProps.current?.nodes?.find((node) => node.id === 'component-2')?.data.onRequestSelect
+    const componentNode = reactFlowProps.current?.nodes?.find((node) => node.id === 'component-2') as AtlasFlowNode | undefined
+    const requestSelect = componentNode?.data.onRequestSelect
     expect(requestSelect).toBeTypeOf('function')
 
     act(() => {

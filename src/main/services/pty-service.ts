@@ -4,7 +4,7 @@ import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { app, clipboard, ipcMain, webContents, type WebContents } from 'electron'
+import { app, clipboard, ipcMain, webContents } from 'electron'
 import * as pty from 'node-pty'
 import {
   MAX_TERMINAL_PASTED_ASSET_BASE64_CHARS,
@@ -17,7 +17,6 @@ import {
   terminalWriteInputSchema
 } from '@shared/ipc'
 import { terminalCreateSchema } from '@shared/schema'
-import type { PetAgentSession, PetAgentSource, PetAgentStatus } from '@shared/pet'
 import { parseFileUriListPaths, readClipboardFilePathsFromNativeFormats } from './clipboard-files'
 import { handleValidated } from './ipc-helpers'
 import { buildPowerShellBootstrapScript, extractCwdMarkers } from './pty-cwd'
@@ -34,20 +33,27 @@ type TerminalSession = {
   cwd: string
   dataBuffer: string
   inputBuffer: string
-  agentSource?: PetAgentSource
-  agentStatus?: PetAgentStatus
-  attentionReason?: string
 }
 
-type PtyAgentSessionEvent =
-  | {
-      type: 'upsert'
-      session: PetAgentSession
-    }
-  | {
-      type: 'remove'
-      sessionId: string
-    }
+type AgentHookEnvironmentContext = {
+  sessionId: string
+  canvasId?: string
+  componentId: string
+  title?: string
+  cwd: string
+}
+
+type AgentCommandSource = 'codex' | 'claude'
+
+type AgentCommandStartedContext = AgentHookEnvironmentContext & {
+  source: AgentCommandSource
+}
+
+type PtyServiceOptions = {
+  getAgentHookEnvironment?: (context: AgentHookEnvironmentContext) => Record<string, string>
+  onAgentCommandStarted?: (context: AgentCommandStartedContext) => void | Promise<void>
+  onSessionClosed?: (sessionId: string) => void
+}
 
 type SavedClipboardImageResult =
   | {
@@ -71,6 +77,7 @@ type NativeClipboardFilesResult = {
 
 const STALE_PASTED_ASSET_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7
 const MAX_PASTED_ASSET_BYTES = 10 * 1024 * 1024
+const MAX_TERMINAL_INPUT_BUFFER_CHARS = 4096
 const PASTED_IMAGE_EXTENSIONS_BY_MIME_TYPE = new Map([
   ['image/png', '.png'],
   ['image/x-png', '.png'],
@@ -89,10 +96,6 @@ const PASTED_IMAGE_EXTENSIONS_BY_MIME_TYPE = new Map([
   ['image/x-icon', '.ico'],
   ['image/vnd.microsoft.icon', '.ico']
 ])
-
-function nowIso(): string {
-  return new Date().toISOString()
-}
 
 function defaultShell(): string {
   if (process.platform === 'win32') return 'powershell.exe'
@@ -149,68 +152,78 @@ function uniqueExistingPaths(paths: string[]): string[] {
   return result
 }
 
-function stripAnsi(value: string): string {
-  return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
+function readShellToken(input: string): { token: string; rest: string } | null {
+  const value = input.trimStart()
+  if (!value) return null
+
+  const quote = value[0]
+  if (quote === '"' || quote === "'") {
+    let token = ''
+    for (let index = 1; index < value.length; index += 1) {
+      const char = value[index]
+      if (char === quote) return { token, rest: value.slice(index + 1) }
+      token += char
+    }
+    return { token, rest: '' }
+  }
+
+  const match = /^[^\s;&|<>]+/.exec(value)
+  if (!match) return null
+  return { token: match[0], rest: value.slice(match[0].length) }
 }
 
-function detectAgentSource(value: string): PetAgentSource | null {
-  if (/\bcodex\b/i.test(value)) return 'codex'
-  if (/\bclaude(?:\s+code)?\b/i.test(value)) return 'claude'
+function agentSourceFromExecutable(token: string): AgentCommandSource | null {
+  const baseName = token.split(/[\\/]/).at(-1)?.toLowerCase()
+  if (!baseName) return null
+
+  const command = baseName.replace(/\.(cmd|exe|bat|ps1)$/i, '')
+  if (command === 'codex') return 'codex'
+  if (command === 'claude') return 'claude'
   return null
 }
 
-function detectAgentStatusFromOutput(value: string): { status: PetAgentStatus; reason?: string } | null {
-  const text = stripAnsi(value).toLowerCase()
-  if (/(permission|approve|approval|confirm|continue\?|do you want|allow|y\/n|yes\/no)/i.test(text)) {
-    return { status: 'waiting_for_confirmation', reason: 'Waiting for confirmation' }
-  }
-  if (/(failed|error|exception|cancelled|canceled)/i.test(text)) {
-    return { status: 'error', reason: 'Reported an error' }
-  }
-  if (/(completed|complete|finished|done|all set)/i.test(text)) {
-    return { status: 'completed', reason: 'Completed' }
-  }
-  return null
+function isHelpOrVersionArgument(argument: string | undefined): boolean {
+  if (!argument) return false
+  return ['-h', '--help', 'help', '-v', '--version', 'version'].includes(argument.toLowerCase())
 }
 
-function updateInputBuffer(buffer: string, data: string): { buffer: string; commands: string[] } {
-  const commands: string[] = []
-  let nextBuffer = buffer
+function detectAgentCommand(command: string): AgentCommandSource | null {
+  let remaining = command.trim()
+  if (!remaining) return null
+  if (remaining.startsWith('&')) remaining = remaining.slice(1).trimStart()
 
-  for (const character of data) {
-    if (character === '\r' || character === '\n') {
-      const command = nextBuffer.trim()
-      if (command) commands.push(command)
-      nextBuffer = ''
-      continue
-    }
+  const executable = readShellToken(remaining)
+  if (!executable) return null
 
-    if (character === '\b' || character === '\x7f') {
-      nextBuffer = nextBuffer.slice(0, -1)
-      continue
-    }
+  const source = agentSourceFromExecutable(executable.token)
+  if (!source) return null
 
-    if (character >= ' ') nextBuffer += character
-  }
-
-  return { buffer: nextBuffer.slice(-512), commands }
+  const firstArgument = readShellToken(executable.rest)?.token
+  if (isHelpOrVersionArgument(firstArgument)) return null
+  return source
 }
 
 export class PtyService {
   private readonly sessionsById = new Map<string, TerminalSession>()
   private readonly sessionsByComponentId = new Map<string, TerminalSession>()
-  private readonly agentSessionListeners = new Set<(event: PtyAgentSessionEvent) => void>()
   private cleanupStarted = false
 
-  onAgentSessionChanged(listener: (event: PtyAgentSessionEvent) => void): () => void {
-    this.agentSessionListeners.add(listener)
-    return () => this.agentSessionListeners.delete(listener)
-  }
+  constructor(private readonly options: PtyServiceOptions = {}) {}
 
   registerIpc(): void {
     this.ensureAttachmentDir()
     handleValidated('terminal:create', terminalCreateSchema, (event, input) => {
-      return this.acquireOrCreate(event.sender.id, input.componentId, input.canvasId, input.title, input.cwd, input.shell, input.cols, input.rows)
+      return this.acquireOrCreate(
+        event.sender.id,
+        input.componentId,
+        input.canvasId,
+        input.title,
+        input.cwd,
+        input.shell,
+        input.initialCommand,
+        input.cols,
+        input.rows
+      )
     })
 
     handleValidated('terminal:write', terminalWriteInputSchema, (_, input) => {
@@ -265,9 +278,10 @@ export class PtyService {
     title: string | undefined,
     cwdInput: string | undefined,
     shellInput: string | undefined,
+    initialCommand: string | undefined,
     cols: number,
     rows: number
-  ): { sessionId: string; cwd: string; shell: string } {
+  ): { sessionId: string; cwd: string; shell: string; didRunInitialCommand?: boolean } {
     const existing = this.sessionsByComponentId.get(componentId)
     if (existing) {
       try {
@@ -279,13 +293,14 @@ export class PtyService {
       existing.ownerId = ownerId
       existing.canvasId = canvasId ?? existing.canvasId
       existing.title = title ?? existing.title
-      return { sessionId: existing.id, cwd: existing.cwd, shell: existing.shell }
+      return { sessionId: existing.id, cwd: existing.cwd, shell: existing.shell, didRunInitialCommand: false }
     }
 
     const cwd = cwdInput && existsSync(cwdInput) ? cwdInput : homedir()
     const shell = shellInput || defaultShell()
     const args = shellArgs(shell)
 
+    const sessionId = randomUUID()
     let term: pty.IPty
     try {
       term = pty.spawn(shell, args, {
@@ -293,14 +308,16 @@ export class PtyService {
         cols,
         rows,
         cwd,
-        env: process.env
+        env: {
+          ...process.env,
+          ...this.options.getAgentHookEnvironment?.({ sessionId, canvasId, componentId, title, cwd })
+        }
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to create PTY session with ${shell}: ${message}`)
     }
 
-    const sessionId = randomUUID()
     const session: TerminalSession = {
       id: sessionId,
       canvasId,
@@ -319,21 +336,27 @@ export class PtyService {
 
     term.onData((data) => {
       this.updateCwdFromOutput(sessionId, data)
-      this.updateAgentFromOutput(sessionId, data)
       this.sendToOwner(session.ownerId, 'terminal:data', { sessionId, data })
     })
 
     term.onExit((exit) => {
-      const exitingSession = this.sessionsById.get(sessionId)
-      if (exitingSession?.agentSource) {
-        this.emitAgentSession(exitingSession, exit.exitCode === 0 ? 'completed' : 'error', exit.exitCode === 0 ? 'Completed' : `Exited with code ${exit.exitCode}`)
-      }
       this.closeBySessionId(sessionId, false)
       this.sendToOwner(session.ownerId, 'terminal:exit', { sessionId, ...exit })
     })
 
     webContents.fromId(ownerId)?.once('destroyed', () => this.closeByOwner(ownerId))
-    return { sessionId, cwd: session.cwd, shell: session.shell }
+    let didRunInitialCommand = false
+    if (initialCommand) {
+      try {
+        term.write(`${initialCommand}\r`)
+        this.reportAgentCommandStarted(session, initialCommand)
+        didRunInitialCommand = true
+      } catch (error) {
+        console.warn(`Failed to write initial command to PTY session ${sessionId}:`, error)
+      }
+    }
+
+    return { sessionId, cwd: session.cwd, shell: session.shell, didRunInitialCommand }
   }
 
   private updateCwdFromOutput(sessionId: string, data: string): void {
@@ -355,7 +378,7 @@ export class PtyService {
 
     this.sessionsById.delete(sessionId)
     this.sessionsByComponentId.delete(session.componentId)
-    if (session.agentSource) this.emitAgentSessionRemoved(sessionId)
+    this.options.onSessionClosed?.(sessionId)
 
     if (!kill) return
 
@@ -377,12 +400,49 @@ export class PtyService {
     if (!session) return false
 
     try {
-      this.updateAgentFromInput(session, data)
       session.pty.write(data)
+      this.trackTerminalInput(session, data)
       return true
     } catch (error) {
       console.warn(`Failed to write to PTY session ${sessionId}:`, error)
       return false
+    }
+  }
+
+  private trackTerminalInput(session: TerminalSession, data: string): void {
+    for (const char of data) {
+      if (char === '\r' || char === '\n') {
+        const command = session.inputBuffer
+        session.inputBuffer = ''
+        this.reportAgentCommandStarted(session, command)
+      } else if (char === '\b' || char === '\x7f') {
+        session.inputBuffer = session.inputBuffer.slice(0, -1)
+      } else if (char === '\x03' || char === '\x04' || char === '\x15' || char === '\x1b') {
+        session.inputBuffer = ''
+      } else if (char >= ' ' || char === '\t') {
+        session.inputBuffer = `${session.inputBuffer}${char}`.slice(-MAX_TERMINAL_INPUT_BUFFER_CHARS)
+      }
+    }
+  }
+
+  private reportAgentCommandStarted(session: TerminalSession, command: string): void {
+    const source = detectAgentCommand(command)
+    if (!source) return
+
+    try {
+      const result = this.options.onAgentCommandStarted?.({
+        source,
+        sessionId: session.id,
+        canvasId: session.canvasId,
+        componentId: session.componentId,
+        title: session.title,
+        cwd: session.cwd
+      })
+      void Promise.resolve(result).catch((error) => {
+        console.warn(`Failed to report ${source} command start for PTY session ${session.id}:`, error)
+      })
+    } catch (error) {
+      console.warn(`Failed to report ${source} command start for PTY session ${session.id}:`, error)
     }
   }
 
@@ -411,56 +471,6 @@ export class PtyService {
     const contents = webContents.fromId(ownerId)
     if (!contents || contents.isDestroyed()) return
     contents.send(channel, payload)
-  }
-
-  private updateAgentFromInput(session: TerminalSession, data: string): void {
-    const result = updateInputBuffer(session.inputBuffer, data)
-    session.inputBuffer = result.buffer
-
-    for (const command of result.commands) {
-      const source = detectAgentSource(command)
-      if (!source) continue
-
-      session.agentSource = source
-      this.emitAgentSession(session, 'running')
-    }
-  }
-
-  private updateAgentFromOutput(sessionId: string, data: string): void {
-    const session = this.sessionsById.get(sessionId)
-    if (!session) return
-
-    const source = session.agentSource ?? detectAgentSource(data)
-    if (!source) return
-
-    session.agentSource = source
-    const detectedStatus = detectAgentStatusFromOutput(data)
-    this.emitAgentSession(session, detectedStatus?.status ?? session.agentStatus ?? 'running', detectedStatus?.reason)
-  }
-
-  private emitAgentSession(session: TerminalSession, status: PetAgentStatus, attentionReason?: string): void {
-    if (!session.agentSource || !session.canvasId) return
-
-    session.agentStatus = status
-    session.attentionReason = attentionReason ?? session.attentionReason
-
-    const snapshot: PetAgentSession = {
-      id: session.id,
-      source: session.agentSource,
-      status,
-      canvasId: session.canvasId,
-      componentId: session.componentId,
-      title: session.title || (session.agentSource === 'codex' ? 'Codex' : 'Claude Code'),
-      cwd: session.cwd,
-      lastActivityAt: nowIso(),
-      attentionReason: session.attentionReason
-    }
-
-    for (const listener of this.agentSessionListeners) listener({ type: 'upsert', session: snapshot })
-  }
-
-  private emitAgentSessionRemoved(sessionId: string): void {
-    for (const listener of this.agentSessionListeners) listener({ type: 'remove', sessionId })
   }
 
   private async savePastedImageBuffer(buffer: Buffer, mimeType = 'image/png'): Promise<string> {

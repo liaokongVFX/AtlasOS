@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { stat } from 'node:fs/promises'
-import { dialog, shell } from 'electron'
-import { launcherChooseFileInputSchema, launcherOpenInputSchema, type LauncherOpenInput } from '@shared/ipc'
+import { app, dialog, shell } from 'electron'
+import { launcherChooseFileInputSchema, launcherOpenInputSchema, type LauncherChooseFileResult, type LauncherOpenInput } from '@shared/ipc'
 import { handleValidated } from './ipc-helpers'
 
 const APP_FILE_FILTERS: Electron.FileFilter[] = [
@@ -14,7 +14,9 @@ const ANY_FILE_FILTERS: Electron.FileFilter[] = [{ name: 'All files', extensions
 export class LauncherService {
   constructor(
     private readonly platform = process.platform,
-    private readonly spawnProcess: typeof spawn = spawn
+    private readonly spawnProcess: typeof spawn = spawn,
+    private readonly getFileIcon: typeof app.getFileIcon = app.getFileIcon.bind(app),
+    private readonly readShortcutLink: typeof shell.readShortcutLink = shell.readShortcutLink.bind(shell)
   ) {}
 
   registerIpc(): void {
@@ -24,7 +26,15 @@ export class LauncherService {
         filters: input.kind === 'app' ? APP_FILE_FILTERS : ANY_FILE_FILTERS
       })
 
-      return result.canceled ? null : result.filePaths[0]
+      if (result.canceled) return null
+
+      const targetPath = result.filePaths[0]
+      if (!targetPath) return null
+
+      return {
+        path: targetPath,
+        iconDataUrl: await this.readIconDataUrl(targetPath)
+      } satisfies LauncherChooseFileResult
     })
 
     handleValidated('launcher:open', launcherOpenInputSchema, async (_, input) => {
@@ -69,24 +79,63 @@ export class LauncherService {
     await shell.openExternal(parsed.toString())
   }
 
+  private async readIconDataUrl(targetPath: string): Promise<string | null> {
+    const iconSourcePath = this.shortcutIconSourcePath(targetPath) ?? targetPath
+    const iconDataUrl = await this.readFileIconDataUrl(iconSourcePath)
+    if (iconDataUrl || iconSourcePath === targetPath) return iconDataUrl
+
+    return this.readFileIconDataUrl(targetPath)
+  }
+
+  private async readFileIconDataUrl(targetPath: string): Promise<string | null> {
+    try {
+      const icon = await this.getFileIcon(targetPath, { size: 'normal' })
+      return icon.isEmpty() ? null : icon.toDataURL()
+    } catch {
+      return null
+    }
+  }
+
+  private shortcutIconSourcePath(targetPath: string): string | null {
+    if (this.platform !== 'win32' || !targetPath.toLowerCase().endsWith('.lnk')) return null
+
+    try {
+      const shortcut = this.readShortcutLink(targetPath)
+      return this.expandWindowsEnvironmentPath(shortcut.icon?.trim() || shortcut.target.trim()) || null
+    } catch {
+      return null
+    }
+  }
+
+  private expandWindowsEnvironmentPath(targetPath: string): string {
+    return targetPath.replace(
+      /%([^%]+)%/g,
+      (match, name) => process.env[name] ?? process.env[name.toUpperCase()] ?? process.env[name.toLowerCase()] ?? match
+    )
+  }
+
   private async openCommand(shellKind: 'cmd' | 'powershell', command: string, cwd?: string): Promise<void> {
     if (this.platform !== 'win32') {
       throw new Error('Command shortcuts are only supported on Windows')
     }
 
+    const resolvedCwd = cwd ? await this.validateCommandCwd(cwd) : undefined
+    const file = 'cmd.exe'
+    const args = ['/d', '/s', '/c', 'start', '', ...this.commandWindowArgs(shellKind, command)]
     const options: Parameters<typeof spawn>[2] = {
-      cwd: cwd ? await this.validateCommandCwd(cwd) : undefined,
+      cwd: resolvedCwd,
       detached: true,
       stdio: 'ignore',
       windowsHide: false
     }
 
-    const child =
-      shellKind === 'cmd'
-        ? this.spawnProcess('cmd.exe', ['/d', '/s', '/k', command], options)
-        : this.spawnProcess('powershell.exe', ['-NoLogo', '-NoExit', '-Command', command], options)
-
+    const child = this.spawnProcess(file, args, options)
     this.detachChild(child)
+  }
+
+  private commandWindowArgs(shellKind: 'cmd' | 'powershell', command: string): string[] {
+    if (shellKind === 'cmd') return ['cmd.exe', '/d', '/s', '/k', command]
+    return ['powershell.exe', '-NoLogo', '-NoExit', '-Command', command]
   }
 
   private async validateCommandCwd(cwd: string): Promise<string> {

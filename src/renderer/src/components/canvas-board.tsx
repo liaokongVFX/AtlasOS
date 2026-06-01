@@ -13,10 +13,10 @@ import {
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Popover from '@radix-ui/react-popover'
 import { Command } from 'cmdk'
-import { Maximize2, Search, ZoomIn, ZoomOut } from 'lucide-react'
+import { Group as GroupIcon, Maximize2, Pencil, Search, Trash2, Ungroup, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type RefObject } from 'react'
 import type { Measurable } from '@radix-ui/rect'
-import type { CanvasComponent, ComponentType, FileEntry } from '@shared/schema'
+import type { CanvasComponent, CanvasGroup, ComponentType, FileEntry, Frame } from '@shared/schema'
 import type { PetAlertTarget } from '@shared/pet'
 import { keyboardEventMatchesShortcut } from '@shared/keyboard-shortcuts'
 import { notifyCanvasViewportSync } from '../lib/canvas-viewport-sync'
@@ -26,6 +26,7 @@ import type { MediaDimensions } from '../lib/media-frame'
 import { useAppSettingsStore } from '../store/app-settings-store'
 import { useCanvasStore } from '../store/canvas-store'
 import { useI18n } from '../i18n'
+import { CanvasGroupNode, type CanvasGroupFlowNode } from './canvas-group-node'
 import { ComponentNode, type AtlasFlowNode } from './component-node'
 import {
   componentDefinitionTitle,
@@ -38,10 +39,17 @@ import {
 type ComponentNodeCacheEntry = {
   canvasId: string
   component: CanvasComponent
+  parentGroupId?: string
+  parentGroupX?: number
+  parentGroupY?: number
   onRequestSelect?: (componentId: string) => void
   registryVersion: number
   node: AtlasFlowNode
 }
+
+export type CanvasFlowNode = AtlasFlowNode | CanvasGroupFlowNode
+
+const BACKGROUND_IMAGE_BLUR_BLEED_MULTIPLIER = 3
 
 type ScreenPosition = {
   x: number
@@ -49,7 +57,8 @@ type ScreenPosition = {
 }
 
 const nodeTypes = {
-  atlasComponent: ComponentNode
+  atlasComponent: ComponentNode,
+  atlasGroup: CanvasGroupNode
 }
 
 const NODE_FOCUS_DURATION = 180
@@ -83,12 +92,21 @@ function componentToNode(
   canvasId: string,
   component: CanvasComponent,
   registryVersion = 0,
-  onRequestSelect?: (componentId: string) => void
+  onRequestSelect?: (componentId: string) => void,
+  parentGroup?: CanvasGroup
 ): AtlasFlowNode {
+  const position = parentGroup
+    ? {
+        x: component.frame.x - parentGroup.frame.x,
+        y: component.frame.y - parentGroup.frame.y
+      }
+    : { x: component.frame.x, y: component.frame.y }
+
   return {
     id: component.id,
     type: 'atlasComponent',
-    position: { x: component.frame.x, y: component.frame.y },
+    parentId: parentGroup?.id,
+    position,
     initialWidth: component.frame.width,
     initialHeight: component.frame.height,
     width: component.frame.width,
@@ -109,24 +127,57 @@ function cachedComponentToNode(
   canvasId: string,
   component: CanvasComponent,
   registryVersion: number,
-  onRequestSelect?: (componentId: string) => void
+  onRequestSelect?: (componentId: string) => void,
+  parentGroup?: CanvasGroup
 ): AtlasFlowNode {
   const cached = cache.get(component.id)
   if (
     cached?.canvasId === canvasId &&
     cached.component === component &&
+    cached.parentGroupId === parentGroup?.id &&
+    cached.parentGroupX === parentGroup?.frame.x &&
+    cached.parentGroupY === parentGroup?.frame.y &&
     cached.onRequestSelect === onRequestSelect &&
     cached.registryVersion === registryVersion
   ) {
     return cached.node
   }
 
-  const node = componentToNode(canvasId, component, registryVersion, onRequestSelect)
-  cache.set(component.id, { canvasId, component, onRequestSelect, registryVersion, node })
+  const node = componentToNode(canvasId, component, registryVersion, onRequestSelect, parentGroup)
+  cache.set(component.id, {
+    canvasId,
+    component,
+    parentGroupId: parentGroup?.id,
+    parentGroupX: parentGroup?.frame.x,
+    parentGroupY: parentGroup?.frame.y,
+    onRequestSelect,
+    registryVersion,
+    node
+  })
   return node
 }
 
-function reconcileFlowNodes(nextNodes: AtlasFlowNode[], currentNodes: AtlasFlowNode[]): AtlasFlowNode[] {
+function groupToNode(canvasId: string, group: CanvasGroup): CanvasGroupFlowNode {
+  return {
+    id: group.id,
+    type: 'atlasGroup',
+    position: { x: group.frame.x, y: group.frame.y },
+    initialWidth: group.frame.width,
+    initialHeight: group.frame.height,
+    width: group.frame.width,
+    height: group.frame.height,
+    measured: { width: group.frame.width, height: group.frame.height },
+    zIndex: group.zIndex,
+    data: { canvasId, group },
+    style: {
+      width: group.frame.width,
+      height: group.frame.height,
+      zIndex: group.zIndex
+    }
+  }
+}
+
+function reconcileFlowNodes(nextNodes: CanvasFlowNode[], currentNodes: CanvasFlowNode[]): CanvasFlowNode[] {
   const currentById = new Map(currentNodes.map((node) => [node.id, node]))
 
   return nextNodes.map((nextNode) => {
@@ -164,11 +215,11 @@ function reconcileFlowNodes(nextNodes: AtlasFlowNode[], currentNodes: AtlasFlowN
   })
 }
 
-function selectedNodeIds(nodes: AtlasFlowNode[]): string[] {
+function selectedNodeIds(nodes: CanvasFlowNode[]): string[] {
   return nodes.filter((node) => node.selected).map((node) => node.id)
 }
 
-function unselectNodeIds(nodes: AtlasFlowNode[], nodeIds: Set<string>): AtlasFlowNode[] {
+function unselectNodeIds(nodes: CanvasFlowNode[], nodeIds: Set<string>): CanvasFlowNode[] {
   if (nodeIds.size === 0) return nodes
 
   let didChange = false
@@ -182,10 +233,10 @@ function unselectNodeIds(nodes: AtlasFlowNode[], nodeIds: Set<string>): AtlasFlo
   return didChange ? nextNodes : nodes
 }
 
-function selectOnlyNode(nodes: AtlasFlowNode[], componentId: string): AtlasFlowNode[] {
+function selectOnlyNode(nodes: CanvasFlowNode[], nodeId: string): CanvasFlowNode[] {
   let didChange = false
   const nextNodes = nodes.map((node) => {
-    const shouldSelect = node.id === componentId
+    const shouldSelect = node.id === nodeId
     if (node.selected === shouldSelect) return node
 
     didChange = true
@@ -193,6 +244,54 @@ function selectOnlyNode(nodes: AtlasFlowNode[], componentId: string): AtlasFlowN
   })
 
   return didChange ? nextNodes : nodes
+}
+
+function splitNodeIds(nodeIds: string[], groups: CanvasGroup[]): { componentIds: string[]; groupIds: string[] } {
+  const groupIds = new Set(groups.map((group) => group.id))
+  return {
+    componentIds: nodeIds.filter((nodeId) => !groupIds.has(nodeId)),
+    groupIds: nodeIds.filter((nodeId) => groupIds.has(nodeId))
+  }
+}
+
+function groupById(groups: CanvasGroup[]): Map<string, CanvasGroup> {
+  return new Map(groups.map((group) => [group.id, group]))
+}
+
+function groupByMemberId(groups: CanvasGroup[]): Map<string, CanvasGroup> {
+  const sortedGroups = groups
+    .map((group, index) => ({ group, index }))
+    .sort((first, second) => first.group.zIndex - second.group.zIndex || first.index - second.index)
+  const groupsByMember = new Map<string, CanvasGroup>()
+
+  for (const { group } of sortedGroups) {
+    for (const memberId of group.memberIds) {
+      groupsByMember.set(memberId, group)
+    }
+  }
+
+  return groupsByMember
+}
+
+function absoluteNodePosition(node: CanvasFlowNode, parentGroup: CanvasGroup | undefined): { x: number; y: number } {
+  if (!parentGroup) {
+    return {
+      x: Math.round(node.position.x),
+      y: Math.round(node.position.y)
+    }
+  }
+
+  return {
+    x: Math.round(parentGroup.frame.x + node.position.x),
+    y: Math.round(parentGroup.frame.y + node.position.y)
+  }
+}
+
+function frameCenter(frame: Frame): { x: number; y: number } {
+  return {
+    x: frame.x + frame.width / 2,
+    y: frame.y + frame.height / 2
+  }
 }
 
 function closestFlowNodeId(target: EventTarget | null): string | null {
@@ -431,7 +530,7 @@ function CanvasCreateMenu({
 
 function CanvasZoomControls({ hasNodes }: { hasNodes: boolean }): JSX.Element {
   const { t } = useI18n()
-  const reactFlow = useReactFlow<AtlasFlowNode>()
+  const reactFlow = useReactFlow<CanvasFlowNode>()
   const zoom = useStore((state) => state.transform[2])
   const zoomPercent = Math.round(zoom * 100)
 
@@ -501,21 +600,28 @@ function nodeFinderDetail(component: CanvasComponent): string | null {
   return getComponentDefinition(component.type).getDetail?.(component) ?? null
 }
 
+function groupFinderKeywords(group: CanvasGroup, groupLabel: string): string[] {
+  return [group.title, group.notes, groupLabel, 'group'].filter((value): value is string => Boolean(value))
+}
+
 function CanvasNodeFinder({
   open,
   components,
+  groups,
   onOpenChange,
   onSelect
 }: {
   open: boolean
   components: CanvasComponent[]
+  groups: CanvasGroup[]
   onOpenChange: (open: boolean) => void
-  onSelect: (componentId: string) => void
+  onSelect: (result: { type: 'component' | 'group'; id: string }) => void
 }): JSX.Element {
   const { t } = useI18n()
   const [search, setSearch] = useState('')
   const listRef = useRef<HTMLDivElement | null>(null)
   const scrollResetFrameRef = useRef<number | null>(null)
+  const hasItems = components.length > 0 || groups.length > 0
 
   useEffect(() => {
     if (open) setSearch('')
@@ -564,8 +670,34 @@ function CanvasNodeFinder({
       </div>
       <Command.List ref={listRef} className="node-finder__list" label={t('canvas.nodeListLabel')}>
         <Command.Empty className="node-finder__empty">
-          {components.length === 0 ? t('canvas.noNodes') : t('canvas.noMatchingNodes')}
+          {!hasItems ? t('canvas.noNodes') : t('canvas.noMatchingNodes')}
         </Command.Empty>
+        {groups.length > 0 ? (
+          <Command.Group heading={t('canvas.groups')}>
+            {groups.map((group) => {
+              const detail = group.notes.split(/\r?\n/).find((line) => line.trim())?.trim() ?? null
+
+              return (
+                <Command.Item
+                  key={group.id}
+                  className="node-finder__item"
+                  value={`group:${group.id}`}
+                  keywords={groupFinderKeywords(group, t('canvas.groups'))}
+                  onSelect={() => onSelect({ type: 'group', id: group.id })}
+                >
+                  <span className="node-finder__item-icon" aria-hidden="true">
+                    <GroupIcon size={16} />
+                  </span>
+                  <span className="node-finder__item-main">
+                    <span className="node-finder__item-title">{group.title}</span>
+                    <span className="node-finder__item-type">{t('canvas.group')}</span>
+                    {detail ? <span className="node-finder__item-detail">{detail}</span> : null}
+                  </span>
+                </Command.Item>
+              )
+            })}
+          </Command.Group>
+        ) : null}
         <Command.Group heading={t('canvas.nodes')}>
           {components.map((component) => {
             const definition = getComponentDefinition(component.type)
@@ -577,9 +709,9 @@ function CanvasNodeFinder({
               <Command.Item
                 key={component.id}
                 className="node-finder__item"
-                value={component.id}
+                value={`component:${component.id}`}
                 keywords={nodeFinderKeywords(component, definitionTitle)}
-                onSelect={() => onSelect(component.id)}
+                onSelect={() => onSelect({ type: 'component', id: component.id })}
               >
                 <span className="node-finder__item-icon" aria-hidden="true">
                   <Icon size={16} />
@@ -598,8 +730,163 @@ function CanvasNodeFinder({
   )
 }
 
+function CanvasSelectionToolbar({
+  selectedComponentCount,
+  selectedGroupCount,
+  onCreateGroup,
+  onEditGroup,
+  onUngroup,
+  onDeleteGroups
+}: {
+  selectedComponentCount: number
+  selectedGroupCount: number
+  onCreateGroup: () => void
+  onEditGroup: () => void
+  onUngroup: () => void
+  onDeleteGroups: () => void
+}): JSX.Element | null {
+  const { t } = useI18n()
+  if (selectedComponentCount === 0 && selectedGroupCount === 0) return null
+
+  return (
+    <Panel position="top-center" className="canvas-selection-toolbar" style={{ top: 14, margin: 0 }}>
+      <button
+        type="button"
+        className="canvas-panel-button"
+        disabled={selectedComponentCount === 0}
+        onClick={onCreateGroup}
+        aria-label={t('canvas.groupSelection')}
+        title={t('canvas.groupSelection')}
+      >
+        <GroupIcon size={15} />
+      </button>
+      <button
+        type="button"
+        className="canvas-panel-button"
+        disabled={selectedGroupCount !== 1}
+        onClick={onEditGroup}
+        aria-label={t('canvas.editGroup')}
+        title={t('canvas.editGroup')}
+      >
+        <Pencil size={15} />
+      </button>
+      <button
+        type="button"
+        className="canvas-panel-button"
+        disabled={selectedGroupCount === 0}
+        onClick={onUngroup}
+        aria-label={t('canvas.ungroupSelection')}
+        title={t('canvas.ungroupSelection')}
+      >
+        <Ungroup size={15} />
+      </button>
+      <button
+        type="button"
+        className="canvas-panel-button canvas-panel-button--danger"
+        disabled={selectedGroupCount === 0}
+        onClick={onDeleteGroups}
+        aria-label={t('canvas.deleteGroup')}
+        title={t('canvas.deleteGroup')}
+      >
+        <Trash2 size={15} />
+      </button>
+    </Panel>
+  )
+}
+
+function CanvasGroupEditDialog({
+  group,
+  onClose,
+  onSave
+}: {
+  group: CanvasGroup | null
+  onClose: () => void
+  onSave: (groupId: string, patch: { title: string; notes: string }) => void
+}): JSX.Element {
+  const { t } = useI18n()
+  const [title, setTitle] = useState('')
+  const [notes, setNotes] = useState('')
+
+  useEffect(() => {
+    setTitle(group?.title ?? '')
+    setNotes(group?.notes ?? '')
+  }, [group])
+
+  const save = useCallback(() => {
+    if (!group) return
+    onSave(group.id, { title, notes })
+  }, [group, notes, onSave, title])
+
+  return (
+    <Dialog.Root open={Boolean(group)} onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className="dialog-content canvas-group-dialog">
+          <Dialog.Title className="dialog-title">{t('canvas.editGroup')}</Dialog.Title>
+          <Dialog.Description className="dialog-description">{t('canvas.editGroupDescription')}</Dialog.Description>
+          <label className="canvas-group-dialog__field">
+            <span>{t('canvas.groupTitle')}</span>
+            <input value={title} onChange={(event) => setTitle(event.currentTarget.value)} />
+          </label>
+          <label className="canvas-group-dialog__field">
+            <span>{t('canvas.groupNotes')}</span>
+            <textarea value={notes} rows={6} onChange={(event) => setNotes(event.currentTarget.value)} />
+          </label>
+          <div className="dialog-actions">
+            <button type="button" className="tool-button" onClick={onClose}>
+              {t('common.cancel')}
+            </button>
+            <button type="button" className="primary-button" onClick={save}>
+              {t('common.save')}
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
+function CanvasGroupDeleteDialog({
+  count,
+  open,
+  onCancel,
+  onDeleteMembers,
+  onRemoveOnly
+}: {
+  count: number
+  open: boolean
+  onCancel: () => void
+  onDeleteMembers: () => void
+  onRemoveOnly: () => void
+}): JSX.Element {
+  const { t } = useI18n()
+
+  return (
+    <Dialog.Root open={open} onOpenChange={(nextOpen) => !nextOpen && onCancel()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className="dialog-content">
+          <Dialog.Title className="dialog-title">{t('canvas.deleteGroupTitle')}</Dialog.Title>
+          <Dialog.Description className="dialog-description">{t('canvas.deleteGroupDescription', { count })}</Dialog.Description>
+          <div className="dialog-actions canvas-group-delete-actions">
+            <button type="button" className="tool-button" onClick={onCancel}>
+              {t('common.cancel')}
+            </button>
+            <button type="button" className="tool-button" onClick={onRemoveOnly}>
+              {t('canvas.removeGroupOnly')}
+            </button>
+            <button type="button" className="tool-button danger" onClick={onDeleteMembers}>
+              {t('canvas.deleteGroupAndMembers')}
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
 export function CanvasBoard(): JSX.Element {
-  const reactFlow = useReactFlow<AtlasFlowNode>()
+  const reactFlow = useReactFlow<CanvasFlowNode>()
   const componentRegistryVersion = useComponentRegistryVersion()
   const activeCanvasId = useCanvasStore((state) => state.activeCanvasId)
   const canvases = useCanvasStore((state) => state.canvases)
@@ -609,17 +896,31 @@ export function CanvasBoard(): JSX.Element {
   const updateComponentFrames = useCanvasStore((state) => state.updateComponentFrames)
   const addComponent = useCanvasStore((state) => state.addComponent)
   const addComponents = useCanvasStore((state) => state.addComponents)
-  const duplicateComponents = useCanvasStore((state) => state.duplicateComponents)
+  const duplicateSelection = useCanvasStore((state) => state.duplicateSelection)
   const removeComponents = useCanvasStore((state) => state.removeComponents)
   const bringToFront = useCanvasStore((state) => state.bringToFront)
+  const createGroup = useCanvasStore((state) => state.createGroup)
+  const updateGroup = useCanvasStore((state) => state.updateGroup)
+  const moveGroup = useCanvasStore((state) => state.moveGroup)
+  const ungroupGroups = useCanvasStore((state) => state.ungroupGroups)
+  const removeGroups = useCanvasStore((state) => state.removeGroups)
+  const deleteGroupsWithMembers = useCanvasStore((state) => state.deleteGroupsWithMembers)
+  const bringGroupToFront = useCanvasStore((state) => state.bringGroupToFront)
   const beginCanvasInteraction = useCanvasStore((state) => state.beginCanvasInteraction)
   const endCanvasInteraction = useCanvasStore((state) => state.endCanvasInteraction)
   const shortcuts = useAppSettingsStore((state) => state.settings.shortcuts)
-  const [nodes, setNodes] = useState<AtlasFlowNode[]>(() =>
-    canvas ? canvas.components.map((component) => componentToNode(canvas.id, component, componentRegistryVersion)) : []
+  const [nodes, setNodes] = useState<CanvasFlowNode[]>(() =>
+    canvas
+      ? [
+          ...(canvas.groups ?? []).map((group) => groupToNode(canvas.id, group)),
+          ...canvas.components.map((component) => componentToNode(canvas.id, component, componentRegistryVersion))
+        ]
+      : []
   )
   const [createMenu, setCreateMenu] = useState<CanvasCreateMenuState | null>(null)
   const [isNodeFinderOpen, setIsNodeFinderOpen] = useState(false)
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
+  const [pendingDeleteGroupIds, setPendingDeleteGroupIds] = useState<string[] | null>(null)
   const [isFileDragActive, setIsFileDragActive] = useState(false)
   const [isViewportInteracting, setIsViewportInteracting] = useState(false)
   const createMenuAnchorRef = useRef<Measurable>(createPointAnchor(0, 0))
@@ -680,9 +981,11 @@ export function CanvasBoard(): JSX.Element {
     }
 
     const liveComponentIds = new Set<string>()
-    const nextNodes = canvas.components.map((component) => {
+    const groups = canvas.groups ?? []
+    const memberGroups = groupByMemberId(groups)
+    const nextComponentNodes = canvas.components.map((component) => {
       liveComponentIds.add(component.id)
-      return cachedComponentToNode(cache, canvas.id, component, componentRegistryVersion, selectComponentForContextMenu)
+      return cachedComponentToNode(cache, canvas.id, component, componentRegistryVersion, selectComponentForContextMenu, memberGroups.get(component.id))
     })
 
     for (const [componentId, cached] of cache) {
@@ -691,7 +994,10 @@ export function CanvasBoard(): JSX.Element {
       }
     }
 
-    return nextNodes
+    return [
+      ...groups.map((group) => groupToNode(canvas.id, group)),
+      ...nextComponentNodes
+    ]
   }, [canvas, componentRegistryVersion, selectComponentForContextMenu])
 
   useLayoutEffect(() => {
@@ -734,20 +1040,22 @@ export function CanvasBoard(): JSX.Element {
   )
 
   const onNodesChange = useCallback(
-    (changes: NodeChange<AtlasFlowNode>[]) => {
+    (changes: NodeChange<CanvasFlowNode>[]) => {
       setNodes((currentNodes) => applyNodeChanges(changes, currentNodes))
       if (!activeCanvasId) return
 
       const removedNodeIds = changes.filter((change) => change.type === 'remove').map((change) => change.id)
       if (removedNodeIds.length > 0) {
-        removeComponents(activeCanvasId, removedNodeIds)
+        const removed = splitNodeIds(removedNodeIds, canvas?.groups ?? [])
+        removeComponents(activeCanvasId, removed.componentIds)
+        removeGroups(activeCanvasId, removed.groupIds)
         notifyCanvasViewportSync()
       }
     },
-    [activeCanvasId, removeComponents]
+    [activeCanvasId, canvas?.groups, removeComponents, removeGroups]
   )
 
-  const onNodeDragStart: OnNodeDrag<AtlasFlowNode> = useCallback(() => {
+  const onNodeDragStart: OnNodeDrag<CanvasFlowNode> = useCallback(() => {
     closeCreateMenu()
     if (nodeDragInteractionActiveRef.current) return
 
@@ -755,7 +1063,7 @@ export function CanvasBoard(): JSX.Element {
     beginCanvasInteraction()
   }, [beginCanvasInteraction, closeCreateMenu])
 
-  const onNodeDragStop: OnNodeDrag<AtlasFlowNode> = useCallback(
+  const onNodeDragStop: OnNodeDrag<CanvasFlowNode> = useCallback(
     (_, node, draggedNodes) => {
       try {
         const stoppedNodes = draggedNodes.length > 0 ? draggedNodes : [node]
@@ -764,25 +1072,51 @@ export function CanvasBoard(): JSX.Element {
 
         if (!activeCanvasId || !canvas) return
 
+        const groups = canvas.groups ?? []
+        const groupsById = groupById(groups)
+        const memberGroups = groupByMemberId(groups)
+        const stoppedGroupIds = new Set(stoppedNodes.filter((draggedNode) => groupsById.has(draggedNode.id)).map((draggedNode) => draggedNode.id))
+        const movedGroupMemberIds = new Set(groups.filter((group) => stoppedGroupIds.has(group.id)).flatMap((group) => group.memberIds))
         const componentById = new Map(canvas.components.map((component) => [component.id, component]))
-        const updatesById = new Map<string, { componentId: string; frame: { x: number; y: number } }>()
+        const updatesById = new Map<string, { componentId: string; frame: { x: number; y: number }; reconcileGroup?: boolean }>()
+        let didMoveGroup = false
 
         for (const draggedNode of stoppedNodes) {
+          const group = groupsById.get(draggedNode.id)
+          if (group) {
+            const position = {
+              x: Math.round(draggedNode.position.x),
+              y: Math.round(draggedNode.position.y)
+            }
+            if (group.frame.x !== position.x || group.frame.y !== position.y) {
+              moveGroup(activeCanvasId, group.id, position)
+              didMoveGroup = true
+            }
+            continue
+          }
+
+          if (movedGroupMemberIds.has(draggedNode.id)) continue
+
           const component = componentById.get(draggedNode.id)
           if (!component) continue
 
-          const x = Math.round(draggedNode.position.x)
-          const y = Math.round(draggedNode.position.y)
+          const position = absoluteNodePosition(draggedNode, memberGroups.get(component.id))
+          const x = position.x
+          const y = position.y
           if (component.frame.x === x && component.frame.y === y) continue
 
           updatesById.set(draggedNode.id, {
             componentId: draggedNode.id,
-            frame: { x, y }
+            frame: { x, y },
+            reconcileGroup: true
           })
         }
 
         const updates = [...updatesById.values()]
-        if (updates.length === 0) return
+        if (updates.length === 0) {
+          if (didMoveGroup) notifyCanvasViewportSync()
+          return
+        }
 
         updateComponentFrames(activeCanvasId, updates)
         notifyCanvasViewportSync()
@@ -790,7 +1124,7 @@ export function CanvasBoard(): JSX.Element {
         finishNodeDragInteraction()
       }
     },
-    [activeCanvasId, canvas, finishNodeDragInteraction, updateComponentFrames]
+    [activeCanvasId, canvas, finishNodeDragInteraction, moveGroup, updateComponentFrames]
   )
 
   const openNodeFinder = useCallback(() => {
@@ -839,6 +1173,39 @@ export function CanvasBoard(): JSX.Element {
     [activeCanvasId, bringToFront, canvas, closeCreateMenu, reactFlow]
   )
 
+  const focusGroupNode = useCallback(
+    (groupId: string) => {
+      if (!activeCanvasId || !canvas) return
+
+      const group = (canvas.groups ?? []).find((item) => item.id === groupId)
+      if (!group) return
+
+      closeCreateMenu()
+      setIsNodeFinderOpen(false)
+      setNodes((currentNodes) => selectOnlyNode(currentNodes, groupId))
+      bringGroupToFront(activeCanvasId, groupId)
+      notifyCanvasViewportSync()
+
+      const center = frameCenter(group.frame)
+      const targetZoom = Math.max(reactFlow.getZoom(), NODE_FOCUS_ZOOM)
+
+      void reactFlow
+        .setCenter(center.x, center.y, { duration: NODE_FOCUS_DURATION, zoom: targetZoom })
+        .then(() => notifyCanvasViewportSync())
+        .catch(() => notifyCanvasViewportSync())
+
+      if (focusNodeFrameRef.current !== null) {
+        window.cancelAnimationFrame(focusNodeFrameRef.current)
+      }
+
+      focusNodeFrameRef.current = window.requestAnimationFrame(() => {
+        focusNodeFrameRef.current = null
+        focusFlowNodeElement(groupId)
+      })
+    },
+    [activeCanvasId, bringGroupToFront, canvas, closeCreateMenu, reactFlow]
+  )
+
   const focusPetTarget = useCallback(
     (target: PetAlertTarget) => {
       pendingPetTargetRef.current = target
@@ -870,7 +1237,7 @@ export function CanvasBoard(): JSX.Element {
     focusPetTarget(target)
   }, [activeCanvasId, canvas, focusPetTarget])
 
-  const deleteSelectedNodes = useCallback(
+  const deleteSelectedComponents = useCallback(
     (componentIds: string[]) => {
       if (!activeCanvasId || componentIds.length === 0) return
 
@@ -883,11 +1250,21 @@ export function CanvasBoard(): JSX.Element {
     [activeCanvasId, closeCreateMenu, removeComponents]
   )
 
-  const duplicateSelectedNodes = useCallback(
-    (componentIds: string[]) => {
-      if (!activeCanvasId || componentIds.length === 0) return
+  const requestDeleteGroups = useCallback(
+    (groupIds: string[]) => {
+      if (groupIds.length === 0) return
+      closeCreateMenu()
+      setPendingDeleteGroupIds(groupIds)
+    },
+    [closeCreateMenu]
+  )
 
-      const duplicatedNodeIds = duplicateComponents(activeCanvasId, componentIds)
+  const duplicateSelectedNodes = useCallback(
+    (componentIds: string[], groupIds: string[]) => {
+      if (!activeCanvasId || (componentIds.length === 0 && groupIds.length === 0)) return
+
+      const duplicated = duplicateSelection(activeCanvasId, componentIds, groupIds)
+      const duplicatedNodeIds = [...duplicated.groupIds, ...duplicated.componentIds]
       if (duplicatedNodeIds.length === 0) return
 
       closeCreateMenu()
@@ -895,24 +1272,54 @@ export function CanvasBoard(): JSX.Element {
       setNodes((currentNodes) => currentNodes.map((node) => (node.selected ? { ...node, selected: false } : node)))
       notifyCanvasViewportSync()
     },
-    [activeCanvasId, closeCreateMenu, duplicateComponents]
+    [activeCanvasId, closeCreateMenu, duplicateSelection]
   )
 
   const clearSelectedNodes = useCallback(
-    (componentIds: string[]) => {
-      if (componentIds.length === 0) return
+    (nodeIds: string[]) => {
+      if (nodeIds.length === 0) return
 
       closeCreateMenu()
-      setNodes((currentNodes) => unselectNodeIds(currentNodes, new Set(componentIds)))
+      setNodes((currentNodes) => unselectNodeIds(currentNodes, new Set(nodeIds)))
       notifyCanvasViewportSync()
     },
     [closeCreateMenu]
   )
 
-  const getSelectedComponentIds = useCallback(() => {
+  const getSelectedNodeIds = useCallback(() => {
     const flowNodes = reactFlow.getNodes()
     return flowNodes.length > 0 ? selectedNodeIds(flowNodes) : selectedNodeIds(nodes)
   }, [nodes, reactFlow])
+
+  const getSelectedCanvasIds = useCallback(() => splitNodeIds(getSelectedNodeIds(), canvas?.groups ?? []), [canvas?.groups, getSelectedNodeIds])
+
+  const createGroupFromSelection = useCallback(() => {
+    if (!activeCanvasId) return
+
+    const { componentIds } = getSelectedCanvasIds()
+    if (componentIds.length === 0) return
+
+    const groupId = createGroup(activeCanvasId, componentIds)
+    if (!groupId) return
+
+    closeCreateMenu()
+    pendingSelectedNodeIdsRef.current = new Set([groupId])
+    setNodes((currentNodes) => currentNodes.map((node) => (node.selected ? { ...node, selected: false } : node)))
+    notifyCanvasViewportSync()
+  }, [activeCanvasId, closeCreateMenu, createGroup, getSelectedCanvasIds])
+
+  const ungroupSelectedGroups = useCallback(() => {
+    if (!activeCanvasId) return
+
+    const { groupIds } = getSelectedCanvasIds()
+    if (groupIds.length === 0) return
+
+    const memberIds = ungroupGroups(activeCanvasId, groupIds)
+    closeCreateMenu()
+    pendingSelectedNodeIdsRef.current = new Set(memberIds)
+    setNodes((currentNodes) => currentNodes.filter((node) => !groupIds.includes(node.id)).map((node) => ({ ...node, selected: false })))
+    notifyCanvasViewportSync()
+  }, [activeCanvasId, closeCreateMenu, getSelectedCanvasIds, ungroupGroups])
 
   const handleCanvasKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -939,47 +1346,76 @@ export function CanvasBoard(): JSX.Element {
         return
       }
 
-      const componentIds = getSelectedComponentIds()
-      if (componentIds.length === 0) return
+      const selectedIds = getSelectedNodeIds()
+      const { componentIds, groupIds } = splitNodeIds(selectedIds, canvas?.groups ?? [])
+      if (selectedIds.length === 0) return
 
-      const selectedComponentIds = new Set(componentIds)
+      const selectedNodeIdSet = new Set(selectedIds)
       if (keyboardEventMatchesShortcut(event, shortcuts.canvasDeselect)) {
-        if (isCanvasShortcutBlocked(event.target, selectedComponentIds, 'deselect')) return
+        if (isCanvasShortcutBlocked(event.target, selectedNodeIdSet, 'deselect')) return
 
         event.preventDefault()
         event.stopPropagation()
-        clearSelectedNodes(componentIds)
+        clearSelectedNodes(selectedIds)
+        return
+      }
+
+      if (keyboardEventMatchesShortcut(event, shortcuts.canvasGroupSelection)) {
+        if (isCanvasShortcutBlocked(event.target, selectedNodeIdSet, 'duplicate')) return
+
+        event.preventDefault()
+        event.stopPropagation()
+        createGroupFromSelection()
+        return
+      }
+
+      if (keyboardEventMatchesShortcut(event, shortcuts.canvasUngroupSelection)) {
+        if (isCanvasShortcutBlocked(event.target, selectedNodeIdSet, 'delete')) return
+
+        event.preventDefault()
+        event.stopPropagation()
+        ungroupSelectedGroups()
         return
       }
 
       if (event.key === 'Delete' && !event.altKey && !event.ctrlKey && !event.metaKey) {
-        if (isCanvasShortcutBlocked(event.target, selectedComponentIds, 'delete')) return
+        if (isCanvasShortcutBlocked(event.target, selectedNodeIdSet, 'delete')) return
 
         event.preventDefault()
         event.stopPropagation()
-        deleteSelectedNodes(componentIds)
+        if (groupIds.length > 0) {
+          requestDeleteGroups(groupIds)
+        } else {
+          deleteSelectedComponents(componentIds)
+        }
         return
       }
 
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'd') {
-        if (isCanvasShortcutBlocked(event.target, selectedComponentIds, 'duplicate')) return
+        if (isCanvasShortcutBlocked(event.target, selectedNodeIdSet, 'duplicate')) return
 
         event.preventDefault()
         event.stopPropagation()
-        duplicateSelectedNodes(componentIds)
+        duplicateSelectedNodes(componentIds, groupIds)
       }
     },
     [
       activeCanvasId,
+      canvas?.groups,
       clearSelectedNodes,
-      deleteSelectedNodes,
+      createGroupFromSelection,
+      deleteSelectedComponents,
       duplicateSelectedNodes,
-      getSelectedComponentIds,
+      getSelectedNodeIds,
       openNodeFinder,
       openCreateMenuAtScreenPosition,
+      requestDeleteGroups,
       shortcuts.canvasCreateComponent,
       shortcuts.canvasDeselect,
-      shortcuts.canvasFind
+      shortcuts.canvasFind,
+      shortcuts.canvasGroupSelection,
+      shortcuts.canvasUngroupSelection,
+      ungroupSelectedGroups
     ]
   )
 
@@ -1047,12 +1483,16 @@ export function CanvasBoard(): JSX.Element {
   )
 
   const handleNodeClick = useCallback(
-    (_: MouseEvent, node: AtlasFlowNode) => {
+    (_: MouseEvent, node: CanvasFlowNode) => {
       if (!activeCanvasId) return
-      bringToFront(activeCanvasId, node.id)
+      if ((canvas?.groups ?? []).some((group) => group.id === node.id)) {
+        bringGroupToFront(activeCanvasId, node.id)
+      } else {
+        bringToFront(activeCanvasId, node.id)
+      }
       notifyCanvasViewportSync()
     },
-    [activeCanvasId, bringToFront]
+    [activeCanvasId, bringGroupToFront, bringToFront, canvas?.groups]
   )
 
   const handleDragOver = useCallback((event: DragEvent) => {
@@ -1099,17 +1539,71 @@ export function CanvasBoard(): JSX.Element {
     [addComponents, closeCreateMenu, reactFlow]
   )
 
+  const groups = canvas?.groups ?? []
+  const selectedCanvasIds = useMemo(() => splitNodeIds(selectedNodeIds(nodes), groups), [groups, nodes])
+  const editingGroup = editingGroupId ? groups.find((group) => group.id === editingGroupId) ?? null : null
+
+  const editSelectedGroup = useCallback(() => {
+    const { groupIds } = getSelectedCanvasIds()
+    if (groupIds.length !== 1) return
+    setEditingGroupId(groupIds[0])
+  }, [getSelectedCanvasIds])
+
+  const saveGroupEdit = useCallback(
+    (groupId: string, patch: { title: string; notes: string }) => {
+      if (!activeCanvasId) return
+      updateGroup(activeCanvasId, groupId, patch, true)
+      setEditingGroupId(null)
+      notifyCanvasViewportSync()
+    },
+    [activeCanvasId, updateGroup]
+  )
+
+  const deletePendingGroupsOnly = useCallback(() => {
+    if (!activeCanvasId || !pendingDeleteGroupIds) return
+
+    const removedIds = new Set(pendingDeleteGroupIds)
+    removeGroups(activeCanvasId, pendingDeleteGroupIds)
+    setPendingDeleteGroupIds(null)
+    setNodes((currentNodes) => currentNodes.filter((node) => !removedIds.has(node.id)))
+    notifyCanvasViewportSync()
+  }, [activeCanvasId, pendingDeleteGroupIds, removeGroups])
+
+  const deletePendingGroupsWithMembers = useCallback(() => {
+    if (!activeCanvasId || !pendingDeleteGroupIds) return
+
+    const memberIds = deleteGroupsWithMembers(activeCanvasId, pendingDeleteGroupIds)
+    const removedIds = new Set([...pendingDeleteGroupIds, ...memberIds])
+    setPendingDeleteGroupIds(null)
+    setNodes((currentNodes) => currentNodes.filter((node) => !removedIds.has(node.id)))
+    notifyCanvasViewportSync()
+  }, [activeCanvasId, deleteGroupsWithMembers, pendingDeleteGroupIds])
+
+  const requestSelectedGroupDelete = useCallback(() => {
+    const { groupIds } = getSelectedCanvasIds()
+    requestDeleteGroups(groupIds)
+  }, [getSelectedCanvasIds, requestDeleteGroups])
+
   if (!canvas) {
     return <main className="canvas-empty" />
   }
 
+  const hasBackgroundImageBlur = canvas.background.image.blur > 0
+  const backgroundImageBlurBleed = Math.ceil(canvas.background.image.blur * BACKGROUND_IMAGE_BLUR_BLEED_MULTIPLIER)
+  const backgroundImageBleedOffset = backgroundImageBlurBleed > 0 ? `-${backgroundImageBlurBleed}px` : '0px'
+  const backgroundImageAttachment = hasBackgroundImageBlur ? 'scroll' : canvas.background.image.fixed ? 'fixed' : 'local'
+  const backgroundImageFit = hasBackgroundImageBlur ? 'cover' : canvas.background.image.fit
   const backgroundImageStyle = canvas.background.image.src
     ? {
         backgroundImage: `url(${canvas.background.image.src})`,
-        opacity: canvas.background.image.opacity,
-        backgroundSize: canvas.background.image.fit,
-        backgroundRepeat: canvas.background.image.fit === 'repeat' ? 'repeat' : 'no-repeat',
-        backgroundAttachment: canvas.background.image.fixed ? 'fixed' : 'local'
+        filter: `blur(${canvas.background.image.blur}px)`,
+        top: backgroundImageBleedOffset,
+        right: backgroundImageBleedOffset,
+        bottom: backgroundImageBleedOffset,
+        left: backgroundImageBleedOffset,
+        backgroundSize: backgroundImageFit,
+        backgroundRepeat: backgroundImageFit === 'repeat' ? 'repeat' : 'no-repeat',
+        backgroundAttachment: backgroundImageAttachment
       }
     : undefined
 
@@ -1122,7 +1616,7 @@ export function CanvasBoard(): JSX.Element {
       ]
         .filter(Boolean)
         .join(' ')}
-      style={{ backgroundColor: canvas.background.color }}
+      style={{ background: canvas.background.color }}
       onPointerEnter={trackPointerPosition}
       onPointerMove={trackPointerPosition}
       onPointerLeave={clearTrackedPointerPosition}
@@ -1151,11 +1645,19 @@ export function CanvasBoard(): JSX.Element {
         deleteKeyCode={null}
         zoomOnDoubleClick={false}
         selectNodesOnDrag={false}
-        fitView={canvas.components.length === 0}
+        fitView={canvas.components.length === 0 && groups.length === 0}
         style={{ backgroundColor: 'transparent' }}
         proOptions={{ hideAttribution: true }}
       >
-        <CanvasZoomControls hasNodes={canvas.components.length > 0} />
+        <CanvasZoomControls hasNodes={canvas.components.length > 0 || groups.length > 0} />
+        <CanvasSelectionToolbar
+          selectedComponentCount={selectedCanvasIds.componentIds.length}
+          selectedGroupCount={selectedCanvasIds.groupIds.length}
+          onCreateGroup={createGroupFromSelection}
+          onEditGroup={editSelectedGroup}
+          onUngroup={ungroupSelectedGroups}
+          onDeleteGroups={requestSelectedGroupDelete}
+        />
         <CanvasCreateMenu
           anchorRef={createMenuAnchorRef}
           open={Boolean(createMenu)}
@@ -1165,10 +1667,19 @@ export function CanvasBoard(): JSX.Element {
         <CanvasNodeFinder
           open={isNodeFinderOpen}
           components={canvas.components}
+          groups={groups}
           onOpenChange={setIsNodeFinderOpen}
-          onSelect={focusComponentNode}
+          onSelect={(result) => (result.type === 'group' ? focusGroupNode(result.id) : focusComponentNode(result.id))}
         />
       </ReactFlow>
+      <CanvasGroupEditDialog group={editingGroup} onClose={() => setEditingGroupId(null)} onSave={saveGroupEdit} />
+      <CanvasGroupDeleteDialog
+        count={pendingDeleteGroupIds?.length ?? 0}
+        open={Boolean(pendingDeleteGroupIds)}
+        onCancel={() => setPendingDeleteGroupIds(null)}
+        onRemoveOnly={deletePendingGroupsOnly}
+        onDeleteMembers={deletePendingGroupsWithMembers}
+      />
     </main>
   )
 }

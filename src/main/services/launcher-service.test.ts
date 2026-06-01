@@ -4,13 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LauncherService } from './launcher-service'
 
 const electronMocks = vi.hoisted(() => ({
+  getFileIcon: vi.fn(),
   ipcHandle: vi.fn(),
   openExternal: vi.fn(() => Promise.resolve()),
   openPath: vi.fn(() => Promise.resolve('')),
+  readShortcutLink: vi.fn(),
   showOpenDialog: vi.fn()
 }))
 
 vi.mock('electron', () => ({
+  app: {
+    getFileIcon: electronMocks.getFileIcon
+  },
   dialog: {
     showOpenDialog: electronMocks.showOpenDialog
   },
@@ -19,7 +24,8 @@ vi.mock('electron', () => ({
   },
   shell: {
     openExternal: electronMocks.openExternal,
-    openPath: electronMocks.openPath
+    openPath: electronMocks.openPath,
+    readShortcutLink: electronMocks.readShortcutLink
   }
 }))
 
@@ -27,9 +33,11 @@ const testRoot = join(process.cwd(), '.atlasos-dev', 'launcher-service-test')
 
 describe('LauncherService', () => {
   beforeEach(async () => {
+    electronMocks.getFileIcon.mockClear()
     electronMocks.ipcHandle.mockClear()
     electronMocks.openExternal.mockClear()
     electronMocks.openPath.mockClear()
+    electronMocks.readShortcutLink.mockClear()
     electronMocks.showOpenDialog.mockClear()
     await rm(testRoot, { recursive: true, force: true })
     await mkdir(testRoot, { recursive: true })
@@ -58,6 +66,109 @@ describe('LauncherService', () => {
     expect(electronMocks.openPath).toHaveBeenCalledWith(folderPath)
   })
 
+  it('returns the selected app path with its native file icon', async () => {
+    const iconDataUrl = 'data:image/png;base64,aWNvbg=='
+    const appPath = join(testRoot, 'tool.exe')
+    const nativeIcon = {
+      isEmpty: vi.fn(() => false),
+      toDataURL: vi.fn(() => iconDataUrl)
+    }
+    electronMocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [appPath]
+    })
+    electronMocks.getFileIcon.mockResolvedValueOnce(nativeIcon)
+
+    const service = new LauncherService()
+    service.registerIpc()
+    const chooseFileHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'launcher:choose-file')?.[1]
+
+    await expect(chooseFileHandler({}, { kind: 'app' })).resolves.toEqual({
+      path: appPath,
+      iconDataUrl
+    })
+    expect(electronMocks.getFileIcon).toHaveBeenCalledWith(appPath, { size: 'normal' })
+  })
+
+  it('resolves Windows shortcuts before reading the selected app icon', async () => {
+    const iconDataUrl = 'data:image/png;base64,dGFyZ2V0LWljb24='
+    const shortcutPath = join(testRoot, 'Docker Desktop.lnk')
+    const appPath = join(testRoot, 'Docker Desktop.exe')
+    const nativeIcon = {
+      isEmpty: vi.fn(() => false),
+      toDataURL: vi.fn(() => iconDataUrl)
+    }
+    electronMocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [shortcutPath]
+    })
+    electronMocks.readShortcutLink.mockReturnValueOnce({
+      target: appPath
+    })
+    electronMocks.getFileIcon.mockResolvedValueOnce(nativeIcon)
+
+    const service = new LauncherService('win32')
+    service.registerIpc()
+    const chooseFileHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'launcher:choose-file')?.[1]
+
+    await expect(chooseFileHandler({}, { kind: 'app' })).resolves.toEqual({
+      path: shortcutPath,
+      iconDataUrl
+    })
+    expect(electronMocks.readShortcutLink).toHaveBeenCalledWith(shortcutPath)
+    expect(electronMocks.getFileIcon).toHaveBeenCalledWith(appPath, { size: 'normal' })
+    expect(electronMocks.getFileIcon).not.toHaveBeenCalledWith(shortcutPath, { size: 'normal' })
+  })
+
+  it('uses a shortcut explicit icon path before falling back to the shortcut target', async () => {
+    const iconDataUrl = 'data:image/png;base64,ZXhwbGljaXQtaWNvbg=='
+    const shortcutPath = join(testRoot, 'Docker Desktop.lnk')
+    const appPath = join(testRoot, 'Docker Desktop.exe')
+    const iconPath = join(testRoot, 'Docker Icon.exe')
+    const nativeIcon = {
+      isEmpty: vi.fn(() => false),
+      toDataURL: vi.fn(() => iconDataUrl)
+    }
+    electronMocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [shortcutPath]
+    })
+    electronMocks.readShortcutLink.mockReturnValueOnce({
+      icon: iconPath,
+      target: appPath
+    })
+    electronMocks.getFileIcon.mockResolvedValueOnce(nativeIcon)
+
+    const service = new LauncherService('win32')
+    service.registerIpc()
+    const chooseFileHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'launcher:choose-file')?.[1]
+
+    await expect(chooseFileHandler({}, { kind: 'app' })).resolves.toEqual({
+      path: shortcutPath,
+      iconDataUrl
+    })
+    expect(electronMocks.getFileIcon).toHaveBeenCalledWith(iconPath, { size: 'normal' })
+    expect(electronMocks.getFileIcon).not.toHaveBeenCalledWith(appPath, { size: 'normal' })
+  })
+
+  it('keeps file selection usable when native icon lookup fails', async () => {
+    const filePath = join(testRoot, 'notes.md')
+    electronMocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [filePath]
+    })
+    electronMocks.getFileIcon.mockRejectedValueOnce(new Error('no icon'))
+
+    const service = new LauncherService()
+    service.registerIpc()
+    const chooseFileHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'launcher:choose-file')?.[1]
+
+    await expect(chooseFileHandler({}, { kind: 'file' })).resolves.toEqual({
+      path: filePath,
+      iconDataUrl: null
+    })
+  })
+
   it('rejects missing paths before asking Electron to open them', async () => {
     const service = new LauncherService()
 
@@ -75,7 +186,7 @@ describe('LauncherService', () => {
     expect(electronMocks.openExternal).toHaveBeenCalledWith('https://example.com/docs')
   })
 
-  it('spawns cmd and PowerShell command windows that remain open', async () => {
+  it('opens cmd and PowerShell commands in visible Windows command line windows', async () => {
     const child = { unref: vi.fn() }
     const spawnProcess = vi.fn(() => child)
     const service = new LauncherService('win32', spawnProcess as never)
@@ -86,7 +197,7 @@ describe('LauncherService', () => {
     expect(spawnProcess).toHaveBeenNthCalledWith(
       1,
       'cmd.exe',
-      ['/d', '/s', '/k', 'echo hi'],
+      ['/d', '/s', '/c', 'start', '', 'cmd.exe', '/d', '/s', '/k', 'echo hi'],
       expect.objectContaining({
         cwd: testRoot,
         detached: true,
@@ -96,8 +207,8 @@ describe('LauncherService', () => {
     )
     expect(spawnProcess).toHaveBeenNthCalledWith(
       2,
-      'powershell.exe',
-      ['-NoLogo', '-NoExit', '-Command', 'Get-ChildItem'],
+      'cmd.exe',
+      ['/d', '/s', '/c', 'start', '', 'powershell.exe', '-NoLogo', '-NoExit', '-Command', 'Get-ChildItem'],
       expect.objectContaining({
         detached: true,
         stdio: 'ignore',

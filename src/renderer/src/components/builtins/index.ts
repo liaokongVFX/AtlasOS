@@ -11,6 +11,8 @@ import { createQuickLauncherDefinition } from './quick-launcher'
 import { createSystemMonitorDefinition } from './system-monitor'
 import { createTerminalDefinition } from './terminal'
 import { createGitManagerDefinition } from './git-manager'
+import { createClaudeHistoryDefinition } from './claude-history'
+import { createCodexHistoryDefinition } from './codex-history'
 
 export function createBuiltInComponentDefinitions(): HostRendererPluginNodeDefinition[] {
   return [
@@ -23,7 +25,9 @@ export function createBuiltInComponentDefinitions(): HostRendererPluginNodeDefin
     createQuickLauncherDefinition(),
     createSystemMonitorDefinition(),
     createCalendarDefinition(),
-    createGitManagerDefinition()
+    createGitManagerDefinition(),
+    createClaudeHistoryDefinition(),
+    createCodexHistoryDefinition()
   ]
 }
 

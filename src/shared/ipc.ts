@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { pluginConfigSchema, pluginIdSchema } from './plugins'
-import { petAlertTargetSchema, petSettingsSchema, PET_AGENT_SOURCES } from './pet'
+import { petAlertTargetSchema, petSettingsSchema } from './pet'
 import { appSettingsSchema, browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
 
 export const MAX_TERMINAL_PASTED_ASSET_BASE64_CHARS = 14 * 1024 * 1024
@@ -101,6 +101,18 @@ export const terminalReadClipboardFilesInputSchema = z.object({})
 
 export const systemMetricsGetInputSchema = z.object({})
 
+export const claudeHistoryListInputSchema = z.object({})
+
+export const claudeHistorySessionInputSchema = z.object({
+  sessionId: z.string().trim().min(1).max(200)
+})
+
+export const codexHistoryListInputSchema = z.object({})
+
+export const codexHistorySessionInputSchema = z.object({
+  sessionId: z.string().trim().min(1).max(200)
+})
+
 export const gitRepositoryInputSchema = z.object({
   repoPath: z.string().min(1)
 })
@@ -169,6 +181,10 @@ export const petAlertInputSchema = z.object({
   alertId: z.string().min(1)
 })
 
+export const petClearAlertsInputSchema = z.object({
+  alertIds: z.array(z.string().min(1)).max(500).optional()
+})
+
 export const petSnoozeAlertInputSchema = petAlertInputSchema.extend({
   minutes: z.number().int().min(1).max(60 * 24 * 14)
 })
@@ -186,22 +202,23 @@ export const petOpenTargetInputSchema = z.object({
   target: petAlertTargetSchema
 })
 
-export const petAgentEventInputSchema = z.object({
-  source: z.enum(PET_AGENT_SOURCES),
-  event: z.enum(['running', 'waiting_for_confirmation', 'completed', 'error']),
-  title: z.string().trim().min(1).max(160).optional(),
-  body: z.string().trim().max(1000).optional(),
-  sessionId: z.string().trim().min(1).optional(),
-  componentId: z.string().trim().min(1).optional(),
-  canvasId: z.string().trim().min(1).optional(),
-  cwd: z.string().trim().min(1).optional()
-})
-
 const launcherPathKindSchema = z.enum(['app', 'file', 'folder'])
+const launcherIconDataUrlSchema = z
+  .string()
+  .trim()
+  .max(512 * 1024)
+  .regex(/^data:image\/png;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/i)
 
 export const launcherChooseFileInputSchema = z.object({
   kind: z.enum(['app', 'file']).default('file')
 })
+
+export const launcherChooseFileResultSchema = z
+  .object({
+    path: z.string().min(1),
+    iconDataUrl: launcherIconDataUrlSchema.nullable()
+  })
+  .nullable()
 
 export const launcherOpenInputSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -273,6 +290,6 @@ export const pluginInvokeInputSchema = pluginIdInputSchema.extend({
 export type SaveCanvasInput = z.infer<typeof saveCanvasInputSchema>
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsInputSchema>
 export type TerminalCreateInput = z.infer<typeof terminalCreateSchema>
+export type LauncherChooseFileResult = z.infer<typeof launcherChooseFileResultSchema>
 export type LauncherOpenInput = z.infer<typeof launcherOpenInputSchema>
-export type PetAgentEventInput = z.infer<typeof petAgentEventInputSchema>
 export type GitDiffInput = z.infer<typeof gitDiffInputSchema>

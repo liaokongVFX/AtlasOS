@@ -11,6 +11,7 @@ export type QuickLauncherPathItem = {
   kind: QuickLauncherPathKind
   name: string
   targetPath: string
+  iconDataUrl?: string
   createdAt: string
   updatedAt: string
 }
@@ -62,6 +63,7 @@ export type QuickLauncherItemInput =
       kind: QuickLauncherPathKind
       name?: string
       targetPath?: string
+      iconDataUrl?: string
     }
   | {
       kind: 'url'
@@ -76,11 +78,6 @@ export type QuickLauncherItemInput =
       cwd?: string
     }
 
-export type QuickLauncherSearchResult = {
-  item: QuickLauncherItem
-  tab: QuickLauncherTab
-}
-
 export const DEFAULT_QUICK_LAUNCHER_TEXT: QuickLauncherText = {
   defaultTabName: 'Favorites',
   defaultItemName: 'Shortcut'
@@ -88,6 +85,8 @@ export const DEFAULT_QUICK_LAUNCHER_TEXT: QuickLauncherText = {
 
 const MAX_ITEM_NAME_LENGTH = 80
 const MAX_TAB_NAME_LENGTH = 48
+const MAX_ICON_DATA_URL_LENGTH = 512 * 1024
+const pngDataUrlPattern = /^data:image\/png;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/i
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -123,6 +122,12 @@ function itemKind(value: unknown): QuickLauncherItemKind | null {
 
 function commandShell(value: unknown): QuickLauncherCommandShell {
   return value === 'cmd' || value === 'powershell' ? value : 'powershell'
+}
+
+function iconDataUrl(value: unknown): string | undefined {
+  const dataUrl = asTrimmedString(value)
+  if (!dataUrl || dataUrl.length > MAX_ICON_DATA_URL_LENGTH || !pngDataUrlPattern.test(dataUrl)) return undefined
+  return dataUrl
 }
 
 function itemNameFallback(input: QuickLauncherItemInput, text: QuickLauncherText): string {
@@ -189,12 +194,14 @@ function normalizeItem(id: string, value: unknown, timestamp: string, text: Quic
 
   const targetPath = asTrimmedString(value.targetPath)
   if (!targetPath) return null
+  const normalizedIconDataUrl = iconDataUrl(value.iconDataUrl)
 
   return {
     id,
     kind,
     name: safeName(value.name, basenameLike(targetPath) || text.defaultItemName),
     targetPath,
+    ...(normalizedIconDataUrl ? { iconDataUrl: normalizedIconDataUrl } : {}),
     createdAt,
     updatedAt
   }
@@ -457,31 +464,6 @@ export function quickLauncherItemSummary(item: QuickLauncherItem): string {
   return item.targetPath
 }
 
-export function searchQuickLauncherItems(state: QuickLauncherState, query: string): QuickLauncherSearchResult[] {
-  const normalizedQuery = query.trim().toLowerCase()
-  if (!normalizedQuery) return []
-
-  return state.tabs.flatMap((tab) =>
-    tab.itemIds
-      .map((itemId) => state.items[itemId])
-      .filter((item): item is QuickLauncherItem => Boolean(item))
-      .filter((item) => {
-        const haystack = [tab.name, item.kind, item.name, quickLauncherItemSummary(item)]
-          .join(' ')
-          .toLowerCase()
-        return haystack.includes(normalizedQuery)
-      })
-      .map((item) => ({ item, tab }))
-  )
-}
-
-export function getQuickLauncherSearchTokens(state: QuickLauncherState): string[] {
-  return [
-    ...state.tabs.map((tab) => tab.name),
-    ...Object.values(state.items).flatMap((item) => [item.name, item.kind, quickLauncherItemSummary(item)])
-  ].filter(Boolean)
-}
-
 export function getQuickLauncherStats(state: QuickLauncherState): { tabCount: number; itemCount: number } {
   return {
     tabCount: state.tabs.length,
@@ -517,11 +499,13 @@ function createItem(id: string, input: QuickLauncherItemInput, timestamp: string
     }
   }
 
+  const normalizedIconDataUrl = iconDataUrl(input.iconDataUrl)
   return {
     id,
     kind: input.kind,
     name,
     targetPath: asTrimmedString(input.targetPath),
+    ...(normalizedIconDataUrl ? { iconDataUrl: normalizedIconDataUrl } : {}),
     createdAt: timestamp,
     updatedAt: timestamp
   }

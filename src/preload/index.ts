@@ -1,9 +1,11 @@
 import { clipboard, contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } from '@shared/plugins'
-import type { GitDiffInput, LauncherOpenInput, PetAgentEventInput } from '@shared/ipc'
+import type { GitDiffInput, LauncherChooseFileResult, LauncherOpenInput } from '@shared/ipc'
 import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
 import type { AppSettings, AtlasAppState, CanvasDocument } from '@shared/schema'
 import type { SystemMetricsSnapshot } from '@shared/system-metrics'
+import type { ClaudeHistoryListResult, ClaudeHistorySessionDetail } from '@shared/claude-history'
+import type { CodexHistoryListResult, CodexHistorySessionDetail } from '@shared/codex-history'
 import type { GitBranchSummary, GitCommitSummary, GitDiffResult, GitOperationResult, GitStashEntry, GitStatusSnapshot, GitSummary } from '@shared/git'
 
 type Listener<T> = (payload: T) => void
@@ -87,8 +89,8 @@ const atlasApi = {
     onWatchEvent: (listener: Listener<{ watchId: string; eventName: string; path: string }>) => on('filesystem:watch-event', listener)
   },
   terminal: {
-    create: (input: { componentId: string; canvasId?: string; title?: string; cwd?: string; shell?: string; cols?: number; rows?: number }) =>
-      ipcRenderer.invoke('terminal:create', input) as Promise<{ sessionId: string; cwd: string; shell: string }>,
+    create: (input: { componentId: string; canvasId?: string; title?: string; cwd?: string; shell?: string; initialCommand?: string; cols?: number; rows?: number }) =>
+      ipcRenderer.invoke('terminal:create', input) as Promise<{ sessionId: string; cwd: string; shell: string; didRunInitialCommand?: boolean }>,
     write: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', { sessionId, data }),
     resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { sessionId, cols, rows }),
     close: (sessionId: string) => ipcRenderer.invoke('terminal:close', { sessionId }),
@@ -115,11 +117,19 @@ const atlasApi = {
     writeText: (text: string) => clipboard.writeText(text)
   },
   launcher: {
-    chooseFile: (input: { kind: 'app' | 'file' }) => ipcRenderer.invoke('launcher:choose-file', input) as Promise<string | null>,
+    chooseFile: (input: { kind: 'app' | 'file' }) => ipcRenderer.invoke('launcher:choose-file', input) as Promise<LauncherChooseFileResult>,
     open: (input: LauncherOpenInput) => ipcRenderer.invoke('launcher:open', input) as Promise<{ ok: true }>
   },
   systemMetrics: {
     get: () => ipcRenderer.invoke('system-metrics:get', {}) as Promise<SystemMetricsSnapshot>
+  },
+  claudeHistory: {
+    list: () => ipcRenderer.invoke('claude-history:list', {}) as Promise<ClaudeHistoryListResult>,
+    getSession: (input: { sessionId: string }) => ipcRenderer.invoke('claude-history:get-session', input) as Promise<ClaudeHistorySessionDetail>
+  },
+  codexHistory: {
+    list: () => ipcRenderer.invoke('codex-history:list', {}) as Promise<CodexHistoryListResult>,
+    getSession: (input: { sessionId: string }) => ipcRenderer.invoke('codex-history:get-session', input) as Promise<CodexHistorySessionDetail>
   },
   git: {
     chooseRepository: (title?: string) => ipcRenderer.invoke('git:choose-repository', { title }) as Promise<string | null>,
@@ -153,11 +163,13 @@ const atlasApi = {
     getState: () => ipcRenderer.invoke('pet:get-state', {}) as Promise<PetRuntimeState>,
     updateSettings: (settings: PetSettings) => ipcRenderer.invoke('pet:update-settings', { settings }) as Promise<PetSettings>,
     ackAlert: (alertId: string) => ipcRenderer.invoke('pet:ack-alert', { alertId }) as Promise<{ ok: true }>,
+    clearAlerts: (alertIds?: string[]) => ipcRenderer.invoke('pet:clear-alerts', alertIds ? { alertIds } : {}) as Promise<{ ok: true }>,
     snoozeAlert: (alertId: string, minutes: number) => ipcRenderer.invoke('pet:snooze-alert', { alertId, minutes }) as Promise<{ ok: true }>,
     setPosition: (position: { x: number; y: number }) => ipcRenderer.invoke('pet:set-position', position) as Promise<{ x: number; y: number }>,
     setInteractive: (interactive: boolean) => ipcRenderer.invoke('pet:set-interactive', { interactive }) as Promise<{ ok: true }>,
     openTarget: (target: PetAlertTarget) => ipcRenderer.invoke('pet:open-target', { target }) as Promise<{ ok: true }>,
-    sendAgentEvent: (event: PetAgentEventInput) => ipcRenderer.invoke('pet:agent-event', event) as Promise<{ ok: true }>,
+    installClaudeHooks: () => ipcRenderer.invoke('pet:install-claude-hooks', {}) as Promise<PetRuntimeState['bridge']['claudeHook']>,
+    installCodexHooks: () => ipcRenderer.invoke('pet:install-codex-hooks', {}) as Promise<PetRuntimeState['bridge']['codexHook']>,
     listAgentSessions: () => ipcRenderer.invoke('pet:list-agent-sessions', {}) as Promise<PetRuntimeState['agentSessions']>,
     onStateUpdated: (listener: Listener<PetRuntimeState>) => on('pet:state-updated', listener)
   },

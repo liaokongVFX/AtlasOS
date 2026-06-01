@@ -1,10 +1,6 @@
 import { Rocket } from 'lucide-react'
 import { QuickLauncherComponent } from '../modules/quick-launcher-component'
-import {
-  getQuickLauncherSearchTokens,
-  getQuickLauncherStats,
-  normalizeQuickLauncherState
-} from '../modules/quick-launcher-model'
+import { getQuickLauncherStats, normalizeQuickLauncherState } from '../modules/quick-launcher-model'
 import type { HostRendererPluginNodeDefinition } from '../../plugins/registration'
 import { builtInNodeMeta } from './shared'
 
@@ -17,7 +13,6 @@ export function createQuickLauncherDefinition(): HostRendererPluginNodeDefinitio
       const stats = getQuickLauncherStats(normalizeQuickLauncherState(component.state))
       return `${stats.itemCount} shortcuts`
     },
-    getSearchTokens: (component) => getQuickLauncherSearchTokens(normalizeQuickLauncherState(component.state)),
     getResizeBehavior: () => ({
       minWidth: 460,
       minHeight: 360

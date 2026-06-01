@@ -1,4 +1,4 @@
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rm, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ATLAS_SCHEMA_VERSION } from '@shared/constants'
@@ -39,7 +39,9 @@ describe('AppSettingsService', () => {
       shortcuts: {
         canvasDeselect: 'Ctrl+Q',
         canvasFind: 'Ctrl+F',
-        canvasCreateComponent: 'Tab'
+        canvasCreateComponent: 'Tab',
+        canvasGroupSelection: 'Ctrl+G',
+        canvasUngroupSelection: 'Ctrl+Shift+G'
       },
       pet: {
         enabled: true,
@@ -49,8 +51,20 @@ describe('AppSettingsService', () => {
         size: 72,
         kanban: { enabled: true },
         agentBridge: { enabled: true },
-        assetPack: { id: 'atlas-orb', name: 'Atlas Orb', idleSrc: '', idleKind: 'image', attentionSrc: '', attentionKind: 'image' },
-        actionMap: { idle: 'float', attention: 'pulse' }
+        assetPack: {
+          id: 'atlas-orb',
+          name: 'Atlas Orb',
+          idleSrc: '',
+          idleKind: 'image',
+          idleSprite: { frameCount: 8, fps: 8 },
+          runningSrc: '',
+          runningKind: 'image',
+          runningSprite: { frameCount: 8, fps: 8 },
+          attentionSrc: '',
+          attentionKind: 'image',
+          attentionSprite: { frameCount: 8, fps: 8 }
+        },
+        actionMap: { idle: 'float', running: 'bounce', attention: 'pulse' }
       }
     })
   })
@@ -64,7 +78,9 @@ describe('AppSettingsService', () => {
       shortcuts: {
         canvasDeselect: 'ctrl + shift + x',
         canvasFind: 'alt + f',
-        canvasCreateComponent: 'ctrl + alt + space'
+        canvasCreateComponent: 'ctrl + alt + space',
+        canvasGroupSelection: 'ctrl + g',
+        canvasUngroupSelection: 'ctrl + shift + g'
       },
       pet: {
         enabled: false,
@@ -74,8 +90,20 @@ describe('AppSettingsService', () => {
         size: 80,
         kanban: { enabled: true },
         agentBridge: { enabled: false },
-        assetPack: { id: 'atlas-orb', name: 'Atlas Orb', idleSrc: '', idleKind: 'image', attentionSrc: '', attentionKind: 'image' },
-        actionMap: { idle: 'float', attention: 'pulse' }
+        assetPack: {
+          id: 'atlas-orb',
+          name: 'Atlas Orb',
+          idleSrc: '',
+          idleKind: 'image',
+          idleSprite: { frameCount: 8, fps: 8 },
+          runningSrc: '',
+          runningKind: 'image',
+          runningSprite: { frameCount: 8, fps: 8 },
+          attentionSrc: '',
+          attentionKind: 'image',
+          attentionSprite: { frameCount: 8, fps: 8 }
+        },
+        actionMap: { idle: 'float', running: 'bounce', attention: 'pulse' }
       }
     })
 
@@ -85,7 +113,9 @@ describe('AppSettingsService', () => {
       shortcuts: {
         canvasDeselect: 'Ctrl+Shift+X',
         canvasFind: 'Alt+F',
-        canvasCreateComponent: 'Ctrl+Alt+Space'
+        canvasCreateComponent: 'Ctrl+Alt+Space',
+        canvasGroupSelection: 'Ctrl+G',
+        canvasUngroupSelection: 'Ctrl+Shift+G'
       },
       pet: {
         enabled: false,
@@ -95,9 +125,43 @@ describe('AppSettingsService', () => {
         size: 80,
         kanban: { enabled: true },
         agentBridge: { enabled: false },
-        assetPack: { id: 'atlas-orb', name: 'Atlas Orb', idleSrc: '', idleKind: 'image', attentionSrc: '', attentionKind: 'image' },
-        actionMap: { idle: 'float', attention: 'pulse' }
+        assetPack: {
+          id: 'atlas-orb',
+          name: 'Atlas Orb',
+          idleSrc: '',
+          idleKind: 'image',
+          idleSprite: { frameCount: 8, fps: 8 },
+          runningSrc: '',
+          runningKind: 'image',
+          runningSprite: { frameCount: 8, fps: 8 },
+          attentionSrc: '',
+          attentionKind: 'image',
+          attentionSprite: { frameCount: 8, fps: 8 }
+        },
+        actionMap: { idle: 'float', running: 'bounce', attention: 'pulse' }
       }
     })
+  })
+
+  it('serializes concurrent settings writes', async () => {
+    const service = new AppSettingsService()
+    const baseSettings = await service.getSettings()
+
+    await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        service.updateSettings({
+          ...baseSettings,
+          pet: {
+            ...baseSettings.pet,
+            position: { x: 40 + index, y: 140 + index }
+          }
+        })
+      )
+    )
+
+    const settings = await new AppSettingsService().getSettings()
+    expect(settings.pet.position).toEqual({ x: 59, y: 159 })
+    const files = await readdir(join(userDataPath, 'app-settings'))
+    expect(files.filter((file) => file.endsWith('.tmp'))).toEqual([])
   })
 })

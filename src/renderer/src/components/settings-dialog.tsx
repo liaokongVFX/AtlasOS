@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { BellRing, Bot, Check, ChevronDown, Puzzle, Settings, SlidersHorizontal, Upload, X, type LucideIcon } from 'lucide-react'
+import { BellRing, Bot, Check, ChevronDown, Puzzle, Settings, SlidersHorizontal, Trash2, Upload, X, type LucideIcon } from 'lucide-react'
 import { DEFAULT_APP_SHORTCUTS } from '@shared/constants'
-import type { PetRuntimeState, PetSettings } from '@shared/pet'
+import { DEFAULT_PET_SPRITE_ANIMATION, type PetRuntimeState, type PetSettings } from '@shared/pet'
 import { localAssetUrl } from '@shared/local-assets'
 import {
   formatKeyboardShortcut,
@@ -40,6 +40,11 @@ type PetSettingsPatch = Partial<Omit<PetSettings, 'kanban' | 'agentBridge' | 'as
   actionMap?: Partial<PetSettings['actionMap']>
 }
 
+type PetHookInstallStatus = PetRuntimeState['bridge']['claudeHook']
+type PetHookProvider = 'claude' | 'codex'
+type PetAssetSlot = 'idle' | 'running' | 'attention'
+type PetImportedAssetKind = 'media' | 'sprite'
+
 const PET_ACTION_OPTIONS = [
   { value: 'none', labelKey: 'settings.petActionNone' },
   { value: 'float', labelKey: 'settings.petActionFloat' },
@@ -50,7 +55,7 @@ const PET_ACTION_OPTIONS = [
 
 type PetAction = PetSettings['actionMap']['idle']
 
-function petMediaKind(path: string): PetSettings['assetPack']['idleKind'] {
+function petMediaKind(path: string): Exclude<PetSettings['assetPack']['idleKind'], 'sprite'> {
   return /\.webm$/i.test(path) ? 'video' : 'image'
 }
 
@@ -65,16 +70,28 @@ function petAssetName(src: string, fallback: string): string {
   }
 }
 
+function petAssetLabel(src: string, kind: PetSettings['assetPack']['idleKind'], fallback: string, spriteLabel: string): string {
+  const name = petAssetName(src, fallback)
+  return kind === 'sprite' ? `${name} - ${spriteLabel}` : name
+}
+
+function boundedNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(Math.round(value), min), max)
+}
+
 function PetAssetImportControl({
+  accept = 'image/png,image/gif,image/webp,video/webm,.png,.gif,.webp,.webm',
+  buttonLabel,
   disabled = false,
   label,
   onImport
 }: {
+  accept?: string
+  buttonLabel: string
   disabled?: boolean
   label: string
   onImport: (files: FileList | null) => void
 }): JSX.Element {
-  const { t } = useI18n()
   const inputRef = useRef<HTMLInputElement>(null)
 
   return (
@@ -83,7 +100,7 @@ function PetAssetImportControl({
         ref={inputRef}
         className="settings-pet-file-input"
         type="file"
-        accept="image/png,image/gif,image/webp,video/webm,.png,.gif,.webp,.webm"
+        accept={accept}
         disabled={disabled}
         tabIndex={-1}
         aria-hidden="true"
@@ -96,11 +113,11 @@ function PetAssetImportControl({
         type="button"
         className="settings-pet-file-button"
         disabled={disabled}
-        aria-label={`${label} ${t('common.browse')}`}
+        aria-label={`${label} ${buttonLabel}`}
         onClick={() => inputRef.current?.click()}
       >
         <Upload size={14} aria-hidden="true" />
-        <span>{t('common.browse')}</span>
+        <span>{buttonLabel}</span>
       </button>
     </div>
   )
@@ -154,6 +171,87 @@ function PetActionPicker({
   )
 }
 
+function PetSpriteFields({
+  disabled = false,
+  fps,
+  frameCount,
+  onChange
+}: {
+  disabled?: boolean
+  fps: number
+  frameCount: number
+  onChange: (patch: Partial<PetSettings['assetPack']['idleSprite']>) => void
+}): JSX.Element {
+  const { t } = useI18n()
+
+  return (
+    <span className="settings-pet-sprite-fields">
+      <label>
+        <span>{t('settings.petSpriteFrameCount')}</span>
+        <input
+          type="number"
+          min={1}
+          max={64}
+          value={frameCount}
+          disabled={disabled}
+          onChange={(event) => {
+            if (!Number.isFinite(event.currentTarget.valueAsNumber)) return
+            onChange({ frameCount: boundedNumber(event.currentTarget.valueAsNumber, 1, 64) })
+          }}
+        />
+      </label>
+      <label>
+        <span>{t('settings.petSpriteFps')}</span>
+        <input
+          type="number"
+          min={1}
+          max={30}
+          value={fps}
+          disabled={disabled}
+          onChange={(event) => {
+            if (!Number.isFinite(event.currentTarget.valueAsNumber)) return
+            onChange({ fps: boundedNumber(event.currentTarget.valueAsNumber, 1, 30) })
+          }}
+        />
+      </label>
+    </span>
+  )
+}
+
+function PetHookStatusRow({
+  disabled = false,
+  installing = false,
+  installLabelKey,
+  installedLabelKey,
+  missingLabelKey,
+  onInstall,
+  repairLabelKey,
+  status
+}: {
+  disabled?: boolean
+  installing?: boolean
+  installLabelKey: I18nKey
+  installedLabelKey: I18nKey
+  missingLabelKey: I18nKey
+  onInstall: () => void
+  repairLabelKey: I18nKey
+  status: PetHookInstallStatus
+}): JSX.Element {
+  const { t } = useI18n()
+
+  return (
+    <div className="settings-pet-hook-row">
+      <span>
+        <strong>{status.installed ? t(installedLabelKey) : t(missingLabelKey)}</strong>
+        <small>{status.issue || `${t('settings.petHookPath')} ${status.settingsPath}`}</small>
+      </span>
+      <button type="button" className="settings-pet-file-button" disabled={disabled || installing} onClick={onInstall}>
+        {installing ? t('saveState.saving') : status.installed ? t(repairLabelKey) : t(installLabelKey)}
+      </button>
+    </div>
+  )
+}
+
 function EmptySettingsPanel({ id, titleKey, messageKey }: EmptySettingsPanelProps): JSX.Element {
   const { t } = useI18n()
   const titleId = `settings-${id}-title`
@@ -173,7 +271,9 @@ type ShortcutErrors = Partial<Record<keyof AppShortcutSettings, I18nKey>>
 const SHORTCUT_FIELDS = [
   { key: 'canvasDeselect', labelKey: 'settings.shortcutDeselectNodes' },
   { key: 'canvasFind', labelKey: 'settings.shortcutFindNodes' },
-  { key: 'canvasCreateComponent', labelKey: 'settings.shortcutCreateComponent' }
+  { key: 'canvasCreateComponent', labelKey: 'settings.shortcutCreateComponent' },
+  { key: 'canvasGroupSelection', labelKey: 'settings.shortcutGroupSelection' },
+  { key: 'canvasUngroupSelection', labelKey: 'settings.shortcutUngroupSelection' }
 ] as const satisfies readonly { key: keyof AppShortcutSettings; labelKey: I18nKey }[]
 
 function validateShortcutDraft(draft: AppShortcutSettings): { errors: ShortcutErrors; shortcuts: AppShortcutSettings | null } {
@@ -354,6 +454,7 @@ function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
   const { t } = useI18n()
   const [runtimeState, setRuntimeState] = useState<PetRuntimeState | null>(null)
   const [saving, setSaving] = useState(false)
+  const [installingHook, setInstallingHook] = useState<PetHookProvider | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -389,15 +490,29 @@ function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
     }
   }
 
-  const hookSnippet = runtimeState
-    ? [
-        `POST http://127.0.0.1:${runtimeState.bridge.port}/agent-event`,
-        `x-atlas-pet-token: ${runtimeState.bridge.token}`,
-        '{"source":"codex","event":"waiting_for_confirmation","title":"Codex needs approval"}'
-      ].join('\n')
-    : ''
+  const installProviderHooks = async (provider: PetHookProvider): Promise<void> => {
+    setInstallingHook(provider)
+    setError(null)
 
-  const importPetAsset = async (slot: 'idle' | 'attention', files: FileList | null): Promise<void> => {
+    try {
+      if (provider === 'claude') {
+        const claudeHook = await window.atlas.pet.installClaudeHooks()
+        setRuntimeState((current) => (current ? { ...current, bridge: { ...current.bridge, claudeHook } } : current))
+      } else {
+        const codexHook = await window.atlas.pet.installCodexHooks()
+        setRuntimeState((current) => (current ? { ...current, bridge: { ...current.bridge, codexHook } } : current))
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError))
+    } finally {
+      setInstallingHook(null)
+    }
+  }
+
+  const claudeHook = runtimeState?.bridge.claudeHook
+  const codexHook = runtimeState?.bridge.codexHook
+
+  const importPetAsset = async (slot: PetAssetSlot, kind: PetImportedAssetKind, files: FileList | null): Promise<void> => {
     const file = files?.[0]
     if (!file) return
 
@@ -414,13 +529,58 @@ function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
     const src = localAssetUrl(path, path)
     if (slot === 'idle') {
       patch.idleSrc = src
-      patch.idleKind = petMediaKind(file.name || path)
+      patch.idleKind = kind === 'sprite' ? 'sprite' : petMediaKind(file.name || path)
+      if (kind === 'sprite') patch.idleSprite = DEFAULT_PET_SPRITE_ANIMATION
+    } else if (slot === 'running') {
+      patch.runningSrc = src
+      patch.runningKind = kind === 'sprite' ? 'sprite' : petMediaKind(file.name || path)
+      if (kind === 'sprite') patch.runningSprite = DEFAULT_PET_SPRITE_ANIMATION
     } else {
       patch.attentionSrc = src
-      patch.attentionKind = petMediaKind(file.name || path)
+      patch.attentionKind = kind === 'sprite' ? 'sprite' : petMediaKind(file.name || path)
+      if (kind === 'sprite') patch.attentionSprite = DEFAULT_PET_SPRITE_ANIMATION
     }
 
     await updatePetSettings({ assetPack: patch })
+  }
+
+  const clearPetAsset = (slot: PetAssetSlot): void => {
+    const patch: Partial<PetSettings['assetPack']> =
+      slot === 'idle'
+        ? { idleSrc: '', idleKind: 'image', idleSprite: DEFAULT_PET_SPRITE_ANIMATION }
+        : slot === 'running'
+          ? { runningSrc: '', runningKind: 'image', runningSprite: DEFAULT_PET_SPRITE_ANIMATION }
+          : { attentionSrc: '', attentionKind: 'image', attentionSprite: DEFAULT_PET_SPRITE_ANIMATION }
+
+    void updatePetSettings({ assetPack: patch })
+  }
+
+  const updateSpriteSettings = (slot: PetAssetSlot, patch: Partial<PetSettings['assetPack']['idleSprite']>): void => {
+    if (!runtimeState) return
+
+    if (slot === 'idle') {
+      void updatePetSettings({
+        assetPack: {
+          idleSprite: { ...runtimeState.settings.assetPack.idleSprite, ...patch }
+        }
+      })
+      return
+    }
+
+    if (slot === 'running') {
+      void updatePetSettings({
+        assetPack: {
+          runningSprite: { ...runtimeState.settings.assetPack.runningSprite, ...patch }
+        }
+      })
+      return
+    }
+
+    void updatePetSettings({
+      assetPack: {
+        attentionSprite: { ...runtimeState.settings.assetPack.attentionSprite, ...patch }
+      }
+    })
   }
 
   return (
@@ -474,7 +634,31 @@ function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
           <h3>{t('settings.petHookBridge')}</h3>
           <p>{t('settings.petHookBridgeDescription')}</p>
         </div>
-        <pre className="settings-code-block">{hookSnippet || t('settings.petHookBridgeUnavailable')}</pre>
+        {claudeHook ? (
+          <PetHookStatusRow
+            disabled={!runtimeState || saving}
+            installing={installingHook === 'claude'}
+            installLabelKey="settings.petClaudeHookInstall"
+            installedLabelKey="settings.petClaudeHookInstalled"
+            missingLabelKey="settings.petClaudeHookMissing"
+            onInstall={() => void installProviderHooks('claude')}
+            repairLabelKey="settings.petClaudeHookRepair"
+            status={claudeHook}
+          />
+        ) : null}
+        {codexHook ? (
+          <PetHookStatusRow
+            disabled={!runtimeState || saving}
+            installing={installingHook === 'codex'}
+            installLabelKey="settings.petCodexHookInstall"
+            installedLabelKey="settings.petCodexHookInstalled"
+            missingLabelKey="settings.petCodexHookMissing"
+            onInstall={() => void installProviderHooks('codex')}
+            repairLabelKey="settings.petCodexHookRepair"
+            status={codexHook}
+          />
+        ) : null}
+        {!claudeHook && !codexHook ? <p className="settings-muted">{t('settings.petHookBridgeUnavailable')}</p> : null}
       </div>
 
       <div className="general-settings__section">
@@ -486,24 +670,140 @@ function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
           <div className="settings-pet-asset-row">
             <span>
               <strong>{t('settings.petIdleAsset')}</strong>
-              <small>{petAssetName(runtimeState?.settings.assetPack.idleSrc ?? '', t('settings.petDefaultAssetName'))}</small>
+              <small>
+                {petAssetLabel(
+                  runtimeState?.settings.assetPack.idleSrc ?? '',
+                  runtimeState?.settings.assetPack.idleKind ?? 'image',
+                  t('settings.petDefaultAssetName'),
+                  t('settings.petSpriteSheet')
+                )}
+              </small>
+              {runtimeState?.settings.assetPack.idleKind === 'sprite' ? (
+                <PetSpriteFields
+                  disabled={saving}
+                  frameCount={runtimeState.settings.assetPack.idleSprite.frameCount}
+                  fps={runtimeState.settings.assetPack.idleSprite.fps}
+                  onChange={(patch) => updateSpriteSettings('idle', patch)}
+                />
+              ) : null}
             </span>
-            <PetAssetImportControl
-              label={t('settings.petIdleAsset')}
-              disabled={!runtimeState || saving}
-              onImport={(files) => void importPetAsset('idle', files)}
-            />
+            <div className="settings-pet-import-actions">
+              <PetAssetImportControl
+                label={t('settings.petIdleAsset')}
+                buttonLabel={t('common.browse')}
+                disabled={!runtimeState || saving}
+                onImport={(files) => void importPetAsset('idle', 'media', files)}
+              />
+              <PetAssetImportControl
+                label={t('settings.petIdleAsset')}
+                buttonLabel={t('settings.petSpriteBrowse')}
+                accept="image/png,image/webp,.png,.webp"
+                disabled={!runtimeState || saving}
+                onImport={(files) => void importPetAsset('idle', 'sprite', files)}
+              />
+              <button
+                type="button"
+                className="settings-pet-file-button"
+                disabled={!runtimeState?.settings.assetPack.idleSrc || saving}
+                aria-label={`${t('settings.petIdleAsset')} ${t('settings.petClearAsset')}`}
+                onClick={() => clearPetAsset('idle')}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                <span>{t('settings.petClearAsset')}</span>
+              </button>
+            </div>
+          </div>
+          <div className="settings-pet-asset-row">
+            <span>
+              <strong>{t('settings.petRunningAsset')}</strong>
+              <small>
+                {petAssetLabel(
+                  runtimeState?.settings.assetPack.runningSrc ?? '',
+                  runtimeState?.settings.assetPack.runningKind ?? 'image',
+                  t('settings.petDefaultAssetName'),
+                  t('settings.petSpriteSheet')
+                )}
+              </small>
+              {runtimeState?.settings.assetPack.runningKind === 'sprite' ? (
+                <PetSpriteFields
+                  disabled={saving}
+                  frameCount={runtimeState.settings.assetPack.runningSprite.frameCount}
+                  fps={runtimeState.settings.assetPack.runningSprite.fps}
+                  onChange={(patch) => updateSpriteSettings('running', patch)}
+                />
+              ) : null}
+            </span>
+            <div className="settings-pet-import-actions">
+              <PetAssetImportControl
+                label={t('settings.petRunningAsset')}
+                buttonLabel={t('common.browse')}
+                disabled={!runtimeState || saving}
+                onImport={(files) => void importPetAsset('running', 'media', files)}
+              />
+              <PetAssetImportControl
+                label={t('settings.petRunningAsset')}
+                buttonLabel={t('settings.petSpriteBrowse')}
+                accept="image/png,image/webp,.png,.webp"
+                disabled={!runtimeState || saving}
+                onImport={(files) => void importPetAsset('running', 'sprite', files)}
+              />
+              <button
+                type="button"
+                className="settings-pet-file-button"
+                disabled={!runtimeState?.settings.assetPack.runningSrc || saving}
+                aria-label={`${t('settings.petRunningAsset')} ${t('settings.petClearAsset')}`}
+                onClick={() => clearPetAsset('running')}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                <span>{t('settings.petClearAsset')}</span>
+              </button>
+            </div>
           </div>
           <div className="settings-pet-asset-row">
             <span>
               <strong>{t('settings.petAttentionAsset')}</strong>
-              <small>{petAssetName(runtimeState?.settings.assetPack.attentionSrc ?? '', t('settings.petDefaultAssetName'))}</small>
+              <small>
+                {petAssetLabel(
+                  runtimeState?.settings.assetPack.attentionSrc ?? '',
+                  runtimeState?.settings.assetPack.attentionKind ?? 'image',
+                  t('settings.petDefaultAssetName'),
+                  t('settings.petSpriteSheet')
+                )}
+              </small>
+              {runtimeState?.settings.assetPack.attentionKind === 'sprite' ? (
+                <PetSpriteFields
+                  disabled={saving}
+                  frameCount={runtimeState.settings.assetPack.attentionSprite.frameCount}
+                  fps={runtimeState.settings.assetPack.attentionSprite.fps}
+                  onChange={(patch) => updateSpriteSettings('attention', patch)}
+                />
+              ) : null}
             </span>
-            <PetAssetImportControl
-              label={t('settings.petAttentionAsset')}
-              disabled={!runtimeState || saving}
-              onImport={(files) => void importPetAsset('attention', files)}
-            />
+            <div className="settings-pet-import-actions">
+              <PetAssetImportControl
+                label={t('settings.petAttentionAsset')}
+                buttonLabel={t('common.browse')}
+                disabled={!runtimeState || saving}
+                onImport={(files) => void importPetAsset('attention', 'media', files)}
+              />
+              <PetAssetImportControl
+                label={t('settings.petAttentionAsset')}
+                buttonLabel={t('settings.petSpriteBrowse')}
+                accept="image/png,image/webp,.png,.webp"
+                disabled={!runtimeState || saving}
+                onImport={(files) => void importPetAsset('attention', 'sprite', files)}
+              />
+              <button
+                type="button"
+                className="settings-pet-file-button"
+                disabled={!runtimeState?.settings.assetPack.attentionSrc || saving}
+                aria-label={`${t('settings.petAttentionAsset')} ${t('settings.petClearAsset')}`}
+                onClick={() => clearPetAsset('attention')}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                <span>{t('settings.petClearAsset')}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -524,6 +824,18 @@ function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
               value={runtimeState?.settings.actionMap.idle ?? 'float'}
               disabled={!runtimeState || saving}
               onChange={(action) => void updatePetSettings({ actionMap: { idle: action } })}
+            />
+          </div>
+          <div className="settings-pet-action-row">
+            <span>
+              <strong>{t('settings.petRunningMotion')}</strong>
+              <small>{t('settings.petRunningMotionDescription')}</small>
+            </span>
+            <PetActionPicker
+              label={t('settings.petRunningMotion')}
+              value={runtimeState?.settings.actionMap.running ?? 'bounce'}
+              disabled={!runtimeState || saving}
+              onChange={(action) => void updatePetSettings({ actionMap: { running: action } })}
             />
           </div>
           <div className="settings-pet-action-row">
@@ -615,7 +927,7 @@ export function SettingsDialog({ showTrigger = true }: SettingsDialogProps): JSX
       ) : null}
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content settings-dialog">
+        <Dialog.Content className="dialog-content settings-dialog" onInteractOutside={(event) => event.preventDefault()}>
           <div className="settings-dialog__header">
             <div>
               <Dialog.Title className="dialog-title">{t('settings.open')}</Dialog.Title>

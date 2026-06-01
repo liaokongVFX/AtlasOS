@@ -20,7 +20,9 @@ export const CREATABLE_BUILTIN_COMPONENT_TYPES = [
   'quick-launcher',
   'system-monitor',
   'calendar',
-  'git-manager'
+  'git-manager',
+  'claude-history',
+  'codex-history'
 ] as const satisfies readonly BuiltInComponentType[]
 
 export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefinitionMeta> = {
@@ -101,6 +103,22 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     titleKey: 'component.gitManager',
     defaultFrame: { x: 220, y: 180, width: 980, height: 680 },
     permissions: ['git:read', 'git:write', 'git:network'],
+    creatable: true
+  },
+  'claude-history': {
+    type: 'claude-history',
+    title: 'Claude History',
+    titleKey: 'component.claudeHistory',
+    defaultFrame: { x: 240, y: 180, width: 1040, height: 680 },
+    permissions: ['claude:history', 'pty:spawn', 'pty:write'],
+    creatable: true
+  },
+  'codex-history': {
+    type: 'codex-history',
+    title: 'Codex History',
+    titleKey: 'component.codexHistory',
+    defaultFrame: { x: 260, y: 200, width: 1040, height: 680 },
+    permissions: ['codex:history', 'pty:spawn', 'pty:write'],
     creatable: true
   }
 }

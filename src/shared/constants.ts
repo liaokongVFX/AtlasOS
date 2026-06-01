@@ -14,7 +14,9 @@ export const BUILTIN_COMPONENT_TYPES = [
   'quick-launcher',
   'system-monitor',
   'calendar',
-  'git-manager'
+  'git-manager',
+  'claude-history',
+  'codex-history'
 ] as const
 export const COMPONENT_TYPES = BUILTIN_COMPONENT_TYPES
 export type BuiltInComponentType = (typeof BUILTIN_COMPONENT_TYPES)[number]
@@ -23,7 +25,7 @@ export const DEFAULT_CANVAS_BACKGROUND = {
   color: '#010102',
   image: {
     src: '',
-    opacity: 0.35,
+    blur: 0,
     fit: 'cover',
     fixed: true
   }
@@ -38,5 +40,7 @@ export const DEFAULT_VIEWPORT = {
 export const DEFAULT_APP_SHORTCUTS = {
   canvasDeselect: 'Ctrl+Q',
   canvasFind: 'Ctrl+F',
-  canvasCreateComponent: 'Tab'
+  canvasCreateComponent: 'Tab',
+  canvasGroupSelection: 'Ctrl+G',
+  canvasUngroupSelection: 'Ctrl+Shift+G'
 } as const

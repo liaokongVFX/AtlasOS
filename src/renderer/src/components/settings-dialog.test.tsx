@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS } from '@shared/constants'
 import { DEFAULT_PET_SETTINGS } from '@shared/pet'
+import { localAssetUrl } from '@shared/local-assets'
 import { ATLAS_PLUGIN_API_VERSION, type PluginInfo } from '@shared/plugins'
 import { I18nContext, setCurrentLocale, translate, type Locale } from '../i18n'
 import { useAppSettingsStore } from '../store/app-settings-store'
@@ -68,6 +69,7 @@ const pluginApi = {
 }
 const filesystemApi = {
   chooseDirectory: vi.fn(),
+  getPathForFile: vi.fn(),
   revealInFolder: vi.fn()
 }
 const appSettingsApi = {
@@ -80,6 +82,8 @@ const appApi = {
 const petApi = {
   getState: vi.fn(),
   updateSettings: vi.fn(),
+  installClaudeHooks: vi.fn(),
+  installCodexHooks: vi.fn(),
   onStateUpdated: vi.fn()
 }
 
@@ -129,9 +133,49 @@ describe('SettingsDialog', () => {
       settings: { ...DEFAULT_PET_SETTINGS },
       alerts: [],
       agentSessions: [],
-      bridge: { enabled: true, port: 14201, token: 'test-token' }
+      bridge: {
+        enabled: true,
+        port: 14201,
+        token: 'test-token',
+        claudeHook: {
+          installed: false,
+          settingsPath: 'C:\\Users\\xhwz2\\.claude\\settings.json',
+          command: 'node',
+          args: ['D:\\AtlasOS\\agent-hook-forwarder.cjs', 'claude'],
+          displayCommand: 'node "D:\\AtlasOS\\agent-hook-forwarder.cjs" "claude"',
+          events: ['SessionStart'],
+          installedEvents: []
+        },
+        codexHook: {
+          installed: false,
+          settingsPath: 'C:\\Users\\xhwz2\\.codex\\hooks.json',
+          command: 'node "D:\\AtlasOS\\agent-hook-forwarder.cjs" codex',
+          args: [],
+          displayCommand: 'node "D:\\AtlasOS\\agent-hook-forwarder.cjs" codex',
+          events: ['SessionStart'],
+          installedEvents: []
+        }
+      }
     })
     petApi.updateSettings.mockImplementation(async (settings) => settings)
+    petApi.installClaudeHooks.mockResolvedValue({
+      installed: true,
+      settingsPath: 'C:\\Users\\xhwz2\\.claude\\settings.json',
+      command: 'node',
+      args: ['D:\\AtlasOS\\agent-hook-forwarder.cjs', 'claude'],
+      displayCommand: 'node "D:\\AtlasOS\\agent-hook-forwarder.cjs" "claude"',
+      events: ['SessionStart'],
+      installedEvents: ['SessionStart']
+    })
+    petApi.installCodexHooks.mockResolvedValue({
+      installed: true,
+      settingsPath: 'C:\\Users\\xhwz2\\.codex\\hooks.json',
+      command: 'node "D:\\AtlasOS\\agent-hook-forwarder.cjs" codex',
+      args: [],
+      displayCommand: 'node "D:\\AtlasOS\\agent-hook-forwarder.cjs" codex',
+      events: ['SessionStart'],
+      installedEvents: ['SessionStart']
+    })
     petApi.onStateUpdated.mockReturnValue(() => undefined)
 
     Object.defineProperty(window, 'atlas', {
@@ -161,7 +205,25 @@ describe('SettingsDialog', () => {
     expect(screen.getByLabelText('Deselect nodes')).toHaveValue('Ctrl+Q')
     expect(screen.getByLabelText('Find nodes')).toHaveValue('Ctrl+F')
     expect(screen.getByLabelText('Open create menu')).toHaveValue('Tab')
+    expect(screen.getByLabelText('Group selected nodes')).toHaveValue('Ctrl+G')
+    expect(screen.getByLabelText('Ungroup selected groups')).toHaveValue('Ctrl+Shift+G')
     expect(pluginApi.list).not.toHaveBeenCalled()
+  })
+
+  it('keeps the settings dialog open when the overlay is clicked', () => {
+    renderSettingsDialog()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+
+    const overlay = document.querySelector('.dialog-overlay')
+    expect(overlay).toBeInTheDocument()
+
+    fireEvent.pointerDown(overlay!)
+    fireEvent.click(overlay!)
+
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close settings' }))
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument()
   })
 
   it('saves custom general shortcut settings', async () => {
@@ -171,6 +233,8 @@ describe('SettingsDialog', () => {
     fireEvent.change(screen.getByLabelText('Deselect nodes'), { target: { value: 'Ctrl+Shift+X' } })
     fireEvent.change(screen.getByLabelText('Find nodes'), { target: { value: 'Alt+F' } })
     fireEvent.change(screen.getByLabelText('Open create menu'), { target: { value: 'Ctrl+Alt+Space' } })
+    fireEvent.change(screen.getByLabelText('Group selected nodes'), { target: { value: 'Ctrl+G' } })
+    fireEvent.change(screen.getByLabelText('Ungroup selected groups'), { target: { value: 'Ctrl+Shift+G' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() =>
@@ -180,7 +244,9 @@ describe('SettingsDialog', () => {
         shortcuts: {
           canvasDeselect: 'Ctrl+Shift+X',
           canvasFind: 'Alt+F',
-          canvasCreateComponent: 'Ctrl+Alt+Space'
+          canvasCreateComponent: 'Ctrl+Alt+Space',
+          canvasGroupSelection: 'Ctrl+G',
+          canvasUngroupSelection: 'Ctrl+Shift+G'
         },
         pet: { ...DEFAULT_PET_SETTINGS }
       })
@@ -227,13 +293,153 @@ describe('SettingsDialog', () => {
     expect(await screen.findByText(translate(locale, 'settings.petDescription'))).toBeInTheDocument()
     expect(screen.getByText(translate(locale, 'settings.petEnableWindow'))).toBeInTheDocument()
     expect(screen.getByText(translate(locale, 'settings.petHookBridge'))).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: translate(locale, 'settings.petClaudeHookInstall') }))
+    await waitFor(() => expect(petApi.installClaudeHooks).toHaveBeenCalled())
+    expect(screen.getByRole('button', { name: translate(locale, 'settings.petClaudeHookRepair') })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: translate(locale, 'settings.petCodexHookInstall') }))
+    await waitFor(() => expect(petApi.installCodexHooks).toHaveBeenCalled())
+    expect(screen.getByRole('button', { name: translate(locale, 'settings.petCodexHookRepair') })).toBeInTheDocument()
+    expect(screen.queryByText(/Raw provider hook endpoint/i)).not.toBeInTheDocument()
     expect(screen.getByText(translate(locale, 'settings.petAssetPack'))).toBeInTheDocument()
     expect(screen.getByText(translate(locale, 'settings.petActionMapping'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: `${translate(locale, 'settings.petIdleAsset')} ${translate(locale, 'common.browse')}` })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: `${translate(locale, 'settings.petRunningAsset')} ${translate(locale, 'common.browse')}` })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: `${translate(locale, 'settings.petRunningAsset')} ${translate(locale, 'settings.petClearAsset')}` })).toBeInTheDocument()
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByRole('button', { name: translate(locale, 'settings.petAttentionMotion') }), { button: 0, ctrlKey: false })
     expect(await screen.findByRole('menuitemradio', { name: translate(locale, 'settings.petActionPulse') })).toBeInTheDocument()
+  })
+
+  it('imports a pet sprite sheet with default playback settings', async () => {
+    const spritePath = 'D:\\AtlasOS\\assets\\atlas-idle-sprite.png'
+    filesystemApi.getPathForFile.mockReturnValue(spritePath)
+
+    renderSettingsDialog()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pet' }))
+
+    await screen.findByText('Asset pack')
+    const spriteInputs = document.querySelectorAll<HTMLInputElement>('input[accept="image/png,image/webp,.png,.webp"]')
+    fireEvent.change(spriteInputs[0], {
+      target: {
+        files: [new File(['sprite'], 'atlas-idle-sprite.png', { type: 'image/png' })]
+      }
+    })
+
+    await waitFor(() =>
+      expect(petApi.updateSettings).toHaveBeenCalledWith({
+        ...DEFAULT_PET_SETTINGS,
+        assetPack: {
+          ...DEFAULT_PET_SETTINGS.assetPack,
+          id: 'custom-local',
+          name: 'atlas-idle-sprite.png',
+          idleSrc: localAssetUrl(spritePath, spritePath),
+          idleKind: 'sprite',
+          idleSprite: { frameCount: 8, fps: 8 }
+        }
+      })
+    )
+  })
+
+  it('imports a running pet sprite sheet with default playback settings', async () => {
+    const spritePath = 'D:\\AtlasOS\\assets\\atlas-running-sprite.png'
+    filesystemApi.getPathForFile.mockReturnValue(spritePath)
+
+    renderSettingsDialog()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pet' }))
+
+    await screen.findByText('Asset pack')
+    const spriteInputs = document.querySelectorAll<HTMLInputElement>('input[accept="image/png,image/webp,.png,.webp"]')
+    fireEvent.change(spriteInputs[1], {
+      target: {
+        files: [new File(['sprite'], 'atlas-running-sprite.png', { type: 'image/png' })]
+      }
+    })
+
+    await waitFor(() =>
+      expect(petApi.updateSettings).toHaveBeenCalledWith({
+        ...DEFAULT_PET_SETTINGS,
+        assetPack: {
+          ...DEFAULT_PET_SETTINGS.assetPack,
+          id: 'custom-local',
+          name: 'atlas-running-sprite.png',
+          runningSrc: localAssetUrl(spritePath, spritePath),
+          runningKind: 'sprite',
+          runningSprite: { frameCount: 8, fps: 8 }
+        }
+      })
+    )
+  })
+
+  it('clears a pet asset slot without changing the other slots', async () => {
+    petApi.getState.mockResolvedValue({
+      settings: {
+        ...DEFAULT_PET_SETTINGS,
+        assetPack: {
+          ...DEFAULT_PET_SETTINGS.assetPack,
+          idleSrc: 'atlas-file://preview?path=idle.png',
+          idleKind: 'sprite',
+          idleSprite: { frameCount: 6, fps: 12 },
+          runningSrc: 'atlas-file://preview?path=running.png',
+          runningKind: 'sprite',
+          runningSprite: { frameCount: 10, fps: 10 },
+          attentionSrc: 'atlas-file://preview?path=attention.png',
+          attentionKind: 'sprite',
+          attentionSprite: { frameCount: 12, fps: 8 }
+        }
+      },
+      alerts: [],
+      agentSessions: [],
+      bridge: {
+        enabled: true,
+        port: 14201,
+        token: 'test-token',
+        claudeHook: {
+          installed: false,
+          settingsPath: 'C:\\Users\\xhwz2\\.claude\\settings.json',
+          command: 'node',
+          args: ['D:\\AtlasOS\\agent-hook-forwarder.cjs', 'claude'],
+          displayCommand: 'node "D:\\AtlasOS\\agent-hook-forwarder.cjs" "claude"',
+          events: ['SessionStart'],
+          installedEvents: []
+        },
+        codexHook: {
+          installed: false,
+          settingsPath: 'C:\\Users\\xhwz2\\.codex\\hooks.json',
+          command: 'node "D:\\AtlasOS\\agent-hook-forwarder.cjs" codex',
+          args: [],
+          displayCommand: 'node "D:\\AtlasOS\\agent-hook-forwarder.cjs" codex',
+          events: ['SessionStart'],
+          installedEvents: []
+        }
+      }
+    })
+
+    renderSettingsDialog()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pet' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Running asset Clear' }))
+
+    await waitFor(() =>
+      expect(petApi.updateSettings).toHaveBeenCalledWith({
+        ...DEFAULT_PET_SETTINGS,
+        assetPack: {
+          ...DEFAULT_PET_SETTINGS.assetPack,
+          idleSrc: 'atlas-file://preview?path=idle.png',
+          idleKind: 'sprite',
+          idleSprite: { frameCount: 6, fps: 12 },
+          runningSrc: '',
+          runningKind: 'image',
+          runningSprite: { frameCount: 8, fps: 8 },
+          attentionSrc: 'atlas-file://preview?path=attention.png',
+          attentionKind: 'sprite',
+          attentionSprite: { frameCount: 12, fps: 8 }
+        }
+      })
+    )
   })
 
   it('enables a disabled plugin and refreshes the renderer registry view', async () => {
