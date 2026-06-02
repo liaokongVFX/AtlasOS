@@ -172,7 +172,15 @@ describe('ClaudeHistoryComponent', () => {
           cwd: 'D:\\projects\\alpha',
           initialCommand: 'claude --resume alpha-session'
         },
-        state: { cwd: 'D:\\projects\\alpha' }
+        state: {
+          cwd: 'D:\\projects\\alpha',
+          agentRestore: expect.objectContaining({
+            source: 'claude',
+            sessionId: 'alpha-session',
+            command: 'claude --resume alpha-session',
+            cwd: 'D:\\projects\\alpha'
+          })
+        }
       }
     )
 

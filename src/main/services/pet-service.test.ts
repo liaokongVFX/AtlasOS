@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
 import { DEFAULT_PET_SETTINGS, type PetAgentSession, type PetRuntimeState } from '@shared/pet'
 import type { AppSettings, CanvasDocument } from '@shared/schema'
+import { DEFAULT_UPDATE_SETTINGS } from '@shared/updates'
 import { PetService } from './pet-service'
 
 type MockWindow = {
@@ -163,7 +164,8 @@ function createSettings(pet: Partial<AppSettings['pet']> = {}): AppSettings {
       agentBridge: { ...DEFAULT_PET_SETTINGS.agentBridge, ...pet.agentBridge },
       assetPack: { ...DEFAULT_PET_SETTINGS.assetPack, ...pet.assetPack },
       actionMap: { ...DEFAULT_PET_SETTINGS.actionMap, ...pet.actionMap }
-    }
+    },
+    updates: { ...DEFAULT_UPDATE_SETTINGS }
   }
 }
 
@@ -208,7 +210,18 @@ function createCanvas(): CanvasDocument {
   }
 }
 
-function createService(input: { settings?: AppSettings; canvases?: CanvasDocument[] } = {}) {
+function createService(input: {
+  settings?: AppSettings
+  canvases?: CanvasDocument[]
+  onAgentProviderSessionResolved?: (context: {
+    terminalSessionId: string
+    source: string
+    providerSessionId: string
+    componentId: string
+    canvasId?: string
+    cwd?: string
+  }) => void
+} = {}) {
   let settings = input.settings ?? createSettings({ showNativeNotifications: false, agentBridge: { enabled: false } })
   const loadPetRenderer = vi.fn(async () => undefined)
   const openTarget = vi.fn(async () => undefined)
@@ -226,7 +239,8 @@ function createService(input: { settings?: AppSettings; canvases?: CanvasDocumen
     persistence: persistence as never,
     appSettingsService: appSettingsService as never,
     loadPetRenderer,
-    openTarget
+    openTarget,
+    onAgentProviderSessionResolved: input.onAgentProviderSessionResolved
   })
   activeServices.add(service)
 
@@ -283,12 +297,13 @@ function runHookForwarder(
   scriptPath: string,
   source: 'claude' | 'codex',
   body: unknown,
-  hookName?: string
+  hookName?: string,
+  env: NodeJS.ProcessEnv = {}
 ): Promise<{ exitCode: number | null; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [scriptPath, source, ...(hookName ? [hookName] : [])], {
       cwd: process.cwd(),
-      env: sanitizedForwarderEnv(),
+      env: { ...sanitizedForwarderEnv(), ...env },
       stdio: ['pipe', 'ignore', 'pipe']
     })
     let stderr = ''
@@ -742,12 +757,14 @@ describe('PetService', () => {
     service.dispose()
   })
 
-  it('forwards Codex hook events without Atlas terminal environment variables', async () => {
+  it('ignores provider hooks outside Atlas terminals while accepting Atlas terminal hooks', async () => {
+    const onAgentProviderSessionResolved = vi.fn()
     const { service } = createService({
       settings: createSettings({
         showNativeNotifications: false,
         agentBridge: { enabled: true }
-      })
+      }),
+      onAgentProviderSessionResolved
     })
 
     await service.start()
@@ -761,18 +778,54 @@ describe('PetService', () => {
       token: state.bridge.token
     })
 
+    const externalBridgeEvent = await postAgentEvent(state.bridge.port, state.bridge.token, {
+      hook_event_name: 'Stop',
+      threadId: 'external-codex-thread',
+      cwd: 'D:\\projects\\AtlasOS',
+      title: 'External Codex task'
+    })
+    expect(externalBridgeEvent.statusCode).toBe(200)
+
+    const externalForwarderEvent = await runHookForwarder(forwarderPath, 'codex', {
+      threadId: 'external-codex-thread',
+      cwd: 'D:\\projects\\AtlasOS',
+      title: 'External Codex task'
+    }, 'UserPromptSubmit')
+    expect(externalForwarderEvent).toMatchObject({ exitCode: 0, stderr: '' })
+
+    let updatedState = (await getState({}, {})) as PetRuntimeState
+    expect(updatedState.agentSessions).toHaveLength(0)
+    expect(updatedState.alerts.filter((alert) => alert.target.sessionId === 'external-codex-thread')).toHaveLength(0)
+    expect(onAgentProviderSessionResolved).not.toHaveBeenCalled()
+
+    const atlasTerminalEnv = {
+      ATLAS_TERMINAL_SESSION_ID: 'session-1',
+      ATLAS_TERMINAL_COMPONENT_ID: 'terminal-1',
+      ATLAS_CANVAS_ID: 'canvas-1',
+      ATLAS_TERMINAL_CWD: 'D:\\projects\\AtlasOS',
+      ATLAS_TERMINAL_TITLE: 'Codex task'
+    }
+
     const started = await runHookForwarder(forwarderPath, 'codex', {
       threadId: 'codex-thread-1',
       cwd: 'D:\\projects\\AtlasOS',
       title: 'Codex task'
-    }, 'UserPromptSubmit')
+    }, 'UserPromptSubmit', atlasTerminalEnv)
     expect(started).toMatchObject({ exitCode: 0, stderr: '' })
 
-    let updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'codex-thread-1')).toMatchObject({
+    updatedState = (await getState({}, {})) as PetRuntimeState
+    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toMatchObject({
       source: 'codex',
       status: 'running',
       title: 'Codex task',
+      cwd: 'D:\\projects\\AtlasOS'
+    })
+    expect(onAgentProviderSessionResolved).toHaveBeenCalledWith({
+      terminalSessionId: 'session-1',
+      source: 'codex',
+      providerSessionId: 'codex-thread-1',
+      componentId: 'terminal-1',
+      canvasId: 'canvas-1',
       cwd: 'D:\\projects\\AtlasOS'
     })
 
@@ -783,16 +836,16 @@ describe('PetService', () => {
       toolInput: { command: 'npm test' },
       cwd: 'D:\\projects\\AtlasOS',
       title: 'Codex task'
-    })
+    }, 'PermissionRequest', atlasTerminalEnv)
     expect(permissionRequest).toMatchObject({ exitCode: 0, stderr: '' })
 
     updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'codex-thread-1')).toMatchObject({
+    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toMatchObject({
       source: 'codex',
       status: 'waiting_for_confirmation',
       attentionReason: 'Shell: npm test'
     })
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'codex-thread-1' && alert.kind === 'agent_waiting')).toMatchObject({
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_waiting')).toMatchObject({
       title: 'Codex is asking',
       body: 'Shell: npm test'
     })
@@ -802,18 +855,15 @@ describe('PetService', () => {
       threadId: 'codex-thread-1',
       cwd: 'D:\\projects\\AtlasOS',
       title: 'Codex task'
-    })
+    }, 'Stop', atlasTerminalEnv)
     expect(completed).toMatchObject({ exitCode: 0, stderr: '' })
 
     updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'codex-thread-1')).toMatchObject({
-      source: 'codex',
-      status: 'completed'
-    })
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'codex-thread-1' && alert.kind === 'agent_completed')).toMatchObject({
+    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toBeUndefined()
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_completed')).toMatchObject({
       title: 'Codex completed'
     })
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'codex-thread-1' && alert.kind === 'agent_waiting')?.readAt).toBeDefined()
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_waiting')?.readAt).toBeDefined()
 
     service.dispose()
   })
@@ -930,11 +980,7 @@ describe('PetService', () => {
     expect(claudeCompleted.statusCode).toBe(200)
 
     updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-3')).toMatchObject({
-      source: 'claude',
-      status: 'completed',
-      title: 'Claude Code'
-    })
+    expect(updatedState.agentSessions.find((session) => session.id === 'session-3')).toBeUndefined()
     expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-3')).toMatchObject({
       title: 'Claude Code completed',
       body: 'Claude completed the run',
@@ -1061,7 +1107,7 @@ describe('PetService', () => {
     service.dispose()
   })
 
-  it('keeps completed Claude sessions completed when a later idle prompt notification arrives', async () => {
+  it('hides completed Claude sessions when a later idle prompt notification arrives', async () => {
     const { service } = createService({
       settings: createSettings({
         showNativeNotifications: false,
@@ -1096,11 +1142,7 @@ describe('PetService', () => {
     expect(idlePrompt.statusCode).toBe(200)
 
     const updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toMatchObject({
-      source: 'claude',
-      status: 'completed',
-      title: 'Claude Code'
-    })
+    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toBeUndefined()
     expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1')).toMatchObject({
       title: 'Claude Code completed',
       kind: 'agent_completed'
@@ -1156,11 +1198,7 @@ describe('PetService', () => {
     expect(duplicateStop.statusCode).toBe(200)
 
     const updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toMatchObject({
-      source: 'claude',
-      status: 'completed',
-      title: 'Claude Code'
-    })
+    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toBeUndefined()
     expect(updatedState.alerts.filter((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_completed')).toHaveLength(1)
     expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_waiting')).toBeUndefined()
 
@@ -1264,6 +1302,32 @@ describe('PetService', () => {
       cwd: 'D:\\projects\\AtlasOS'
     })
     expect(state.alerts.filter((alert) => alert.target.sessionId === 'session-1')).toHaveLength(0)
+
+    service.dispose()
+  })
+
+  it('removes a terminal agent session when its PTY session closes', async () => {
+    const { service } = createService()
+
+    await service.start()
+    const getState = ipcHandler('pet:get-state')
+
+    service.recordAgentCommandStarted({
+      source: 'claude',
+      sessionId: 'session-1',
+      canvasId: 'canvas-1',
+      componentId: 'terminal-1',
+      title: 'Claude Code',
+      cwd: 'D:\\projects\\AtlasOS'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    let state = (await getState({}, {})) as PetRuntimeState
+    expect(state.agentSessions).toHaveLength(1)
+
+    service.removeAgentSession('session-1')
+    state = (await getState({}, {})) as PetRuntimeState
+    expect(state.agentSessions).toHaveLength(0)
 
     service.dispose()
   })

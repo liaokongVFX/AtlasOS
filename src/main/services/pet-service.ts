@@ -35,6 +35,7 @@ type PetServiceOptions = {
   appSettingsService: AppSettingsService
   loadPetRenderer: (window: BrowserWindow) => Promise<void>
   openTarget: (target: PetAlertTarget) => Promise<void>
+  onAgentProviderSessionResolved?: (context: AgentProviderSessionResolvedContext) => void
 }
 
 type StoredPetState = {
@@ -52,6 +53,15 @@ type AgentHookBridgeEnvironmentContext = {
 
 type AgentCommandStartedContext = AgentHookBridgeEnvironmentContext & {
   source: PetAgentSource
+}
+
+type AgentProviderSessionResolvedContext = {
+  terminalSessionId: string
+  source: PetAgentSource
+  providerSessionId: string
+  componentId: string
+  canvasId?: string
+  cwd?: string
 }
 
 type AgentHookRequestContext = {
@@ -78,6 +88,7 @@ type AgentHookEventInput = {
   sessionTitle?: string
   body?: string
   sessionId?: string
+  providerSessionId?: string
   componentId?: string
   canvasId?: string
   cwd?: string
@@ -145,6 +156,13 @@ const { URL, URLSearchParams } = require('node:url')
 
 const source = String(process.argv[2] || process.env.ATLAS_PET_SOURCE || '').toLowerCase()
 const hookName = String(process.argv[3] || process.env.ATLAS_PET_HOOK_EVENT || '')
+
+if (!['claude', 'codex'].includes(source)) process.exit(0)
+
+const terminalSessionId = process.env.ATLAS_TERMINAL_SESSION_ID
+const terminalComponentId = process.env.ATLAS_TERMINAL_COMPONENT_ID
+if (!terminalSessionId || !terminalComponentId) process.exit(0)
+
 const bridgeConfigPath = process.env.ATLAS_PET_BRIDGE_CONFIG || path.join(__dirname, 'agent-hook-bridge.json')
 
 function readBridgeConfig() {
@@ -161,7 +179,7 @@ const bridgeConfig = readBridgeConfig()
 const bridgeUrl = process.env.ATLAS_PET_BRIDGE_URL || bridgeConfig.bridgeUrl
 const token = process.env.ATLAS_PET_BRIDGE_TOKEN || bridgeConfig.token
 
-if (!bridgeUrl || !token || !['claude', 'codex'].includes(source)) process.exit(0)
+if (!bridgeUrl || !token) process.exit(0)
 
 let input = ''
 process.stdin.setEncoding('utf8')
@@ -399,6 +417,10 @@ function hookEventStatus(hookName: string, payload: Record<string, unknown>): Ag
   return null
 }
 
+function shouldRecordProviderSession(hookName: string): boolean {
+  return hookName !== 'SubagentStart' && hookName !== 'SubagentStop'
+}
+
 function hookBody(hookName: string, payload: Record<string, unknown>): string | undefined {
   if (hookName === 'StopFailure') {
     const error = firstString(payload, ['error', 'error_type', 'errorType'])
@@ -428,16 +450,9 @@ function hookBody(hookName: string, payload: Record<string, unknown>): string | 
   return hookName
 }
 
-function hookSessionId(payload: Record<string, unknown>, context: AgentHookRequestContext): string | undefined {
-  return (
-    context.sessionId ||
-    firstString(payload, ['atlas_session_id', 'atlasSessionId', 'terminal_session_id', 'terminalSessionId']) ||
-    firstString(payload, ['session_id', 'sessionId', 'thread_id', 'threadId', 'conversation_id', 'conversationId'])
-  )
-}
-
 function normalizeAgentHookEvent(source: PetAgentSource, payload: unknown, context: AgentHookRequestContext): NormalizedAgentHookEvent | null {
   if (!isRecord(payload)) return null
+  if (!context.sessionId || !context.componentId) return { kind: 'ignored' }
 
   const hookName = canonicalHookEventName(firstString(payload, ['hook_event_name', 'hookEventName', 'event_name', 'eventName', 'event']) || context.hookName)
   if (!hookName) return null
@@ -445,10 +460,11 @@ function normalizeAgentHookEvent(source: PetAgentSource, payload: unknown, conte
   const event = hookEventStatus(hookName, payload)
   if (!event) return hookName === 'Notification' ? { kind: 'ignored' } : null
 
-  const componentId = context.componentId || firstString(payload, ['component_id', 'componentId', 'atlas_component_id', 'atlasComponentId'])
-  const canvasId = context.canvasId || firstString(payload, ['canvas_id', 'canvasId', 'atlas_canvas_id', 'atlasCanvasId'])
+  const componentId = context.componentId
+  const canvasId = context.canvasId
   const cwd = context.cwd || firstString(payload, ['cwd', 'workspace_dir', 'workspaceDir'])
-  const sessionId = hookSessionId(payload, context)
+  const sessionId = context.sessionId
+  const providerSessionId = firstString(payload, ['session_id', 'sessionId', 'thread_id', 'threadId'])
 
   return {
     kind: 'event',
@@ -457,6 +473,7 @@ function normalizeAgentHookEvent(source: PetAgentSource, payload: unknown, conte
       event,
       hookName,
       sessionId,
+      providerSessionId,
       componentId,
       canvasId,
       sessionTitle: context.title || firstString(payload, ['session_title', 'sessionTitle', 'thread_title', 'threadTitle', 'title']),
@@ -748,6 +765,10 @@ function isTerminalAgentStatus(status: PetAgentSession['status'] | undefined): b
   return status === 'completed' || status === 'error'
 }
 
+function visibleAgentSessions(agentSessions: Map<string, PetAgentSession>): PetAgentSession[] {
+  return [...agentSessions.values()].filter((session) => session.status !== 'completed')
+}
+
 function canRestartTerminalAgentStatus(event: AgentHookEventInput): boolean {
   return event.hookName === 'UserPromptSubmit' || event.hookName === 'SessionStart'
 }
@@ -1011,7 +1032,7 @@ export class PetService {
     handleValidated('pet:install-claude-hooks', z.object({}), () => this.installClaudeHooks())
     handleValidated('pet:install-codex-hooks', z.object({}), () => this.installCodexHooks())
 
-    handleValidated('pet:list-agent-sessions', z.object({}), () => [...this.agentSessions.values()])
+    handleValidated('pet:list-agent-sessions', z.object({}), () => visibleAgentSessions(this.agentSessions))
   }
 
   private async ensurePetWindow(): Promise<void> {
@@ -1202,6 +1223,16 @@ export class PetService {
     if (parsed.success) {
       const previous = this.agentSessions.get(parsed.data.id)
       this.agentSessions.set(parsed.data.id, parsed.data)
+      if (event.providerSessionId && shouldRecordProviderSession(event.hookName)) {
+        this.options.onAgentProviderSessionResolved?.({
+          terminalSessionId: parsed.data.id,
+          source: parsed.data.source,
+          providerSessionId: event.providerSessionId,
+          componentId: parsed.data.componentId,
+          canvasId: parsed.data.canvasId,
+          cwd: parsed.data.cwd
+        })
+      }
       const statusChanged = previous?.status !== parsed.data.status
       if (statusChanged) {
         this.markAgentAttentionAlertsRead(parsed.data.id)
@@ -1392,7 +1423,7 @@ export class PetService {
     return petRuntimeStateSchema.parse({
       settings: settings.pet,
       alerts: this.storedState.alerts,
-      agentSessions: [...this.agentSessions.values()],
+      agentSessions: visibleAgentSessions(this.agentSessions),
       window: {
         panelSide: layout.panelSide
       },

@@ -124,6 +124,21 @@ describe('TopBar workspace tabs', () => {
     expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument()
   })
 
+  it('renders the save state as an icon-only status button', () => {
+    useCanvasStore.setState({ saveState: 'dirty' })
+
+    render(
+      <I18nContext.Provider value={{ locale: 'en-US', setLocale: vi.fn(), t: (key, values) => translate('en-US', key, values) }}>
+        <TopBar />
+      </I18nContext.Provider>
+    )
+
+    const saveButton = screen.getByRole('button', { name: 'Unsaved' })
+    expect(saveButton).toHaveClass('icon-button', 'top-bar-icon-button', 'top-bar-save-button', 'top-bar-save-button--dirty')
+    expect(saveButton.querySelector('svg')).not.toBeNull()
+    expect(saveButton.textContent).toBe('')
+  })
+
   it('reorders workspace tabs by dragging after another tab', () => {
     render(<TopBar />)
 

@@ -161,7 +161,15 @@ describe('CodexHistoryComponent', () => {
           cwd: 'D:\\projects\\alpha',
           initialCommand: 'codex resume codex-session'
         },
-        state: { cwd: 'D:\\projects\\alpha' }
+        state: {
+          cwd: 'D:\\projects\\alpha',
+          agentRestore: expect.objectContaining({
+            source: 'codex',
+            sessionId: 'codex-session',
+            command: 'codex resume codex-session',
+            cwd: 'D:\\projects\\alpha'
+          })
+        }
       }
     )
 

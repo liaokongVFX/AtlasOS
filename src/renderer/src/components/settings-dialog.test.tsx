@@ -4,6 +4,7 @@ import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS } from '@shared/constants'
 import { DEFAULT_PET_SETTINGS } from '@shared/pet'
 import { localAssetUrl } from '@shared/local-assets'
 import { ATLAS_PLUGIN_API_VERSION, type PluginInfo } from '@shared/plugins'
+import { DEFAULT_UPDATE_SETTINGS } from '@shared/updates'
 import { I18nContext, setCurrentLocale, translate, type Locale } from '../i18n'
 import { useAppSettingsStore } from '../store/app-settings-store'
 import { SettingsDialog } from './settings-dialog'
@@ -86,6 +87,13 @@ const petApi = {
   installCodexHooks: vi.fn(),
   onStateUpdated: vi.fn()
 }
+const updatesApi = {
+  getState: vi.fn(),
+  check: vi.fn(),
+  download: vi.fn(),
+  installAndRestart: vi.fn(),
+  onStateUpdated: vi.fn()
+}
 
 function renderSettingsDialog(showTrigger = true, locale: Locale = 'en-US'): ReturnType<typeof render> {
   setCurrentLocale(locale)
@@ -110,6 +118,7 @@ describe('SettingsDialog', () => {
     for (const mock of Object.values(appSettingsApi)) mock.mockReset()
     for (const mock of Object.values(appApi)) mock.mockReset()
     for (const mock of Object.values(petApi)) mock.mockReset()
+    for (const mock of Object.values(updatesApi)) mock.mockReset()
 
     useAppSettingsStore.setState({
       error: null,
@@ -118,7 +127,8 @@ describe('SettingsDialog', () => {
         schemaVersion: ATLAS_SCHEMA_VERSION,
         locale: 'en-US',
         shortcuts: { ...DEFAULT_APP_SHORTCUTS },
-        pet: { ...DEFAULT_PET_SETTINGS }
+        pet: { ...DEFAULT_PET_SETTINGS },
+        updates: { ...DEFAULT_UPDATE_SETTINGS }
       }
     })
     pluginApi.getSettings.mockResolvedValue({ rootPath: 'D:\\AtlasOS\\plugins' })
@@ -126,7 +136,8 @@ describe('SettingsDialog', () => {
       schemaVersion: ATLAS_SCHEMA_VERSION,
       locale: 'en-US',
       shortcuts: { ...DEFAULT_APP_SHORTCUTS },
-      pet: { ...DEFAULT_PET_SETTINGS }
+      pet: { ...DEFAULT_PET_SETTINGS },
+      updates: { ...DEFAULT_UPDATE_SETTINGS }
     })
     appSettingsApi.update.mockImplementation(async (settings) => settings)
     petApi.getState.mockResolvedValue({
@@ -177,6 +188,25 @@ describe('SettingsDialog', () => {
       installedEvents: ['SessionStart']
     })
     petApi.onStateUpdated.mockReturnValue(() => undefined)
+    updatesApi.getState.mockResolvedValue({
+      status: 'idle',
+      currentVersion: '0.1.0',
+      updatedAt: '2026-06-02T00:00:00.000Z'
+    })
+    updatesApi.check.mockResolvedValue({
+      status: 'not-available',
+      currentVersion: '0.1.0',
+      availableVersion: '0.1.0',
+      updatedAt: '2026-06-02T00:01:00.000Z',
+      lastCheckedAt: '2026-06-02T00:01:00.000Z'
+    })
+    updatesApi.download.mockResolvedValue({
+      status: 'downloading',
+      currentVersion: '0.1.0',
+      updatedAt: '2026-06-02T00:02:00.000Z'
+    })
+    updatesApi.installAndRestart.mockResolvedValue({ ok: true })
+    updatesApi.onStateUpdated.mockReturnValue(() => undefined)
 
     Object.defineProperty(window, 'atlas', {
       configurable: true,
@@ -185,6 +215,7 @@ describe('SettingsDialog', () => {
         appSettings: appSettingsApi,
         filesystem: filesystemApi,
         pet: petApi,
+        updates: updatesApi,
         plugins: pluginApi
       }
     })
@@ -194,7 +225,7 @@ describe('SettingsDialog', () => {
     cleanup()
   })
 
-  it('opens as a settings shell with general shortcut settings', () => {
+  it('opens as a settings shell with general shortcut settings', async () => {
     renderSettingsDialog()
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
 
@@ -207,6 +238,7 @@ describe('SettingsDialog', () => {
     expect(screen.getByLabelText('Open create menu')).toHaveValue('Tab')
     expect(screen.getByLabelText('Group selected nodes')).toHaveValue('Ctrl+G')
     expect(screen.getByLabelText('Ungroup selected groups')).toHaveValue('Ctrl+Shift+G')
+    expect(await screen.findByText('0.1.0')).toBeInTheDocument()
     expect(pluginApi.list).not.toHaveBeenCalled()
   })
 
@@ -248,9 +280,34 @@ describe('SettingsDialog', () => {
           canvasGroupSelection: 'Ctrl+G',
           canvasUngroupSelection: 'Ctrl+Shift+G'
         },
-        pet: { ...DEFAULT_PET_SETTINGS }
+        pet: { ...DEFAULT_PET_SETTINGS },
+        updates: { ...DEFAULT_UPDATE_SETTINGS }
       })
     )
+  })
+
+  it('saves update auto-check settings and can manually check for updates', async () => {
+    renderSettingsDialog()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await screen.findByText('0.1.0')
+
+    const autoCheck = screen.getByRole('checkbox', { name: /Check for updates on startup/i })
+    fireEvent.click(autoCheck)
+
+    await waitFor(() =>
+      expect(appSettingsApi.update).toHaveBeenCalledWith({
+        schemaVersion: ATLAS_SCHEMA_VERSION,
+        locale: 'en-US',
+        shortcuts: { ...DEFAULT_APP_SHORTCUTS },
+        pet: { ...DEFAULT_PET_SETTINGS },
+        updates: { autoCheck: false }
+      })
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check now' }))
+
+    await waitFor(() => expect(updatesApi.check).toHaveBeenCalled())
+    expect(await screen.findByText('You are up to date')).toBeInTheDocument()
   })
 
   it('captures bare Tab and validates duplicate general shortcuts before saving', async () => {

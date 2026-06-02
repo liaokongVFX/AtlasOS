@@ -188,6 +188,9 @@ describe('appSettingsSchema', () => {
         canvasGroupSelection: 'Ctrl+G',
         canvasUngroupSelection: 'Ctrl+Shift+G'
       },
+      updates: {
+        autoCheck: true
+      },
       pet: {
         enabled: true,
         showNativeNotifications: true,
@@ -212,6 +215,20 @@ describe('appSettingsSchema', () => {
         actionMap: { idle: 'float', running: 'bounce', attention: 'pulse' }
       }
     })
+  })
+
+  it('defaults update settings for older app settings files', () => {
+    expect(
+      appSettingsSchema.parse({
+        shortcuts: {
+          canvasDeselect: 'Ctrl+Q',
+          canvasFind: 'Ctrl+F',
+          canvasCreateComponent: 'Tab',
+          canvasGroupSelection: 'Ctrl+G',
+          canvasUngroupSelection: 'Ctrl+Shift+G'
+        }
+      }).updates
+    ).toEqual({ autoCheck: true })
   })
 
   it('accepts supported locales', () => {
@@ -268,14 +285,26 @@ describe('appSettingsSchema', () => {
 
 describe('terminalCreateSchema', () => {
   it('accepts and trims one-shot initial commands', () => {
+    const input = terminalCreateSchema.parse({
+      componentId: 'terminal-1',
+      initialCommand: '  claude --resume alpha-session  ',
+      cols: 80,
+      rows: 24
+    })
+
+    expect(input.initialCommand).toBe('claude --resume alpha-session')
+    expect(input.autoConfirmWorkspaceTrust).toBe(false)
+  })
+
+  it('accepts explicit workspace trust auto-confirmation for restored terminals', () => {
     expect(
       terminalCreateSchema.parse({
         componentId: 'terminal-1',
-        initialCommand: '  claude --resume alpha-session  ',
+        autoConfirmWorkspaceTrust: true,
         cols: 80,
         rows: 24
-      }).initialCommand
-    ).toBe('claude --resume alpha-session')
+      }).autoConfirmWorkspaceTrust
+    ).toBe(true)
   })
 
   it('rejects blank one-shot initial commands', () => {

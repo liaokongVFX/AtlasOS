@@ -44,6 +44,10 @@ function isRunningSession(session: PetAgentSession): boolean {
   return session.status === 'running'
 }
 
+function isVisibleAgentSession(session: PetAgentSession): boolean {
+  return session.status !== 'completed'
+}
+
 function isAttentionAlert(alert: PetAlert): boolean {
   return alert.kind === 'kanban_due' || alert.kind === 'agent_waiting' || alert.kind === 'agent_error' || alert.severity !== 'info'
 }
@@ -110,7 +114,7 @@ export function PetApp(): JSX.Element {
 
   const alerts = useMemo(() => (state?.alerts ?? []).filter(isVisibleAlert), [state?.alerts])
   const agentSessions = useMemo(
-    () => (state?.settings.showRunningAgents ? state.agentSessions : []),
+    () => (state?.settings.showRunningAgents ? state.agentSessions.filter(isVisibleAgentSession) : []),
     [state]
   )
   const alertSessionIds = new Set(

@@ -33,6 +33,7 @@ export function ClaudeHistoryComponent(props: AtlasComponentRendererProps): JSX.
     <AgentHistoryExplorer
       {...props}
       api={api}
+      agentSource="claude"
       labels={labels}
       terminalTitlePrefix="Claude"
       resumeCommand={(session: AgentHistorySessionSummary) => `claude --resume ${session.sessionId}`}

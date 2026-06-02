@@ -43,6 +43,9 @@ describe('AppSettingsService', () => {
         canvasGroupSelection: 'Ctrl+G',
         canvasUngroupSelection: 'Ctrl+Shift+G'
       },
+      updates: {
+        autoCheck: true
+      },
       pet: {
         enabled: true,
         showNativeNotifications: true,
@@ -104,6 +107,9 @@ describe('AppSettingsService', () => {
           attentionSprite: { frameCount: 8, fps: 8 }
         },
         actionMap: { idle: 'float', running: 'bounce', attention: 'pulse' }
+      },
+      updates: {
+        autoCheck: false
       }
     })
 
@@ -116,6 +122,9 @@ describe('AppSettingsService', () => {
         canvasCreateComponent: 'Ctrl+Alt+Space',
         canvasGroupSelection: 'Ctrl+G',
         canvasUngroupSelection: 'Ctrl+Shift+G'
+      },
+      updates: {
+        autoCheck: false
       },
       pet: {
         enabled: false,

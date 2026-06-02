@@ -128,6 +128,7 @@ function installAtlasMocks(): void {
     }),
     onData: vi.fn(() => () => undefined),
     onCwd: vi.fn(() => () => undefined),
+    onAgentCommand: vi.fn(() => () => undefined),
     onExit: vi.fn(() => () => undefined)
   }
 
@@ -264,11 +265,25 @@ describe('TerminalComponent', () => {
       await Promise.resolve()
     })
 
-    expect(window.atlas.terminal.create).toHaveBeenCalledWith(expect.objectContaining({ initialCommand: 'claude --resume alpha-session' }))
-    expect(updateState).toHaveBeenCalledWith({ initialCommandDispatched: true }, true)
+    expect(window.atlas.terminal.create).toHaveBeenCalledWith(expect.objectContaining({
+      initialCommand: 'claude --resume alpha-session',
+      autoConfirmWorkspaceTrust: true
+    }))
+    expect(updateState).toHaveBeenCalledWith(
+      {
+        initialCommandDispatched: true,
+        agentRestore: expect.objectContaining({
+          source: 'claude',
+          sessionId: 'alpha-session',
+          command: 'claude --resume alpha-session',
+          cwd: 'C:\\Users\\xhwz2'
+        })
+      },
+      true
+    )
   })
 
-  it('does not pass an initial command after it has been dispatched', async () => {
+  it('passes a saved agent resume command after the one-shot dispatch', async () => {
     const updateState = vi.fn()
     const updateConfig = vi.fn()
     const setTitle = vi.fn()
@@ -291,8 +306,91 @@ describe('TerminalComponent', () => {
       await Promise.resolve()
     })
 
-    expect(window.atlas.terminal.create).toHaveBeenCalledWith(expect.objectContaining({ initialCommand: undefined }))
+    expect(window.atlas.terminal.create).toHaveBeenCalledWith(expect.objectContaining({
+      initialCommand: 'claude --resume alpha-session',
+      autoConfirmWorkspaceTrust: true
+    }))
     expect(updateState).not.toHaveBeenCalledWith({ initialCommandDispatched: true }, true)
+  })
+
+  it('does not pass a non-agent initial command after it has been dispatched', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+    component.config.initialCommand = 'npm test'
+    component.state.initialCommandDispatched = true
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(window.atlas.terminal.create).toHaveBeenCalledWith(expect.objectContaining({
+      initialCommand: undefined,
+      autoConfirmWorkspaceTrust: false
+    }))
+  })
+
+  it('persists manually entered agent resume commands for future restores', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+    let agentCommandListener: ((event: any) => void) | null = null
+    vi.mocked(window.atlas.terminal.onAgentCommand).mockImplementation((_sessionId, listener) => {
+      agentCommandListener = listener
+      return () => undefined
+    })
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(agentCommandListener).toBeTypeOf('function')
+    act(() => {
+      agentCommandListener?.({
+        sessionId: 'session-1',
+        componentId: 'terminal-1',
+        source: 'codex',
+        cwd: 'D:\\projects\\AtlasOS',
+        command: 'codex resume codex-session'
+      })
+    })
+
+    expect(updateState).toHaveBeenCalledWith(
+      {
+        agentRestore: expect.objectContaining({
+          source: 'codex',
+          sessionId: 'codex-session',
+          command: 'codex resume codex-session',
+          cwd: 'D:\\projects\\AtlasOS'
+        })
+      },
+      true
+    )
   })
 
   it('normalizes xterm mouse coordinates when the canvas is zoomed', async () => {

@@ -10,12 +10,15 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App'
 import { PetApp } from './PetApp'
+import { UpdateApp } from './UpdateApp'
 import { I18nProvider } from './i18n'
 import { registerBuiltInComponentDefinitions } from './components/register-builtins'
 
 const queryClient = new QueryClient()
-const isPetView = new URLSearchParams(window.location.search).get('view') === 'pet'
-document.documentElement.dataset.atlasView = isPetView ? 'pet' : 'app'
+const rendererView = new URLSearchParams(window.location.search).get('view')
+const isPetView = rendererView === 'pet'
+const isUpdateView = rendererView === 'update'
+document.documentElement.dataset.atlasView = isPetView ? 'pet' : isUpdateView ? 'update' : 'app'
 
 registerBuiltInComponentDefinitions()
 
@@ -23,6 +26,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     {isPetView ? (
       <PetApp />
+    ) : isUpdateView ? (
+      <I18nProvider>
+        <UpdateApp />
+      </I18nProvider>
     ) : (
       <I18nProvider>
         <QueryClientProvider client={queryClient}>

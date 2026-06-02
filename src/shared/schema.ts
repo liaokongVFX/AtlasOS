@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_LOCALE, DEFAULT_VIEWPORT, LOCALES } from './constants'
 import { normalizeKeyboardShortcut } from './keyboard-shortcuts'
 import { petSettingsSchema } from './pet'
+import { updateSettingsSchema } from './updates'
 
 export const componentTypeSchema = z.string().min(1)
 
@@ -117,7 +118,8 @@ export const appSettingsSchema = z.object({
   schemaVersion: z.literal(ATLAS_SCHEMA_VERSION).default(ATLAS_SCHEMA_VERSION),
   locale: z.enum(LOCALES).default(DEFAULT_LOCALE),
   shortcuts: appShortcutSettingsSchema,
-  pet: petSettingsSchema
+  pet: petSettingsSchema,
+  updates: updateSettingsSchema
 })
 
 export type FileEntry = {
@@ -163,6 +165,7 @@ export const terminalCreateSchema = z.object({
   cwd: z.string().optional(),
   shell: z.string().optional(),
   initialCommand: z.string().trim().min(1).max(8192).optional(),
+  autoConfirmWorkspaceTrust: z.boolean().default(false),
   cols: z.number().int().min(10).default(100),
   rows: z.number().int().min(4).default(30)
 })

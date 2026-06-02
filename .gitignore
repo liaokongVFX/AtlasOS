@@ -6,6 +6,10 @@ release
 .electron-cache
 .electron-gyp
 .atlasos-dev
+.codex-temp
+.dev-smoke
+output
+tmp
 .idea
 .vscode
 *.log

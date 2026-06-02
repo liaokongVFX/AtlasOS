@@ -6,6 +6,7 @@ import { localAssetUrl } from '@shared/local-assets'
 import { useI18n } from '../i18n'
 import { asNumber, asString } from '../lib/utils'
 import { useCanvasStore } from '../store/canvas-store'
+import { TopBarIconTooltip } from './top-bar-icon-tooltip'
 
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i
 const HEX_COLOR_VALUE_PATTERN = /#[0-9a-f]{6}\b/gi
@@ -33,10 +34,11 @@ export function BackgroundPanel(): JSX.Element {
 
   if (!activeCanvasId || !canvas) {
     return (
-      <button className="tool-button" disabled>
-        <Palette size={16} />
-        <span>{t('background.background')}</span>
-      </button>
+      <TopBarIconTooltip label={t('background.background')}>
+        <button type="button" className="icon-button top-bar-icon-button" disabled aria-label={t('background.background')}>
+          <Palette size={16} aria-hidden="true" />
+        </button>
+      </TopBarIconTooltip>
     )
   }
 
@@ -58,10 +60,13 @@ export function BackgroundPanel(): JSX.Element {
 
   return (
     <Popover.Root>
-      <Popover.Trigger className="tool-button">
-        <Palette size={16} />
-        <span>{t('background.background')}</span>
-      </Popover.Trigger>
+      <TopBarIconTooltip label={t('background.background')}>
+        <Popover.Trigger asChild>
+          <button type="button" className="icon-button top-bar-icon-button" aria-label={t('background.background')}>
+            <Palette size={16} aria-hidden="true" />
+          </button>
+        </Popover.Trigger>
+      </TopBarIconTooltip>
       <Popover.Content className="popover-content" sideOffset={8} align="end">
         <div className="field-row">
           <label>{t('background.fill')}</label>

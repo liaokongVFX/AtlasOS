@@ -81,6 +81,29 @@ describe('canvas group store operations', () => {
     )
   })
 
+  it('marks the active canvas dirty while delayed autosave is pending', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const saveCanvas = vi.mocked(window.atlas.canvas.save)
+      useCanvasStore.setState({ saveState: 'saved' })
+
+      useCanvasStore.getState().updateCanvas('canvas-1', (draft) => {
+        draft.name = 'Changed'
+      })
+
+      expect(useCanvasStore.getState().saveState).toBe('dirty')
+      expect(saveCanvas).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(500)
+
+      expect(saveCanvas).toHaveBeenCalledTimes(1)
+      expect(useCanvasStore.getState().saveState).toBe('saved')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('creates a padded group and removes members from old groups without deleting empty groups', () => {
     const canvas = createCanvas({
       components: [

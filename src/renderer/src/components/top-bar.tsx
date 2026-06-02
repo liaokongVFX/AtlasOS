@@ -7,6 +7,7 @@ import { useI18n } from '../i18n'
 import { useCanvasStore } from '../store/canvas-store'
 import { BackgroundPanel } from './background-panel'
 import { SettingsDialog } from './settings-dialog'
+import { TopBarIconTooltip } from './top-bar-icon-tooltip'
 
 type DropPlacement = 'before' | 'after'
 
@@ -208,15 +209,17 @@ export function TopBar(): JSX.Element {
         <div className="top-bar__tools">
           <SettingsDialog showTrigger={false} />
           <BackgroundPanel />
-          <button
-            className="tool-button"
-            disabled={!activeCanvasId}
-            aria-label={saveStateLabel}
-            onClick={() => activeCanvasId && void saveCanvasNow(activeCanvasId)}
-          >
-            <Save size={16} />
-            <span>{saveStateLabel}</span>
-          </button>
+          <TopBarIconTooltip label={saveStateLabel}>
+            <button
+              type="button"
+              className={`icon-button top-bar-icon-button top-bar-save-button top-bar-save-button--${saveState}`}
+              disabled={!activeCanvasId}
+              aria-label={saveStateLabel}
+              onClick={() => activeCanvasId && void saveCanvasNow(activeCanvasId)}
+            >
+              <Save size={16} aria-hidden="true" />
+            </button>
+          </TopBarIconTooltip>
         </div>
       </header>
       <Dialog.Root open={Boolean(closeCanvas)} onOpenChange={(open) => !open && setCloseCanvasId(null)}>

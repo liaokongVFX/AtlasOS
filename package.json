@@ -12,7 +12,9 @@
     "dev:sandbox": "npm run ensure:electron && electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
     "test": "vitest run",
-    "package:win": "npm run ensure:electron && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --win nsis",
+    "release:guard": "node scripts/verify-release-tag.cjs",
+    "package:win": "npm run ensure:electron && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --win nsis --publish never",
+    "package:win:publish": "npm run ensure:electron && npm run release:guard && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --win nsis --publish always",
     "rebuild": "cross-env npm_config_devdir=.electron-gyp electron-rebuild -f -w node-pty,sharp"
   },
   "dependencies": {
@@ -47,6 +49,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "electron-store": "^10.1.0",
+    "electron-updater": "^6.8.3",
     "fast-glob": "^3.3.3",
     "immer": "^10.1.3",
     "lucide-react": "^0.553.0",
@@ -99,7 +102,13 @@
     ],
     "npmRebuild": true,
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "publish": [
+        {
+          "provider": "github",
+          "releaseType": "release"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,

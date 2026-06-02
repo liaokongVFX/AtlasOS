@@ -11,7 +11,7 @@ import {
 } from '../components/registry'
 import { translateCurrent } from '../i18n'
 
-type SaveState = 'idle' | 'saving' | 'saved' | 'error'
+type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
 
 type ComponentFrameUpdate = {
   componentId: string
@@ -522,6 +522,10 @@ export const useCanvasStore = create<CanvasStore>()(
       if (immediate) {
         void get().saveCanvasNow(canvasId)
         return
+      }
+
+      if (canvasId === get().activeCanvasId) {
+        set({ saveState: 'dirty' })
       }
 
       if (saveTimers.has(canvasId)) clearTimeout(saveTimers.get(canvasId))

@@ -4,6 +4,8 @@ import type { GitDiffInput, LauncherChooseFileResult, LauncherOpenInput } from '
 import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
 import type { AppSettings, AtlasAppState, CanvasDocument } from '@shared/schema'
 import type { SystemMetricsSnapshot } from '@shared/system-metrics'
+import type { TerminalAgentCommandEvent } from '@shared/terminal-agent'
+import type { AtlasUpdateState } from '@shared/updates'
 import type { ClaudeHistoryListResult, ClaudeHistorySessionDetail } from '@shared/claude-history'
 import type { CodexHistoryListResult, CodexHistorySessionDetail } from '@shared/codex-history'
 import type { GitBranchSummary, GitCommitSummary, GitDiffResult, GitOperationResult, GitStashEntry, GitStatusSnapshot, GitSummary } from '@shared/git'
@@ -89,7 +91,7 @@ const atlasApi = {
     onWatchEvent: (listener: Listener<{ watchId: string; eventName: string; path: string }>) => on('filesystem:watch-event', listener)
   },
   terminal: {
-    create: (input: { componentId: string; canvasId?: string; title?: string; cwd?: string; shell?: string; initialCommand?: string; cols?: number; rows?: number }) =>
+    create: (input: { componentId: string; canvasId?: string; title?: string; cwd?: string; shell?: string; initialCommand?: string; autoConfirmWorkspaceTrust?: boolean; cols?: number; rows?: number }) =>
       ipcRenderer.invoke('terminal:create', input) as Promise<{ sessionId: string; cwd: string; shell: string; didRunInitialCommand?: boolean }>,
     write: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', { sessionId, data }),
     resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { sessionId, cols, rows }),
@@ -110,6 +112,10 @@ const atlasApi = {
     onCwd: (sessionId: string, listener: Listener<string>) =>
       on<{ sessionId: string; cwd: string }>('terminal:cwd', (payload) => {
         if (payload.sessionId === sessionId) listener(payload.cwd)
+      }),
+    onAgentCommand: (sessionId: string, listener: Listener<TerminalAgentCommandEvent>) =>
+      on<TerminalAgentCommandEvent>('terminal:agent-command', (payload) => {
+        if (payload.sessionId === sessionId) listener(payload)
       })
   },
   clipboard: {
@@ -122,6 +128,13 @@ const atlasApi = {
   },
   systemMetrics: {
     get: () => ipcRenderer.invoke('system-metrics:get', {}) as Promise<SystemMetricsSnapshot>
+  },
+  updates: {
+    getState: () => ipcRenderer.invoke('updates:get-state', {}) as Promise<AtlasUpdateState>,
+    check: () => ipcRenderer.invoke('updates:check', {}) as Promise<AtlasUpdateState>,
+    download: () => ipcRenderer.invoke('updates:download', {}) as Promise<AtlasUpdateState>,
+    installAndRestart: () => ipcRenderer.invoke('updates:install-and-restart', {}) as Promise<{ ok: true }>,
+    onStateUpdated: (listener: Listener<AtlasUpdateState>) => on('updates:state-updated', listener)
   },
   claudeHistory: {
     list: () => ipcRenderer.invoke('claude-history:list', {}) as Promise<ClaudeHistoryListResult>,

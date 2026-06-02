@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
 import { DEFAULT_PET_SETTINGS } from '@shared/pet'
 import type { CanvasComponent, CanvasDocument, CanvasGroup } from '@shared/schema'
+import { DEFAULT_UPDATE_SETTINGS } from '@shared/updates'
 import { I18nContext, setCurrentLocale, translate } from '../i18n'
 import { subscribeCanvasViewportSync } from '../lib/canvas-viewport-sync'
 import { useAppSettingsStore } from '../store/app-settings-store'
@@ -241,7 +242,8 @@ describe('CanvasBoard', () => {
         schemaVersion: ATLAS_SCHEMA_VERSION,
         locale: 'en-US',
         shortcuts: { ...DEFAULT_APP_SHORTCUTS },
-        pet: { ...DEFAULT_PET_SETTINGS }
+        pet: { ...DEFAULT_PET_SETTINGS },
+        updates: { ...DEFAULT_UPDATE_SETTINGS }
       }
     })
     useCanvasStore.setState({
@@ -570,7 +572,8 @@ describe('CanvasBoard', () => {
           canvasFind: 'Ctrl+F',
           canvasCreateComponent: 'Ctrl+Alt+K'
         },
-        pet: { ...DEFAULT_PET_SETTINGS }
+        pet: { ...DEFAULT_PET_SETTINGS },
+        updates: { ...DEFAULT_UPDATE_SETTINGS }
       }
     })
 
@@ -731,6 +734,87 @@ describe('CanvasBoard', () => {
     const components = useCanvasStore.getState().canvases['canvas-1'].components
     expect(components).toHaveLength(2)
     expect(components[1].id).not.toBe('component-1')
+  })
+
+  it('hides group selection actions and ignores Ctrl+G for one selected component', () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [createComponent('component-1')]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([{ id: 'component-1', type: 'select', selected: true }])
+    })
+
+    expect(screen.queryByRole('button', { name: 'Group selection' })).not.toBeInTheDocument()
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+
+    expect(useCanvasStore.getState().canvases['canvas-1'].groups).toHaveLength(0)
+  })
+
+  it('shows group selection actions for two selected components and groups from the toolbar', async () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('component-1'),
+            createComponent('component-2', { frame: { x: 560, y: 160, width: 200, height: 160 } })
+          ]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([
+        { id: 'component-1', type: 'select', selected: true },
+        { id: 'component-2', type: 'select', selected: true }
+      ])
+    })
+
+    const groupButton = screen.getByRole('button', { name: 'Group selection' })
+    expect(groupButton).toBeEnabled()
+
+    fireEvent.click(groupButton)
+
+    await waitFor(() => expect(useCanvasStore.getState().canvases['canvas-1'].groups).toHaveLength(1))
+    expect(useCanvasStore.getState().canvases['canvas-1'].groups[0].memberIds).toEqual(['component-1', 'component-2'])
+  })
+
+  it('keeps selected group actions available from the selection toolbar', () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          groups: [createGroup('group-1')]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([{ id: 'group-1', type: 'select', selected: true }])
+    })
+
+    expect(screen.getByRole('button', { name: 'Group selection' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Edit group' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Ungroup selection' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Delete group' })).toBeEnabled()
   })
 
   it('groups selected components with Ctrl+G and selects the new group', async () => {
@@ -900,7 +984,8 @@ describe('CanvasBoard', () => {
           canvasFind: 'Ctrl+F',
           canvasCreateComponent: 'Tab'
         },
-        pet: { ...DEFAULT_PET_SETTINGS }
+        pet: { ...DEFAULT_PET_SETTINGS },
+        updates: { ...DEFAULT_UPDATE_SETTINGS }
       }
     })
     useCanvasStore.setState((state) => ({
@@ -1024,7 +1109,8 @@ describe('CanvasBoard', () => {
           canvasFind: 'Alt+K',
           canvasCreateComponent: 'Tab'
         },
-        pet: { ...DEFAULT_PET_SETTINGS }
+        pet: { ...DEFAULT_PET_SETTINGS },
+        updates: { ...DEFAULT_UPDATE_SETTINGS }
       }
     })
     useCanvasStore.setState((state) => ({

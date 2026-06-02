@@ -85,6 +85,16 @@ describe('BackgroundPanel', () => {
     expect(useCanvasStore.getState().canvases['canvas-1'].background.color).toBe(gradient)
   })
 
+  it('keeps the background trigger icon-only', () => {
+    renderBackgroundPanel()
+
+    const trigger = screen.getByRole('button', { name: 'Background' })
+    expect(trigger).toHaveClass('icon-button', 'top-bar-icon-button')
+    expect(trigger).not.toHaveAttribute('title')
+    expect(trigger.querySelector('svg')).not.toBeNull()
+    expect(trigger.textContent).toBe('')
+  })
+
   it('keeps the solid color picker usable when the background fill is a gradient', async () => {
     const canvas = createCanvas()
     canvas.background.color = 'linear-gradient(135deg, #010102, #11141b)'

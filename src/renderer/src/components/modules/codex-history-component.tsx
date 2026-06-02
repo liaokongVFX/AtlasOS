@@ -30,5 +30,5 @@ export function CodexHistoryComponent(props: AtlasComponentRendererProps): JSX.E
   )
   const resumeCommand = useCallback((session: AgentHistorySessionSummary) => `codex resume ${session.sessionId}`, [])
 
-  return <AgentHistoryExplorer {...props} api={api} labels={labels} terminalTitlePrefix="Codex" resumeCommand={resumeCommand} />
+  return <AgentHistoryExplorer {...props} api={api} agentSource="codex" labels={labels} terminalTitlePrefix="Codex" resumeCommand={resumeCommand} />
 }

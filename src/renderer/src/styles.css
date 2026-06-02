@@ -92,6 +92,14 @@ html[data-atlas-view="pet"] #root {
   background: transparent;
 }
 
+html[data-atlas-view="update"],
+html[data-atlas-view="update"] body,
+html[data-atlas-view="update"] #root {
+  width: 100%;
+  height: 100%;
+  background: var(--color-canvas);
+}
+
 button,
 input {
   font: inherit;
@@ -435,6 +443,63 @@ svg {
 .icon-button {
   width: var(--control-height);
   padding: 0;
+}
+
+.top-bar-icon-button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-ink-subtle);
+  box-shadow: none;
+}
+
+.top-bar-icon-button:hover {
+  border-color: transparent;
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+}
+
+.top-bar-save-button--dirty {
+  color: var(--color-warning);
+}
+
+.top-bar-save-button--saving {
+  color: var(--color-primary-hover);
+  animation: top-bar-save-pulse 900ms ease-in-out infinite;
+}
+
+.top-bar-save-button--saved {
+  color: var(--color-success);
+}
+
+.top-bar-save-button--error {
+  color: var(--color-danger);
+}
+
+.top-bar-save-button--dirty:hover {
+  color: #e8ca78;
+}
+
+.top-bar-save-button--saving:hover {
+  color: var(--color-primary-hover);
+}
+
+.top-bar-save-button--saved:hover {
+  color: #46c261;
+}
+
+.top-bar-save-button--error:hover {
+  color: #ff9a9a;
+}
+
+@keyframes top-bar-save-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.62;
+  }
 }
 
 .danger:hover,
@@ -1281,6 +1346,65 @@ svg {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.settings-update-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 12px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 8px;
+  background: var(--color-surface-1);
+}
+
+.settings-update-summary span {
+  min-width: 0;
+}
+
+.settings-update-summary strong,
+.settings-update-summary small {
+  display: block;
+}
+
+.settings-update-summary strong {
+  margin-bottom: 4px;
+  color: var(--color-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-update-summary small {
+  overflow: hidden;
+  color: var(--color-ink-subtle);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-update-check-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: 34px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  outline: 0;
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-update-check-button:hover {
+  border-color: var(--color-hairline-strong);
+  background: var(--color-surface-3);
 }
 
 .general-settings__field {
@@ -6253,6 +6377,182 @@ svg {
   .claude-history-project-list,
   .claude-history-sessions {
     max-height: 180px;
+  }
+}
+
+.update-window {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  overflow: hidden;
+  border: 1px solid var(--color-hairline);
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+.update-window__drag-region {
+  position: absolute;
+  inset: 0 44px 0 0;
+  -webkit-app-region: drag;
+}
+
+.update-window__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0;
+  background: transparent;
+  color: var(--color-ink-subtle);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.update-window__close:hover {
+  border-color: var(--color-hairline);
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+}
+
+.update-window__body {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.update-window__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 12px;
+  background: var(--color-surface-1);
+  color: var(--color-primary-hover);
+}
+
+.update-window__icon--error {
+  color: var(--color-danger);
+}
+
+.update-window__spin {
+  animation: update-spin 900ms linear infinite;
+}
+
+.update-window__content {
+  min-width: 0;
+  padding-right: 24px;
+}
+
+.update-window__eyebrow {
+  margin: 0 0 4px;
+  color: var(--color-ink-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.update-window h1 {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.18;
+}
+
+.update-window__message {
+  margin: 8px 0 0;
+  color: var(--color-ink-subtle);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.update-window__progress {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.update-window__progress-track {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--color-surface-3);
+}
+
+.update-window__progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary-hover);
+  transition: width 160ms ease;
+}
+
+.update-window__progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--color-ink-subtle);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.update-window__notes {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 8px;
+  background: var(--color-surface-1);
+}
+
+.update-window__notes strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--color-ink);
+  font-size: 12px;
+}
+
+.update-window__notes p {
+  margin: 0;
+  color: var(--color-ink-subtle);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.update-window__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: auto;
+  -webkit-app-region: no-drag;
+}
+
+.update-window__actions .primary-button,
+.update-window__actions .tool-button {
+  height: 34px;
+}
+
+@keyframes update-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

@@ -16,6 +16,7 @@ import { SystemMetricsService } from './services/system-metrics-service'
 import { GitService } from './services/git-service'
 import { ClaudeHistoryService } from './services/claude-history-service'
 import { CodexHistoryService } from './services/codex-history-service'
+import { UpdateService } from './services/update-service'
 import { applyAtlasBrowserNetworkPolicy, applyAtlasBrowserWebPreferences } from './services/browser-network-policy'
 import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services/local-asset-protocol'
 import type { PetAlertTarget } from '@shared/pet'
@@ -29,6 +30,7 @@ let pluginService: PluginService | null = null
 let ptyService: PtyService | null = null
 let appSettingsService: AppSettingsService | null = null
 let petService: PetService | null = null
+let updateService: UpdateService | null = null
 let trayLocale: Locale = DEFAULT_LOCALE
 let isQuitting = false
 
@@ -75,12 +77,14 @@ function disposeWindowServices(): void {
   pluginService?.dispose()
   ptyService?.dispose()
   petService?.dispose()
+  updateService?.dispose()
 
   browserService = null
   fileSystemService = null
   pluginService = null
   ptyService = null
   petService = null
+  updateService = null
 }
 
 function configureAppRuntime(): void {
@@ -223,7 +227,9 @@ async function waitForRendererDevServer(url: string, timeoutMs = 10_000): Promis
   throw new Error(`Timed out waiting for renderer dev server: ${url}`)
 }
 
-async function loadRenderer(window: BrowserWindow, view?: 'pet'): Promise<void> {
+type RendererView = 'pet' | 'update'
+
+async function loadRenderer(window: BrowserWindow, view?: RendererView): Promise<void> {
   if (process.env.ELECTRON_RENDERER_URL) {
     const url = process.env.ELECTRON_RENDERER_URL
     await waitForRendererDevServer(url)
@@ -243,6 +249,33 @@ async function loadRenderer(window: BrowserWindow, view?: 'pet'): Promise<void> 
   } else {
     await window.loadFile(join(__dirname, '../renderer/index.html'), view ? { query: { view } } : undefined)
   }
+}
+
+function createUpdateWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    width: 460,
+    height: 300,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    frame: false,
+    title: 'AtlasOS Update',
+    backgroundColor: '#010102',
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  })
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
+  return window
 }
 
 function installSecurityDefaults(): void {
@@ -315,7 +348,8 @@ async function createWindow(): Promise<void> {
     persistence,
     appSettingsService,
     loadPetRenderer: (targetWindow) => loadRenderer(targetWindow, 'pet'),
-    openTarget: openPetTarget
+    openTarget: openPetTarget,
+    onAgentProviderSessionResolved: (context) => ptyService?.recordAgentProviderSession(context)
   })
 
   new WorkspaceDocumentService(persistence, () => petService?.scanKanban()).registerIpc()
@@ -334,6 +368,13 @@ async function createWindow(): Promise<void> {
   new GitService().registerIpc()
   new ClaudeHistoryService().registerIpc()
   new CodexHistoryService().registerIpc()
+  updateService = new UpdateService({
+    isDev,
+    isPackaged: app.isPackaged,
+    createUpdateWindow,
+    loadUpdateRenderer: (targetWindow) => loadRenderer(targetWindow as BrowserWindow, 'update')
+  })
+  updateService.registerIpc()
   appSettingsService.registerIpc((nextSettings) => {
     trayLocale = nextSettings.locale
     updateTrayMenu()
@@ -373,6 +414,9 @@ async function createWindow(): Promise<void> {
   })
 
   await loadRenderer(window)
+  void updateService.startAutoCheck(settings.updates.autoCheck).catch((error) => {
+    console.error('AtlasOS automatic update check failed', error)
+  })
 }
 
 configureAppRuntime()

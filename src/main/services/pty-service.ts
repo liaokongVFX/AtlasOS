@@ -17,6 +17,7 @@ import {
   terminalWriteInputSchema
 } from '@shared/ipc'
 import { terminalCreateSchema } from '@shared/schema'
+import { detectTerminalAgentCommand, terminalAgentCommandEventSchema, terminalAgentResumeCommand, type TerminalAgentSource } from '@shared/terminal-agent'
 import { parseFileUriListPaths, readClipboardFilePathsFromNativeFormats } from './clipboard-files'
 import { handleValidated } from './ipc-helpers'
 import { buildPowerShellBootstrapScript, extractCwdMarkers } from './pty-cwd'
@@ -33,6 +34,8 @@ type TerminalSession = {
   cwd: string
   dataBuffer: string
   inputBuffer: string
+  autoConfirmWorkspaceTrust: boolean
+  didAutoConfirmWorkspaceTrust: boolean
 }
 
 type AgentHookEnvironmentContext = {
@@ -43,10 +46,16 @@ type AgentHookEnvironmentContext = {
   cwd: string
 }
 
-type AgentCommandSource = 'codex' | 'claude'
-
 type AgentCommandStartedContext = AgentHookEnvironmentContext & {
-  source: AgentCommandSource
+  source: TerminalAgentSource
+  command: string
+}
+
+type AgentProviderSessionContext = {
+  terminalSessionId: string
+  source: TerminalAgentSource
+  providerSessionId: string
+  cwd?: string
 }
 
 type PtyServiceOptions = {
@@ -78,6 +87,7 @@ type NativeClipboardFilesResult = {
 const STALE_PASTED_ASSET_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7
 const MAX_PASTED_ASSET_BYTES = 10 * 1024 * 1024
 const MAX_TERMINAL_INPUT_BUFFER_CHARS = 4096
+const TERMINAL_ENV_BLOCKLIST = ['CODEX_THREAD_ID', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE', 'CODEX_SHELL'] as const
 const PASTED_IMAGE_EXTENSIONS_BY_MIME_TYPE = new Map([
   ['image/png', '.png'],
   ['image/x-png', '.png'],
@@ -152,55 +162,22 @@ function uniqueExistingPaths(paths: string[]): string[] {
   return result
 }
 
-function readShellToken(input: string): { token: string; rest: string } | null {
-  const value = input.trimStart()
-  if (!value) return null
+function normalizeTerminalOutputForMatching(value: string): string {
+  return value
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, ' ')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ' ')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
 
-  const quote = value[0]
-  if (quote === '"' || quote === "'") {
-    let token = ''
-    for (let index = 1; index < value.length; index += 1) {
-      const char = value[index]
-      if (char === quote) return { token, rest: value.slice(index + 1) }
-      token += char
-    }
-    return { token, rest: '' }
+function terminalBaseEnvironment(): NodeJS.ProcessEnv {
+  const env = { ...process.env }
+  for (const name of TERMINAL_ENV_BLOCKLIST) {
+    delete env[name]
   }
-
-  const match = /^[^\s;&|<>]+/.exec(value)
-  if (!match) return null
-  return { token: match[0], rest: value.slice(match[0].length) }
-}
-
-function agentSourceFromExecutable(token: string): AgentCommandSource | null {
-  const baseName = token.split(/[\\/]/).at(-1)?.toLowerCase()
-  if (!baseName) return null
-
-  const command = baseName.replace(/\.(cmd|exe|bat|ps1)$/i, '')
-  if (command === 'codex') return 'codex'
-  if (command === 'claude') return 'claude'
-  return null
-}
-
-function isHelpOrVersionArgument(argument: string | undefined): boolean {
-  if (!argument) return false
-  return ['-h', '--help', 'help', '-v', '--version', 'version'].includes(argument.toLowerCase())
-}
-
-function detectAgentCommand(command: string): AgentCommandSource | null {
-  let remaining = command.trim()
-  if (!remaining) return null
-  if (remaining.startsWith('&')) remaining = remaining.slice(1).trimStart()
-
-  const executable = readShellToken(remaining)
-  if (!executable) return null
-
-  const source = agentSourceFromExecutable(executable.token)
-  if (!source) return null
-
-  const firstArgument = readShellToken(executable.rest)?.token
-  if (isHelpOrVersionArgument(firstArgument)) return null
-  return source
+  return env
 }
 
 export class PtyService {
@@ -221,6 +198,7 @@ export class PtyService {
         input.cwd,
         input.shell,
         input.initialCommand,
+        input.autoConfirmWorkspaceTrust,
         input.cols,
         input.rows
       )
@@ -271,6 +249,24 @@ export class PtyService {
     }
   }
 
+  recordAgentProviderSession(context: AgentProviderSessionContext): void {
+    const session = this.sessionsById.get(context.terminalSessionId)
+    if (!session) return
+
+    const command = terminalAgentResumeCommand(context.source, context.providerSessionId)
+    if (!command) return
+
+    const event = terminalAgentCommandEventSchema.parse({
+      sessionId: session.id,
+      componentId: session.componentId,
+      canvasId: session.canvasId,
+      source: context.source,
+      cwd: context.cwd || session.cwd,
+      command
+    })
+    this.sendToOwner(session.ownerId, 'terminal:agent-command', event)
+  }
+
   private acquireOrCreate(
     ownerId: number,
     componentId: string,
@@ -279,6 +275,7 @@ export class PtyService {
     cwdInput: string | undefined,
     shellInput: string | undefined,
     initialCommand: string | undefined,
+    autoConfirmWorkspaceTrust: boolean,
     cols: number,
     rows: number
   ): { sessionId: string; cwd: string; shell: string; didRunInitialCommand?: boolean } {
@@ -293,6 +290,10 @@ export class PtyService {
       existing.ownerId = ownerId
       existing.canvasId = canvasId ?? existing.canvasId
       existing.title = title ?? existing.title
+      if (autoConfirmWorkspaceTrust) {
+        existing.autoConfirmWorkspaceTrust = true
+        this.autoConfirmWorkspaceTrustPrompt(existing.id)
+      }
       return { sessionId: existing.id, cwd: existing.cwd, shell: existing.shell, didRunInitialCommand: false }
     }
 
@@ -309,7 +310,7 @@ export class PtyService {
         rows,
         cwd,
         env: {
-          ...process.env,
+          ...terminalBaseEnvironment(),
           ...this.options.getAgentHookEnvironment?.({ sessionId, canvasId, componentId, title, cwd })
         }
       })
@@ -328,7 +329,9 @@ export class PtyService {
       shell,
       cwd,
       dataBuffer: '',
-      inputBuffer: ''
+      inputBuffer: '',
+      autoConfirmWorkspaceTrust,
+      didAutoConfirmWorkspaceTrust: false
     }
 
     this.sessionsById.set(sessionId, session)
@@ -336,6 +339,7 @@ export class PtyService {
 
     term.onData((data) => {
       this.updateCwdFromOutput(sessionId, data)
+      this.autoConfirmWorkspaceTrustPrompt(sessionId)
       this.sendToOwner(session.ownerId, 'terminal:data', { sessionId, data })
     })
 
@@ -370,6 +374,21 @@ export class PtyService {
 
     session.cwd = nextCwd
     this.sendToOwner(session.ownerId, 'terminal:cwd', { sessionId, cwd: nextCwd })
+  }
+
+  private autoConfirmWorkspaceTrustPrompt(sessionId: string): void {
+    const session = this.sessionsById.get(sessionId)
+    if (!session?.autoConfirmWorkspaceTrust || session.didAutoConfirmWorkspaceTrust) return
+
+    const output = normalizeTerminalOutputForMatching(session.dataBuffer)
+    if (!output.includes('quick safety check') || !output.includes('yes, i trust this folder') || !output.includes('enter to confirm')) return
+
+    session.didAutoConfirmWorkspaceTrust = true
+    try {
+      session.pty.write('\r')
+    } catch (error) {
+      console.warn(`Failed to auto-confirm workspace trust for PTY session ${sessionId}:`, error)
+    }
   }
 
   private closeBySessionId(sessionId: string, kill = true): void {
@@ -426,12 +445,23 @@ export class PtyService {
   }
 
   private reportAgentCommandStarted(session: TerminalSession, command: string): void {
-    const source = detectAgentCommand(command)
-    if (!source) return
+    const agentCommand = detectTerminalAgentCommand(command)
+    if (!agentCommand) return
+
+    const event = terminalAgentCommandEventSchema.parse({
+      sessionId: session.id,
+      componentId: session.componentId,
+      canvasId: session.canvasId,
+      source: agentCommand.source,
+      cwd: session.cwd,
+      command: agentCommand.command
+    })
+    this.sendToOwner(session.ownerId, 'terminal:agent-command', event)
 
     try {
       const result = this.options.onAgentCommandStarted?.({
-        source,
+        source: agentCommand.source,
+        command: agentCommand.command,
         sessionId: session.id,
         canvasId: session.canvasId,
         componentId: session.componentId,
@@ -439,10 +469,10 @@ export class PtyService {
         cwd: session.cwd
       })
       void Promise.resolve(result).catch((error) => {
-        console.warn(`Failed to report ${source} command start for PTY session ${session.id}:`, error)
+        console.warn(`Failed to report ${agentCommand.source} command start for PTY session ${session.id}:`, error)
       })
     } catch (error) {
-      console.warn(`Failed to report ${source} command start for PTY session ${session.id}:`, error)
+      console.warn(`Failed to report ${agentCommand.source} command start for PTY session ${session.id}:`, error)
     }
   }
 

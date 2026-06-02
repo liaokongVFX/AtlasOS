@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { BellRing, Bot, Check, ChevronDown, Puzzle, Settings, SlidersHorizontal, Trash2, Upload, X, type LucideIcon } from 'lucide-react'
+import { BellRing, Bot, Check, ChevronDown, Puzzle, RefreshCcw, Settings, SlidersHorizontal, Trash2, Upload, X, type LucideIcon } from 'lucide-react'
 import { DEFAULT_APP_SHORTCUTS } from '@shared/constants'
 import { DEFAULT_PET_SPRITE_ANIMATION, type PetRuntimeState, type PetSettings } from '@shared/pet'
 import { localAssetUrl } from '@shared/local-assets'
+import type { AtlasUpdateState } from '@shared/updates'
 import {
   formatKeyboardShortcut,
   keyboardShortcutFromEvent,
   normalizeKeyboardShortcut
 } from '@shared/keyboard-shortcuts'
 import type { AppShortcutSettings } from '@shared/schema'
-import { LOCALES, useI18n, type I18nKey, type Locale } from '../i18n'
+import { LOCALES, useI18n, type I18nKey, type Locale, type TFunction } from '../i18n'
 import { cn } from '../lib/utils'
 import { useAppSettingsStore } from '../store/app-settings-store'
 import { PluginSettingsPanel } from './plugin-settings-panel'
@@ -307,6 +308,38 @@ function validateShortcutDraft(draft: AppShortcutSettings): { errors: ShortcutEr
   }
 }
 
+function updateStatusLabel(t: TFunction, state: AtlasUpdateState | null): string {
+  if (!state) return t('saveState.idle')
+
+  switch (state.status) {
+    case 'available':
+      return t('update.availableTitle')
+    case 'checking':
+      return t('update.checkingTitle')
+    case 'downloaded':
+      return t('update.downloadedTitle')
+    case 'downloading':
+      return t('update.downloadingTitle')
+    case 'error':
+      return `${t('update.errorTitle')}: ${state.error ?? t('update.errorBody')}`
+    case 'not-available':
+      return t('update.upToDate')
+    default:
+      return t('saveState.idle')
+  }
+}
+
+function formatUpdateTime(value: string | undefined, locale: Locale): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleString(locale, {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  })
+}
+
 function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
   const { locale, setLocale, t } = useI18n()
   const settings = useAppSettingsStore((state) => state.settings)
@@ -316,6 +349,8 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
   const [draft, setDraft] = useState<AppShortcutSettings>(() => ({ ...DEFAULT_APP_SHORTCUTS }))
   const [errors, setErrors] = useState<ShortcutErrors>({})
   const [actionError, setActionError] = useState<string | null>(null)
+  const [updateState, setUpdateState] = useState<AtlasUpdateState | null>(null)
+  const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -329,6 +364,16 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
     setErrors({})
     setActionError(null)
   }, [active, settings.shortcuts])
+
+  useEffect(() => {
+    if (!active) return undefined
+
+    void window.atlas.updates.getState().then(setUpdateState).catch((error) => {
+      setActionError(error instanceof Error ? error.message : String(error))
+    })
+
+    return window.atlas.updates.onStateUpdated(setUpdateState)
+  }, [active])
 
   const updateShortcutDraft = (key: keyof AppShortcutSettings, value: string): void => {
     setDraft((current) => ({ ...current, [key]: value }))
@@ -380,6 +425,38 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
     }
   }
 
+  const setAutoCheckUpdates = async (autoCheck: boolean): Promise<void> => {
+    setSaving(true)
+    setActionError(null)
+
+    try {
+      await updateSettings({
+        ...settings,
+        updates: {
+          ...settings.updates,
+          autoCheck
+        }
+      })
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const checkForUpdates = async (): Promise<void> => {
+    setCheckingUpdates(true)
+    setActionError(null)
+
+    try {
+      setUpdateState(await window.atlas.updates.check())
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setCheckingUpdates(false)
+    }
+  }
+
   const isDirty = SHORTCUT_FIELDS.some((field) => draft[field.key] !== settings.shortcuts[field.key])
 
   return (
@@ -408,6 +485,43 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
               </button>
             ))}
           </div>
+        </div>
+      </div>
+
+      <div className="general-settings__section" aria-labelledby="settings-updates-title">
+        <div className="general-settings__section-header">
+          <h3 id="settings-updates-title">{t('settings.updates')}</h3>
+          <p>{t('settings.updateAutoCheckDescription')}</p>
+        </div>
+        <label className="settings-toggle-row">
+          <span>
+            <strong>{t('settings.updateAutoCheck')}</strong>
+            <small>{t('settings.updateAutoCheckDescription')}</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={settings.updates.autoCheck}
+            disabled={saving}
+            onChange={(event) => void setAutoCheckUpdates(event.target.checked)}
+          />
+        </label>
+        <div className="settings-update-summary">
+          <span>
+            <strong>{t('settings.updateCurrentVersion')}</strong>
+            <small>{updateState?.currentVersion ?? '-'}</small>
+          </span>
+          <span>
+            <strong>{t('settings.updateStatus')}</strong>
+            <small>{updateStatusLabel(t, updateState)}</small>
+          </span>
+          <span>
+            <strong>{t('settings.updateLastChecked')}</strong>
+            <small>{formatUpdateTime(updateState?.lastCheckedAt, locale) || t('settings.updateNeverChecked')}</small>
+          </span>
+          <button type="button" className="settings-update-check-button" disabled={checkingUpdates} onClick={() => void checkForUpdates()}>
+            <RefreshCcw size={14} aria-hidden="true" />
+            <span>{checkingUpdates ? t('update.checkingTitle') : t('settings.updateCheckNow')}</span>
+          </button>
         </div>
       </div>
 

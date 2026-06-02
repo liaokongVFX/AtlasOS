@@ -184,7 +184,7 @@ describe('PetApp', () => {
     expect(screen.getByText('Nothing needs attention.')).toBeInTheDocument()
   })
 
-  it('keeps completed agents visible with a completed alert', async () => {
+  it('keeps completed alerts while clearing completed agents from the running list', async () => {
     petApi.getState.mockResolvedValue(createCompletedState())
 
     render(<PetApp />)
@@ -195,8 +195,8 @@ describe('PetApp', () => {
     fireEvent.pointerEnter(orb.parentElement as Element)
 
     expect(await screen.findByText('Claude Code completed')).toBeInTheDocument()
-    expect(screen.getByText('completed')).toBeInTheDocument()
-    expect(screen.queryByText('No Codex or Claude sessions.')).not.toBeInTheDocument()
+    expect(screen.queryByText('completed')).not.toBeInTheDocument()
+    expect(screen.getByText('No Codex or Claude sessions.')).toBeInTheDocument()
     expect(screen.queryByText('asking')).not.toBeInTheDocument()
   })
 

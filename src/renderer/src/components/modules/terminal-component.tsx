@@ -3,6 +3,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createTerminalAgentRestore, terminalAgentRestoreSchema, type TerminalAgentRestore } from '@shared/terminal-agent'
 import { fileExtension, fileName } from '../../lib/file-types'
 import { useI18n, type TFunction } from '../../i18n'
 import { writeClipboardText } from '../../lib/clipboard'
@@ -66,6 +67,11 @@ const PASTED_IMAGE_MIME_TYPES_BY_EXTENSION = new Map([
   ['.avif', 'image/avif'],
   ['.ico', 'image/x-icon']
 ])
+
+function readTerminalAgentRestore(value: unknown): TerminalAgentRestore | null {
+  const result = terminalAgentRestoreSchema.safeParse(value)
+  return result.success ? result.data : null
+}
 
 function createUnscaledMouseEvent<T extends XtermMouseEvent>(event: T, element: HTMLElement): T {
   const rect = element.getBoundingClientRect()
@@ -284,6 +290,9 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
   const cwdRef = useRef(asString(component.state.cwd, asString(component.config.cwd)))
   const initialCommand = asString(component.config.initialCommand)
   const initialCommandDispatched = asBoolean(component.state.initialCommandDispatched)
+  const storedAgentRestore = readTerminalAgentRestore(component.state.agentRestore) ?? createTerminalAgentRestore(initialCommand, cwdRef.current)
+  const startupCommand = initialCommand && !initialCommandDispatched ? initialCommand : storedAgentRestore?.command
+  const autoConfirmWorkspaceTrust = storedAgentRestore?.source === 'claude' && startupCommand === storedAgentRestore.command
   const pendingFocusRef = useRef(false)
   const focusFrameRef = useRef<number | null>(null)
   const feedbackTimerRef = useRef<number | null>(null)
@@ -717,7 +726,8 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
           title: component.title,
           cwd: cwdRef.current,
           shell: asString(component.config.shell),
-          initialCommand: initialCommand && !initialCommandDispatched ? initialCommand : undefined,
+          initialCommand: startupCommand,
+          autoConfirmWorkspaceTrust,
           cols: instance.cols,
           rows: instance.rows
         })
@@ -728,12 +738,18 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
           }
 
           sessionIdRef.current = session.sessionId
+          const startupStatePatch: Record<string, unknown> = {}
           if (session.cwd !== cwdRef.current) {
             cwdRef.current = session.cwd
-            updateState({ cwd: session.cwd }, false)
+            startupStatePatch.cwd = session.cwd
           }
           if (session.didRunInitialCommand) {
-            updateState({ initialCommandDispatched: true }, true)
+            startupStatePatch.initialCommandDispatched = true
+            const agentRestore = startupCommand ? createTerminalAgentRestore(startupCommand, session.cwd) : null
+            if (agentRestore) startupStatePatch.agentRestore = agentRestore
+          }
+          if (Object.keys(startupStatePatch).length > 0) {
+            updateState(startupStatePatch, true)
           }
           if (isNodeSelectedRef.current) {
             requestFocus()
@@ -744,7 +760,12 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
           const disposeCwd = window.atlas.terminal.onCwd(session.sessionId, (cwd) => {
             if (disposed || cwd === cwdRef.current) return
             cwdRef.current = cwd
-            updateState({ cwd }, false)
+            updateState({ cwd }, true)
+          })
+          const disposeAgentCommand = window.atlas.terminal.onAgentCommand(session.sessionId, (event) => {
+            if (disposed) return
+            const agentRestore = createTerminalAgentRestore(event.command, event.cwd || cwdRef.current)
+            if (agentRestore) updateState({ agentRestore }, true)
           })
           disposeExit = window.atlas.terminal.onExit(session.sessionId, ({ exitCode }) => {
             if (disposed) return
@@ -754,6 +775,7 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
           disposeExit = () => {
             previousDisposeExit()
             disposeCwd()
+            disposeAgentCommand()
           }
         })
         .catch((error) => {

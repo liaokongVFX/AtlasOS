@@ -746,14 +746,16 @@ function CanvasSelectionToolbar({
   onDeleteGroups: () => void
 }): JSX.Element | null {
   const { t } = useI18n()
-  if (selectedComponentCount === 0 && selectedGroupCount === 0) return null
+  const canCreateGroup = selectedComponentCount >= 2
+  const hasGroupActions = selectedGroupCount > 0
+  if (!canCreateGroup && !hasGroupActions) return null
 
   return (
     <Panel position="top-center" className="canvas-selection-toolbar" style={{ top: 14, margin: 0 }}>
       <button
         type="button"
         className="canvas-panel-button"
-        disabled={selectedComponentCount === 0}
+        disabled={!canCreateGroup}
         onClick={onCreateGroup}
         aria-label={t('canvas.groupSelection')}
         title={t('canvas.groupSelection')}
@@ -1297,7 +1299,7 @@ export function CanvasBoard(): JSX.Element {
     if (!activeCanvasId) return
 
     const { componentIds } = getSelectedCanvasIds()
-    if (componentIds.length === 0) return
+    if (componentIds.length < 2) return
 
     const groupId = createGroup(activeCanvasId, componentIds)
     if (!groupId) return

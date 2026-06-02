@@ -8,6 +8,7 @@ import type {
   AgentHistorySessionSummary,
   AgentHistoryTranscriptEntry
 } from '@shared/agent-history'
+import { createTerminalAgentRestore, type TerminalAgentSource } from '@shared/terminal-agent'
 import { useI18n, type I18nKey } from '../../i18n'
 import { useCanvasStore } from '../../store/canvas-store'
 import type { AtlasComponentRendererProps } from '../registry'
@@ -36,6 +37,7 @@ type AgentHistoryLabels = {
 
 type AgentHistoryExplorerProps = AtlasComponentRendererProps & {
   api: AgentHistoryApi
+  agentSource: TerminalAgentSource
   labels: AgentHistoryLabels
   terminalTitlePrefix: string
   resumeCommand: (session: AgentHistorySessionSummary) => string
@@ -114,6 +116,7 @@ function ChildSession({ child, labels }: { child: AgentHistoryChildSessionDetail
 
 export function AgentHistoryExplorer({
   api,
+  agentSource,
   component,
   labels,
   resumeCommand,
@@ -203,16 +206,25 @@ export function AgentHistoryExplorer({
   const resumeSession = useCallback(
     (session: AgentHistorySessionSummary) => {
       const cwd = session.cwd ?? session.projectPath
+      const command = resumeCommand(session)
       addComponent('terminal', terminalPlacement(component), {
         title: `${terminalTitlePrefix}: ${session.title}`,
         config: {
           cwd,
-          initialCommand: resumeCommand(session)
+          initialCommand: command
         },
-        state: { cwd }
+        state: {
+          cwd,
+          agentRestore: createTerminalAgentRestore(command, cwd) ?? {
+            source: agentSource,
+            sessionId: session.sessionId,
+            command,
+            cwd
+          }
+        }
       })
     },
-    [addComponent, component, resumeCommand, terminalTitlePrefix]
+    [addComponent, agentSource, component, resumeCommand, terminalTitlePrefix]
   )
 
   return (

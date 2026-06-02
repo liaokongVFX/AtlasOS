@@ -1,0 +1,143 @@
+name: Manual Release
+
+run-name: Release ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'SemVer version to release, for example 0.1.1. A leading v is accepted.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: atlasos-release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Version, tag, and publish Windows NSIS release
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify branch dispatch
+        if: github.ref_type != 'branch'
+        shell: pwsh
+        run: |
+          throw 'Manual releases must be run from a branch so the version commit has a target branch.'
+
+      - name: Verify default branch dispatch
+        shell: pwsh
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          TARGET_BRANCH: ${{ github.ref_name }}
+        run: |
+          if ($env:TARGET_BRANCH -ne $env:DEFAULT_BRANCH) {
+            throw "Manual releases must run from the default branch '$env:DEFAULT_BRANCH'. Current branch: '$env:TARGET_BRANCH'."
+          }
+
+      - name: Normalize release version
+        id: release
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          $rawVersion = $env:INPUT_VERSION.Trim()
+          if ($rawVersion.StartsWith('v')) {
+            $version = $rawVersion.Substring(1)
+          } else {
+            $version = $rawVersion
+          }
+
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Release version must use stable SemVer X.Y.Z. Received '$rawVersion'."
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify release tag is new
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.release.outputs.tag }}'
+          git fetch --tags --force
+
+          if (git tag --list $tag) {
+            throw "Tag $tag already exists locally."
+          }
+
+          $remoteTag = git ls-remote --tags origin "refs/tags/$tag"
+          if ($remoteTag) {
+            throw "Tag $tag already exists on origin."
+          }
+
+      - name: Update package version
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          npm.cmd version $env:RELEASE_VERSION --no-git-tag-version --allow-same-version
+          node -e "const version = process.env.RELEASE_VERSION; const pkg = require('./package.json'); if (pkg.version !== version) { throw new Error(`package.json version ${pkg.version} does not match ${version}`); }"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm.cmd test
+
+      - name: Build app
+        run: npm.cmd run build
+
+      - name: Commit version and create tag
+        id: tag
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          TARGET_BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git add package.json package-lock.json
+          if (git diff --cached --quiet) {
+            Write-Host "Version files already match $env:RELEASE_TAG; no version commit needed."
+          } else {
+            git commit -m "chore: release $env:RELEASE_TAG"
+            git push origin "HEAD:refs/heads/$env:TARGET_BRANCH"
+          }
+
+          git tag -a $env:RELEASE_TAG -m "AtlasOS $env:RELEASE_TAG"
+          git push origin $env:RELEASE_TAG
+          "pushed=true" >> $env:GITHUB_OUTPUT
+
+      - name: Publish Windows installer
+        run: npx electron-builder --win nsis --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          npm_config_devdir: .electron-gyp
+
+      - name: Clean up failed release tag
+        if: failure() && steps.tag.outputs.pushed == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh release delete $env:RELEASE_TAG --cleanup-tag --yes
+          if ($LASTEXITCODE -ne 0) {
+            git push origin ":refs/tags/$env:RELEASE_TAG"
+          }
