@@ -442,9 +442,10 @@ describe('PtyService hook bridge support', () => {
     service.registerIpc()
 
     const create = ipcHandler('terminal:create')
+    const cwd = process.cwd()
     const terminal = (await create(
       { sender: { id: 7 } },
-      { componentId: 'terminal-1', canvasId: 'canvas-1', title: 'Terminal', cwd: 'D:\\projects\\AtlasOS', cols: 80, rows: 24 }
+      { componentId: 'terminal-1', canvasId: 'canvas-1', title: 'Terminal', cwd, cols: 80, rows: 24 }
     )) as { sessionId: string }
 
     expect(ptyMocks.spawn).toHaveBeenCalledWith(
@@ -457,7 +458,7 @@ describe('PtyService hook bridge support', () => {
           ATLAS_TERMINAL_SESSION_ID: terminal.sessionId,
           ATLAS_CANVAS_ID: 'canvas-1',
           ATLAS_TERMINAL_COMPONENT_ID: 'terminal-1',
-          ATLAS_TERMINAL_CWD: 'D:\\projects\\AtlasOS'
+          ATLAS_TERMINAL_CWD: cwd
         })
       })
     )
