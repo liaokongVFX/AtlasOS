@@ -1,8 +1,11 @@
 import { app, BrowserWindow } from 'electron'
-import { autoUpdater, type AppUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
+import electronUpdater from 'electron-updater'
+import type { AppUpdater, ProgressInfo, UpdateInfo } from 'electron-updater'
 import { z } from 'zod'
 import type { AtlasUpdateProgress, AtlasUpdateState } from '@shared/updates'
 import { handleValidated } from './ipc-helpers'
+
+const { autoUpdater } = electronUpdater
 
 type UpdateWebContents = {
   isDestroyed: () => boolean

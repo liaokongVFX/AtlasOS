@@ -24,9 +24,12 @@ vi.mock('electron', () => ({
   }
 }))
 
-vi.mock('electron-updater', () => ({
-  autoUpdater: new EventEmitter()
-}))
+vi.mock('electron-updater', () => {
+  const autoUpdater = new EventEmitter()
+  return {
+    default: { autoUpdater }
+  }
+})
 
 type MockUpdateWindow = {
   close: ReturnType<typeof vi.fn>
