@@ -91,7 +91,11 @@ jobs:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           npm.cmd version $env:RELEASE_VERSION --no-git-tag-version --allow-same-version
-          node -e "const version = process.env.RELEASE_VERSION; const pkg = require('./package.json'); if (pkg.version !== version) { throw new Error(`package.json version ${pkg.version} does not match ${version}`); }"
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($packageVersion -ne $env:RELEASE_VERSION) {
+            throw "package.json version $packageVersion does not match $env:RELEASE_VERSION."
+          }
+          Write-Host "package.json version $packageVersion matches release version $env:RELEASE_VERSION."
 
       - name: Install dependencies
         run: npm ci
