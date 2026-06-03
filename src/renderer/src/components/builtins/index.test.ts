@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BUILTIN_COMPONENT_TYPES } from '@shared/constants'
+import { translate } from '../../i18n'
 import { createBuiltInComponentDefinitions, createBuiltInSystemPlugin } from '.'
 import { getComponentDefinition } from '../registry'
 import { registerBuiltInComponentDefinitions } from '../register-builtins'
@@ -41,6 +42,7 @@ describe('built-in component definitions', () => {
     const quickLauncher = getComponentDefinition('quick-launcher')
     const systemMonitor = getComponentDefinition('system-monitor')
     const calendar = getComponentDefinition('calendar')
+    const sketch = getComponentDefinition('sketch')
     const claudeHistory = getComponentDefinition('claude-history')
     const codexHistory = getComponentDefinition('codex-history')
 
@@ -59,6 +61,13 @@ describe('built-in component definitions', () => {
     expect(calendar.type).toBe('calendar')
     expect(calendar.pluginId).toBe(BUILT_IN_SYSTEM_PLUGIN_ID)
     expect(calendar.permissions).toEqual([])
+    expect(sketch.type).toBe('sketch')
+    expect(sketch.pluginId).toBe(BUILT_IN_SYSTEM_PLUGIN_ID)
+    expect(sketch.permissions).toEqual(['sketch:edit'])
+    expect(sketch.titleKey).toBe('component.sketch')
+    expect([translate('zh-CN', 'sketch.stats', { elements: 0 }), translate('en-US', 'sketch.stats', { elements: 0 })]).toContain(
+      sketch.getDetail?.({ state: { sketchScene: null } } as never)
+    )
     expect(claudeHistory.type).toBe('claude-history')
     expect(claudeHistory.pluginId).toBe(BUILT_IN_SYSTEM_PLUGIN_ID)
     expect(claudeHistory.permissions).toEqual(['claude:history', 'pty:spawn', 'pty:write'])

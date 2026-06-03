@@ -9,6 +9,7 @@ export const BUILTIN_COMPONENT_TYPES = [
   'file-tree',
   'browser',
   'markdown-note',
+  'sketch',
   'file-preview',
   'kanban',
   'quick-launcher',

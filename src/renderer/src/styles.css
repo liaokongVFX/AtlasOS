@@ -265,6 +265,7 @@ svg {
 .file-tree-toolbar,
 .quick-launcher-toolbar,
 .note-toolbar,
+.sketch-toolbar,
 .file-preview-toolbar {
   display: flex;
   align-items: center;
@@ -2027,6 +2028,7 @@ svg {
 .git-manager-module,
 .claude-history-module,
 .codex-history-module,
+.sketch-module,
 .kanban-module {
   display: grid;
   width: 100%;
@@ -2167,6 +2169,7 @@ svg {
 .browser-toolbar,
 .quick-launcher-toolbar,
 .note-toolbar,
+.sketch-toolbar,
 .file-preview-toolbar {
   min-width: 0;
   border-bottom: 1px solid var(--color-hairline);
@@ -2330,6 +2333,54 @@ svg {
 
 .note-module {
   grid-template-rows: 40px 1fr;
+}
+
+.sketch-module {
+  grid-template-rows: 40px minmax(0, 1fr);
+}
+
+.sketch-toolbar {
+  min-width: 0;
+  border-bottom: 1px solid var(--color-hairline);
+  padding: 5px var(--space-2);
+  background: var(--color-surface-2);
+  box-shadow: var(--edge-highlight);
+}
+
+.sketch-toolbar .tool-button {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.sketch-toolbar .tool-button svg {
+  color: var(--color-primary-hover);
+}
+
+.sketch-editor {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-canvas);
+}
+
+.sketch-editor .excalidraw {
+  --color-primary-darker: var(--color-primary-focus);
+  --default-border-color: var(--color-hairline);
+  --island-bg-color: var(--color-surface-2);
+  --popup-bg-color: var(--color-surface-2);
+  --button-gray-1: var(--color-surface-1);
+  --button-gray-2: var(--color-surface-2);
+  --button-gray-3: var(--color-surface-3);
+  width: 100%;
+  height: 100%;
+  background: var(--color-canvas);
+  color-scheme: dark;
+}
+
+.sketch-editor .excalidraw .App {
+  width: 100%;
+  height: 100%;
 }
 
 .segmented {

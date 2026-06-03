@@ -16,6 +16,7 @@ export const CREATABLE_BUILTIN_COMPONENT_TYPES = [
   'file-tree',
   'browser',
   'markdown-note',
+  'sketch',
   'kanban',
   'quick-launcher',
   'system-monitor',
@@ -56,6 +57,14 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     titleKey: 'component.markdownNote',
     defaultFrame: { x: 260, y: 220, width: 640, height: 520 },
     permissions: ['note:edit'],
+    creatable: true
+  },
+  sketch: {
+    type: 'sketch',
+    title: 'Sketch',
+    titleKey: 'component.sketch',
+    defaultFrame: { x: 280, y: 220, width: 900, height: 620 },
+    permissions: ['sketch:edit'],
     creatable: true
   },
   'file-preview': {

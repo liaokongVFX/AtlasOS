@@ -19,8 +19,8 @@ const messages: Record<Locale, Record<SharedI18nKey, string>> = {
     'canvas.newCanvasName': '画布 {index}',
     'canvas.untitledName': '未命名画布',
     'filesystem.chooseFolder': '选择文件夹',
-    'main.openAtlas': '打开 AtlasOS',
-    'main.quitAtlas': '退出 AtlasOS',
+    'main.openAtlas': '打开',
+    'main.quitAtlas': '退出',
     'main.settings': '设置',
     'main.trayTooltip': 'AtlasOS - 双击打开',
     'plugin.installTitle': '安装 AtlasOS 插件'
@@ -30,8 +30,8 @@ const messages: Record<Locale, Record<SharedI18nKey, string>> = {
     'canvas.newCanvasName': 'Canvas {index}',
     'canvas.untitledName': 'Untitled Canvas',
     'filesystem.chooseFolder': 'Choose folder',
-    'main.openAtlas': 'Open AtlasOS',
-    'main.quitAtlas': 'Quit AtlasOS',
+    'main.openAtlas': 'Open',
+    'main.quitAtlas': 'Quit',
     'main.settings': 'Settings',
     'main.trayTooltip': 'AtlasOS - Double-click to open',
     'plugin.installTitle': 'Install AtlasOS plugin'

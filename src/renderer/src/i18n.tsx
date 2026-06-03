@@ -95,6 +95,7 @@ const zhCN = {
   'component.markdownNote': 'Markdown 笔记',
   'component.missingPlugin': '缺失插件',
   'component.pluginUnavailable': '插件不可用',
+  'component.sketch': '手绘画布',
   'component.terminal': '终端',
   'component.systemMonitor': '电脑状态',
   'component.title': '组件标题',
@@ -209,6 +210,14 @@ const zhCN = {
 
   'markdown.edit': '编辑',
   'markdown.preview': '预览',
+
+  'sketch.insertMindMap': '插入思维导图',
+  'sketch.mindMap.center': '中心想法',
+  'sketch.mindMap.context': '背景',
+  'sketch.mindMap.plan': '计划',
+  'sketch.mindMap.risks': '风险',
+  'sketch.mindMap.nextSteps': '下一步',
+  'sketch.stats': '{elements} 个元素',
 
   'quickLauncher.addItem': '新增快捷项',
   'quickLauncher.addTab': '新增分页',
@@ -514,6 +523,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'component.markdownNote': 'Markdown Note',
   'component.missingPlugin': 'Missing plugin',
   'component.pluginUnavailable': 'Plugin unavailable',
+  'component.sketch': 'Sketch',
   'component.terminal': 'Terminal',
   'component.systemMonitor': 'System Monitor',
   'component.title': 'Component title',
@@ -628,6 +638,14 @@ const enUS: Record<keyof typeof zhCN, string> = {
 
   'markdown.edit': 'Edit',
   'markdown.preview': 'Preview',
+
+  'sketch.insertMindMap': 'Insert mind map',
+  'sketch.mindMap.center': 'Central idea',
+  'sketch.mindMap.context': 'Context',
+  'sketch.mindMap.plan': 'Plan',
+  'sketch.mindMap.risks': 'Risks',
+  'sketch.mindMap.nextSteps': 'Next steps',
+  'sketch.stats': '{elements} elements',
 
   'quickLauncher.addItem': 'Add shortcut',
   'quickLauncher.addTab': 'Add tab',
