@@ -207,7 +207,6 @@ const zhCN = {
   'language.en': 'English',
   'language.zh': '中文',
 
-  'markdown.defaultNote': '# AtlasOS 笔记\n\n使用 Markdown 记录耐久的工作区笔记。\n',
   'markdown.edit': '编辑',
   'markdown.preview': '预览',
 
@@ -258,7 +257,11 @@ const zhCN = {
   'systemMonitor.loading': '采集中',
   'systemMonitor.memory': '内存',
   'systemMonitor.memoryUsed': '{used} / {total}',
+  'systemMonitor.showGaugeView': '切换为仪表显示',
+  'systemMonitor.showWaveView': '切换为波浪显示',
   'systemMonitor.updatedAt': '更新于 {time}',
+  'systemMonitor.viewToggle': '显示模式',
+  'systemMonitor.waveChartLabel': '{label} 波浪图',
 
   'claudeHistory.childSessions': '子会话',
   'claudeHistory.detail': '本机 Claude Code 聊天历史',
@@ -623,7 +626,6 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'language.en': 'English',
   'language.zh': '中文',
 
-  'markdown.defaultNote': '# AtlasOS note\n\nUse Markdown for durable workspace notes.\n',
   'markdown.edit': 'Edit',
   'markdown.preview': 'Preview',
 
@@ -674,7 +676,11 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'systemMonitor.loading': 'Collecting',
   'systemMonitor.memory': 'Memory',
   'systemMonitor.memoryUsed': '{used} / {total}',
+  'systemMonitor.showGaugeView': 'Show gauge view',
+  'systemMonitor.showWaveView': 'Show wave chart',
   'systemMonitor.updatedAt': 'Updated {time}',
+  'systemMonitor.viewToggle': 'Display mode',
+  'systemMonitor.waveChartLabel': '{label} wave chart',
 
   'claudeHistory.childSessions': 'Subagents',
   'claudeHistory.detail': 'Local Claude Code chat history',

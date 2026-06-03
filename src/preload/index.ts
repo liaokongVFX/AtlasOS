@@ -86,7 +86,8 @@ const atlasApi = {
     writeFile: (rootPath: string, targetPath: string, contents: string) =>
       ipcRenderer.invoke('filesystem:write-file', { rootPath, targetPath, contents }),
     search: (rootPath: string, query: string, limit = 50) => ipcRenderer.invoke('filesystem:search', { rootPath, query, limit }),
-    watch: (rootPath: string) => ipcRenderer.invoke('filesystem:watch', { rootPath }) as Promise<{ watchId: string }>,
+    watch: (rootPath: string, targetPath = rootPath) =>
+      ipcRenderer.invoke('filesystem:watch', { rootPath, targetPath }) as Promise<{ watchId: string }>,
     unwatch: (watchId: string) => ipcRenderer.invoke('filesystem:unwatch', { watchId }),
     onWatchEvent: (listener: Listener<{ watchId: string; eventName: string; path: string }>) => on('filesystem:watch-event', listener)
   },

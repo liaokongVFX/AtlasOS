@@ -285,6 +285,10 @@ function postAgentEvent(port: number, token: string, body: unknown, path = '/age
   })
 }
 
+function providerAgentSessionId(terminalSessionId: string, source: 'codex' | 'claude', providerSessionId: string): string {
+  return `${terminalSessionId}:${source}:${providerSessionId}`
+}
+
 function sanitizedForwarderEnv(): NodeJS.ProcessEnv {
   return Object.fromEntries(
     Object.entries(process.env).filter(
@@ -399,6 +403,7 @@ describe('PetService', () => {
     const getState = ipcHandler('pet:get-state')
     const state = (await getState({}, {})) as PetRuntimeState
     expect(state.window.panelSide).toBe('left')
+    expect(state.window.orbOffset).toEqual({ x: 284, y: 12 })
 
     const setPosition = ipcHandler('pet:set-position')
     await setPosition({}, { x: 3200, y: 1100 })
@@ -411,6 +416,10 @@ describe('PetService', () => {
       })
     )
     expect(window.setBounds).toHaveBeenLastCalledWith({ x: 2844, y: 604, width: 640, height: 420 })
+
+    const bottomState = (await getState({}, {})) as PetRuntimeState
+    expect(bottomState.settings.position).toEqual({ x: 3128, y: 952 })
+    expect(bottomState.window.orbOffset).toEqual({ x: 284, y: 348 })
 
     service.dispose()
   })
@@ -553,6 +562,7 @@ describe('PetService', () => {
     await service.start()
     const getState = ipcHandler('pet:get-state')
     const state = (await getState({}, {})) as PetRuntimeState
+    const agentId = providerAgentSessionId('session-1', 'claude', 'claude-provider-session')
 
     const started = await postAgentEvent(
       state.bridge.port,
@@ -564,13 +574,15 @@ describe('PetService', () => {
 
     let updatedState = (await getState({}, {})) as PetRuntimeState
     expect(updatedState.agentSessions[0]).toMatchObject({
-      id: 'session-1',
+      id: agentId,
+      terminalSessionId: 'session-1',
+      providerSessionId: 'claude-provider-session',
       source: 'claude',
       status: 'idle_unknown',
       title: 'Claude Code',
       cwd: 'D:\\projects\\AtlasOS'
     })
-    expect(updatedState.alerts.filter((alert) => alert.target.sessionId === 'session-1')).toHaveLength(0)
+    expect(updatedState.alerts.filter((alert) => alert.target.sessionId === agentId)).toHaveLength(0)
 
     const submitted = await postAgentEvent(
       state.bridge.port,
@@ -581,8 +593,60 @@ describe('PetService', () => {
     expect(submitted.statusCode).toBe(200)
 
     updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions[0]).toMatchObject({ id: 'session-1', status: 'running' })
-    expect(updatedState.alerts.filter((alert) => alert.target.sessionId === 'session-1')).toHaveLength(0)
+    expect(updatedState.agentSessions[0]).toMatchObject({ id: agentId, status: 'running' })
+    expect(updatedState.alerts.filter((alert) => alert.target.sessionId === agentId)).toHaveLength(0)
+
+    service.dispose()
+  })
+
+  it('tracks concurrent Claude provider sessions in the same terminal cwd independently', async () => {
+    const { service } = createService({
+      settings: createSettings({
+        showNativeNotifications: false,
+        agentBridge: { enabled: true }
+      })
+    })
+
+    await service.start()
+    const getState = ipcHandler('pet:get-state')
+    const state = (await getState({}, {})) as PetRuntimeState
+    const path = '/agent-hook/claude?sessionId=terminal-session&componentId=terminal-1&canvasId=canvas-1&title=Claude%20Code'
+
+    for (const providerSessionId of ['claude-provider-a', 'claude-provider-b']) {
+      const submitted = await postAgentEvent(
+        state.bridge.port,
+        state.bridge.token,
+        { hook_event_name: 'UserPromptSubmit', session_id: providerSessionId, cwd: 'D:\\projects\\AtlasOS' },
+        path
+      )
+      expect(submitted.statusCode).toBe(200)
+    }
+
+    let updatedState = (await getState({}, {})) as PetRuntimeState
+    expect(updatedState.agentSessions.map((session) => session.id).sort()).toEqual([
+      providerAgentSessionId('terminal-session', 'claude', 'claude-provider-a'),
+      providerAgentSessionId('terminal-session', 'claude', 'claude-provider-b')
+    ])
+    expect(updatedState.agentSessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          terminalSessionId: 'terminal-session',
+          providerSessionId: 'claude-provider-a',
+          status: 'running',
+          cwd: 'D:\\projects\\AtlasOS'
+        }),
+        expect.objectContaining({
+          terminalSessionId: 'terminal-session',
+          providerSessionId: 'claude-provider-b',
+          status: 'running',
+          cwd: 'D:\\projects\\AtlasOS'
+        })
+      ])
+    )
+
+    service.removeAgentSession('terminal-session')
+    updatedState = (await getState({}, {})) as PetRuntimeState
+    expect(updatedState.agentSessions).toHaveLength(0)
 
     service.dispose()
   })
@@ -772,6 +836,7 @@ describe('PetService', () => {
     const state = (await getState({}, {})) as PetRuntimeState
     const forwarderPath = join(userDataPath, 'pet', 'agent-hook-forwarder.cjs')
     const bridgeConfig = JSON.parse(await readFile(join(userDataPath, 'pet', 'agent-hook-bridge.json'), 'utf8'))
+    const codexAgentId = providerAgentSessionId('session-1', 'codex', 'codex-thread-1')
     expect(bridgeConfig).toMatchObject({
       enabled: true,
       bridgeUrl: `http://127.0.0.1:${state.bridge.port}/agent-hook`,
@@ -814,7 +879,9 @@ describe('PetService', () => {
     expect(started).toMatchObject({ exitCode: 0, stderr: '' })
 
     updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toMatchObject({
+    expect(updatedState.agentSessions.find((session) => session.id === codexAgentId)).toMatchObject({
+      terminalSessionId: 'session-1',
+      providerSessionId: 'codex-thread-1',
       source: 'codex',
       status: 'running',
       title: 'Codex task',
@@ -840,12 +907,12 @@ describe('PetService', () => {
     expect(permissionRequest).toMatchObject({ exitCode: 0, stderr: '' })
 
     updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toMatchObject({
+    expect(updatedState.agentSessions.find((session) => session.id === codexAgentId)).toMatchObject({
       source: 'codex',
       status: 'waiting_for_confirmation',
       attentionReason: 'Shell: npm test'
     })
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_waiting')).toMatchObject({
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === codexAgentId && alert.kind === 'agent_waiting')).toMatchObject({
       title: 'Codex is asking',
       body: 'Shell: npm test'
     })
@@ -859,11 +926,11 @@ describe('PetService', () => {
     expect(completed).toMatchObject({ exitCode: 0, stderr: '' })
 
     updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toBeUndefined()
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_completed')).toMatchObject({
+    expect(updatedState.agentSessions.find((session) => session.id === codexAgentId)).toBeUndefined()
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === codexAgentId && alert.kind === 'agent_completed')).toMatchObject({
       title: 'Codex completed'
     })
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_waiting')?.readAt).toBeDefined()
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === codexAgentId && alert.kind === 'agent_waiting')?.readAt).toBeDefined()
 
     service.dispose()
   })
@@ -900,6 +967,9 @@ describe('PetService', () => {
     await service.start()
     const getState = ipcHandler('pet:get-state')
     const state = (await getState({}, {})) as PetRuntimeState
+    const codexAgentId = providerAgentSessionId('session-1', 'codex', 'codex-provider-session')
+    const claudeAgentId = providerAgentSessionId('session-2', 'claude', 'claude-provider-session')
+    const claudeCompletedAgentId = providerAgentSessionId('session-3', 'claude', 'claude-completed-session')
 
     const accepted = await postAgentEvent(
       state.bridge.port,
@@ -917,7 +987,9 @@ describe('PetService', () => {
 
     let updatedState = (await getState({}, {})) as PetRuntimeState
     expect(updatedState.agentSessions[0]).toMatchObject({
-      id: 'session-1',
+      id: codexAgentId,
+      terminalSessionId: 'session-1',
+      providerSessionId: 'codex-provider-session',
       source: 'codex',
       status: 'waiting_for_confirmation',
       canvasId: 'canvas-1',
@@ -929,7 +1001,7 @@ describe('PetService', () => {
     expect(updatedState.alerts[0]).toMatchObject({
       kind: 'agent_waiting',
       body: 'Bash: npm test',
-      target: { sessionId: 'session-1' }
+      target: { sessionId: codexAgentId }
     })
 
     const resumed = await postAgentEvent(
@@ -941,7 +1013,7 @@ describe('PetService', () => {
     expect(resumed.statusCode).toBe(200)
 
     updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions[0]).toMatchObject({ id: 'session-1', status: 'running' })
+    expect(updatedState.agentSessions[0]).toMatchObject({ id: codexAgentId, status: 'running' })
     expect(updatedState.alerts.filter((alert) => alert.kind === 'agent_waiting' && !alert.readAt)).toHaveLength(0)
 
     const claudeNotification = await postAgentEvent(
@@ -959,13 +1031,15 @@ describe('PetService', () => {
     expect(claudeNotification.statusCode).toBe(200)
 
     updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-2')).toMatchObject({
+    expect(updatedState.agentSessions.find((session) => session.id === claudeAgentId)).toMatchObject({
+      terminalSessionId: 'session-2',
+      providerSessionId: 'claude-provider-session',
       source: 'claude',
       status: 'waiting_for_confirmation',
       title: 'Claude Code',
       attentionReason: 'Claude needs your input'
     })
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-2')).toMatchObject({
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === claudeAgentId)).toMatchObject({
       title: 'Claude Code is asking',
       body: 'Claude needs your input',
       kind: 'agent_waiting'
@@ -980,13 +1054,13 @@ describe('PetService', () => {
     expect(claudeCompleted.statusCode).toBe(200)
 
     updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-3')).toBeUndefined()
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-3')).toMatchObject({
+    expect(updatedState.agentSessions.find((session) => session.id === claudeCompletedAgentId)).toBeUndefined()
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === claudeCompletedAgentId)).toMatchObject({
       title: 'Claude Code completed',
       body: 'Claude completed the run',
       kind: 'agent_completed'
     })
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-3' && alert.kind === 'agent_waiting')).toBeUndefined()
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === claudeCompletedAgentId && alert.kind === 'agent_waiting')).toBeUndefined()
 
     service.dispose()
   })
@@ -1002,6 +1076,7 @@ describe('PetService', () => {
     await service.start()
     const getState = ipcHandler('pet:get-state')
     const state = (await getState({}, {})) as PetRuntimeState
+    const agentId = providerAgentSessionId('session-1', 'claude', 'claude-provider-session')
 
     const failed = await postAgentEvent(
       state.bridge.port,
@@ -1018,13 +1093,13 @@ describe('PetService', () => {
     expect(failed.statusCode).toBe(200)
 
     const updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toMatchObject({
+    expect(updatedState.agentSessions.find((session) => session.id === agentId)).toMatchObject({
       source: 'claude',
       status: 'error',
       title: 'Claude Code',
       attentionReason: 'rate_limit: API quota exhausted'
     })
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1')).toMatchObject({
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === agentId)).toMatchObject({
       title: 'Claude Code reported an error',
       body: 'rate_limit: API quota exhausted',
       kind: 'agent_error',
@@ -1046,6 +1121,7 @@ describe('PetService', () => {
     const getState = ipcHandler('pet:get-state')
     const state = (await getState({}, {})) as PetRuntimeState
     const path = '/agent-hook/codex?sessionId=session-1&componentId=terminal-1&canvasId=canvas-1&title=Codex'
+    const agentId = providerAgentSessionId('session-1', 'codex', 'codex-provider-session')
 
     const question = await postAgentEvent(
       state.bridge.port,
@@ -1070,13 +1146,13 @@ describe('PetService', () => {
     expect(question.statusCode).toBe(200)
 
     let updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toMatchObject({
+    expect(updatedState.agentSessions.find((session) => session.id === agentId)).toMatchObject({
       source: 'codex',
       status: 'waiting_for_confirmation',
       title: 'Codex',
       attentionReason: 'request_user_input: Use D:\\projects\\AtlasOS?'
     })
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_waiting')).toMatchObject({
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === agentId && alert.kind === 'agent_waiting')).toMatchObject({
       title: 'Codex is asking',
       body: 'request_user_input: Use D:\\projects\\AtlasOS?'
     })
@@ -1097,12 +1173,12 @@ describe('PetService', () => {
     expect(answer.statusCode).toBe(200)
 
     updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toMatchObject({
+    expect(updatedState.agentSessions.find((session) => session.id === agentId)).toMatchObject({
       source: 'codex',
       status: 'running',
       title: 'Codex'
     })
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_waiting')?.readAt).toBeDefined()
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === agentId && alert.kind === 'agent_waiting')?.readAt).toBeDefined()
 
     service.dispose()
   })
@@ -1118,6 +1194,7 @@ describe('PetService', () => {
     await service.start()
     const getState = ipcHandler('pet:get-state')
     const state = (await getState({}, {})) as PetRuntimeState
+    const agentId = providerAgentSessionId('session-1', 'claude', 'claude-provider-session')
 
     const completed = await postAgentEvent(
       state.bridge.port,
@@ -1142,12 +1219,12 @@ describe('PetService', () => {
     expect(idlePrompt.statusCode).toBe(200)
 
     const updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toBeUndefined()
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1')).toMatchObject({
+    expect(updatedState.agentSessions.find((session) => session.id === agentId)).toBeUndefined()
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === agentId)).toMatchObject({
       title: 'Claude Code completed',
       kind: 'agent_completed'
     })
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_waiting')).toBeUndefined()
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === agentId && alert.kind === 'agent_waiting')).toBeUndefined()
 
     service.dispose()
   })
@@ -1164,6 +1241,7 @@ describe('PetService', () => {
     const getState = ipcHandler('pet:get-state')
     const state = (await getState({}, {})) as PetRuntimeState
     const path = '/agent-hook/claude?sessionId=session-1&componentId=terminal-1&canvasId=canvas-1&title=Claude%20Code'
+    const agentId = providerAgentSessionId('session-1', 'claude', 'claude-provider-session')
 
     const completed = await postAgentEvent(
       state.bridge.port,
@@ -1198,9 +1276,9 @@ describe('PetService', () => {
     expect(duplicateStop.statusCode).toBe(200)
 
     const updatedState = (await getState({}, {})) as PetRuntimeState
-    expect(updatedState.agentSessions.find((session) => session.id === 'session-1')).toBeUndefined()
-    expect(updatedState.alerts.filter((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_completed')).toHaveLength(1)
-    expect(updatedState.alerts.find((alert) => alert.target.sessionId === 'session-1' && alert.kind === 'agent_waiting')).toBeUndefined()
+    expect(updatedState.agentSessions.find((session) => session.id === agentId)).toBeUndefined()
+    expect(updatedState.alerts.filter((alert) => alert.target.sessionId === agentId && alert.kind === 'agent_completed')).toHaveLength(1)
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === agentId && alert.kind === 'agent_waiting')).toBeUndefined()
 
     service.dispose()
   })

@@ -8,6 +8,7 @@ export function createMarkdownNoteDefinition(): HostRendererPluginNodeDefinition
     ...builtInNodeMeta('markdown-note'),
     icon: StickyNote,
     Renderer: MarkdownNoteComponent,
+    create: () => ({ state: { content: '' } }),
     acceptsFile: fileSourceMatches('markdown-note'),
     createFromFile: createFileComponentFromSource('markdown-note'),
     getDetail: (component) => optionalString(component.bindings.path) ?? optionalString(component.bindings.rootPath) ?? null

@@ -75,6 +75,19 @@ describe('preload atlas API', () => {
     expect(electronMocks.invoke).toHaveBeenCalledWith('pet:clear-alerts', { alertIds: ['alert-1'] })
   })
 
+  it('passes explicit filesystem watch target paths through IPC', async () => {
+    await import('./index')
+    const atlasApi = electronMocks.exposeInMainWorld.mock.calls[0][1]
+
+    electronMocks.invoke.mockResolvedValueOnce({ watchId: 'watch-1' })
+    await atlasApi.filesystem.watch('D:\\repo', 'D:\\repo\\src')
+
+    expect(electronMocks.invoke).toHaveBeenCalledWith('filesystem:watch', {
+      rootPath: 'D:\\repo',
+      targetPath: 'D:\\repo\\src'
+    })
+  })
+
   it('exposes update actions and state events through narrow IPC channels', async () => {
     await import('./index')
     const atlasApi = electronMocks.exposeInMainWorld.mock.calls[0][1]

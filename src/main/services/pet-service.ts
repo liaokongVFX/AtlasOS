@@ -88,6 +88,7 @@ type AgentHookEventInput = {
   sessionTitle?: string
   body?: string
   sessionId?: string
+  terminalSessionId?: string
   providerSessionId?: string
   componentId?: string
   canvasId?: string
@@ -241,6 +242,10 @@ type PetWindowLayout = {
   x: number
   y: number
   panelSide: PetPanelSide
+  orbOffset: {
+    x: number
+    y: number
+  }
   orbPosition: {
     x: number
     y: number
@@ -463,8 +468,9 @@ function normalizeAgentHookEvent(source: PetAgentSource, payload: unknown, conte
   const componentId = context.componentId
   const canvasId = context.canvasId
   const cwd = context.cwd || firstString(payload, ['cwd', 'workspace_dir', 'workspaceDir'])
-  const sessionId = context.sessionId
+  const terminalSessionId = context.sessionId
   const providerSessionId = firstString(payload, ['session_id', 'sessionId', 'thread_id', 'threadId'])
+  const sessionId = agentSessionId(source, terminalSessionId, providerSessionId)
 
   return {
     kind: 'event',
@@ -473,6 +479,7 @@ function normalizeAgentHookEvent(source: PetAgentSource, payload: unknown, conte
       event,
       hookName,
       sessionId,
+      terminalSessionId,
       providerSessionId,
       componentId,
       canvasId,
@@ -724,11 +731,16 @@ function petWindowLayout(settings: AppSettings): PetWindowLayout {
   const canOpenLeft = orbX - workArea.x >= sideSpace
   const panelSide: PetPanelSide = canOpenRight || !canOpenLeft ? 'right' : 'left'
   const maxWindowY = workArea.y + workArea.height - PET_WINDOW_HEIGHT
+  const windowY = clamp(orbY - PET_WINDOW_PADDING, workArea.y, maxWindowY)
 
   return {
     x: orbX - PET_ORB_OFFSET_X,
-    y: clamp(orbY - PET_WINDOW_PADDING, workArea.y, maxWindowY),
+    y: windowY,
     panelSide,
+    orbOffset: {
+      x: PET_ORB_OFFSET_X,
+      y: orbY - windowY
+    },
     orbPosition: {
       x: orbX,
       y: orbY
@@ -767,6 +779,10 @@ function isTerminalAgentStatus(status: PetAgentSession['status'] | undefined): b
 
 function visibleAgentSessions(agentSessions: Map<string, PetAgentSession>): PetAgentSession[] {
   return [...agentSessions.values()].filter((session) => session.status !== 'completed')
+}
+
+function agentSessionId(source: PetAgentSource, terminalSessionId: string, providerSessionId: string | undefined): string {
+  return providerSessionId ? `${terminalSessionId}:${source}:${providerSessionId}` : terminalSessionId
 }
 
 function canRestartTerminalAgentStatus(event: AgentHookEventInput): boolean {
@@ -864,6 +880,7 @@ export class PetService {
 
     this.upsertAgentSession({
       id: context.sessionId,
+      terminalSessionId: context.sessionId,
       source: context.source,
       status: 'idle_unknown',
       canvasId: context.canvasId || 'unknown-canvas',
@@ -957,7 +974,13 @@ export class PetService {
   }
 
   removeAgentSession(sessionId: string): void {
-    if (!this.agentSessions.delete(sessionId)) return
+    let removed = false
+    for (const [id, session] of [...this.agentSessions]) {
+      if (id !== sessionId && session.terminalSessionId !== sessionId) continue
+      this.agentSessions.delete(id)
+      removed = true
+    }
+    if (!removed) return
     void this.broadcastState()
   }
 
@@ -1203,12 +1226,15 @@ export class PetService {
 
   private async applyAgentEvent(event: AgentHookEventInput): Promise<void> {
     const sessionId = event.sessionId || event.componentId || randomUUID()
+    const terminalSessionId = event.terminalSessionId || sessionId
     const current = this.agentSessions.get(sessionId)
     if (shouldIgnoreAgentStatusTransition(current, event)) return
 
     const timestamp = nowIso()
     const session: PetAgentSession = {
       id: sessionId,
+      terminalSessionId,
+      providerSessionId: event.providerSessionId,
       source: event.source,
       status: eventStatus(event.event),
       canvasId: event.canvasId || current?.canvasId || 'unknown-canvas',
@@ -1222,10 +1248,11 @@ export class PetService {
     const parsed = petAgentSessionSchema.safeParse(session)
     if (parsed.success) {
       const previous = this.agentSessions.get(parsed.data.id)
+      this.removeTerminalAgentPlaceholder(terminalSessionId, parsed.data.id, parsed.data.source)
       this.agentSessions.set(parsed.data.id, parsed.data)
       if (event.providerSessionId && shouldRecordProviderSession(event.hookName)) {
         this.options.onAgentProviderSessionResolved?.({
-          terminalSessionId: parsed.data.id,
+          terminalSessionId,
           source: parsed.data.source,
           providerSessionId: event.providerSessionId,
           componentId: parsed.data.componentId,
@@ -1241,6 +1268,16 @@ export class PetService {
       }
       await this.persistAndBroadcast()
     }
+  }
+
+  private removeTerminalAgentPlaceholder(terminalSessionId: string, sessionId: string, source: PetAgentSource): void {
+    if (terminalSessionId === sessionId) return
+
+    const placeholder = this.agentSessions.get(terminalSessionId)
+    if (!placeholder || placeholder.source !== source || placeholder.status !== 'idle_unknown') return
+    if (placeholder.terminalSessionId && placeholder.terminalSessionId !== terminalSessionId) return
+
+    this.agentSessions.delete(terminalSessionId)
   }
 
   private claudeHookCommand(): string {
@@ -1425,7 +1462,8 @@ export class PetService {
       alerts: this.storedState.alerts,
       agentSessions: visibleAgentSessions(this.agentSessions),
       window: {
-        panelSide: layout.panelSide
+        panelSide: layout.panelSide,
+        orbOffset: layout.orbOffset
       },
       bridge: {
         enabled: settings.pet.agentBridge.enabled,

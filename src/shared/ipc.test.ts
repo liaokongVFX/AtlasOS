@@ -13,7 +13,8 @@ import {
   systemMetricsGetInputSchema,
   terminalPersistAssetInputSchema,
   terminalReadClipboardFilesInputSchema,
-  terminalSaveClipboardImageInputSchema
+  terminalSaveClipboardImageInputSchema,
+  watchDirectoryInputSchema
 } from './ipc'
 
 describe('listTreeInputSchema', () => {
@@ -26,6 +27,15 @@ describe('listTreeInputSchema', () => {
   it('allows bounded explicit recursion for compatibility', () => {
     expect(listTreeInputSchema.parse({ rootPath: '/repo', maxDepth: 64 }).maxDepth).toBe(64)
     expect(() => listTreeInputSchema.parse({ rootPath: '/repo', maxDepth: 65 })).toThrow()
+  })
+})
+
+describe('watchDirectoryInputSchema', () => {
+  it('accepts an optional target directory inside the watched root', () => {
+    expect(watchDirectoryInputSchema.parse({ rootPath: '/repo', targetPath: '/repo/src' })).toEqual({
+      rootPath: '/repo',
+      targetPath: '/repo/src'
+    })
   })
 })
 

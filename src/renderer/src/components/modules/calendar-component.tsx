@@ -10,7 +10,7 @@ type CalendarDay = {
   isToday: boolean
 }
 
-const CALENDAR_DAY_COUNT = 42
+const DAYS_PER_WEEK = 7
 const SUNDAY = 0
 const MONDAY = 1
 
@@ -29,10 +29,12 @@ function getFirstDayOfWeek(locale: Locale): number {
 function calendarDaysForMonth(date: Date, firstDayOfWeek: number): CalendarDay[] {
   const monthStart = new Date(date.getFullYear(), date.getMonth(), 1)
   const startOffset = (monthStart.getDay() - firstDayOfWeek + 7) % 7
+  const daysInMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()
+  const weekCount = Math.ceil((startOffset + daysInMonth) / DAYS_PER_WEEK)
   const gridStart = new Date(monthStart)
   gridStart.setDate(monthStart.getDate() - startOffset)
 
-  return Array.from({ length: CALENDAR_DAY_COUNT }, (_, index) => {
+  return Array.from({ length: weekCount * DAYS_PER_WEEK }, (_, index) => {
     const day = new Date(gridStart)
     day.setDate(gridStart.getDate() + index)
 

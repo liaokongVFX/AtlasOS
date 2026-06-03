@@ -137,7 +137,7 @@ const HIGHLIGHT_OPTIONS = {
 export function MarkdownNoteComponent({ component, updateState }: AtlasComponentRendererProps): JSX.Element {
   const { t } = useI18n()
   const [mode, setMode] = useState<'edit' | 'preview'>('edit')
-  const content = asString(component.state.content, t('markdown.defaultNote'))
+  const content = asString(component.state.content)
   const extensions = useMemo(() => [markdown(), EditorView.lineWrapping, MARKDOWN_EDITOR_SYNTAX], [])
 
   return (

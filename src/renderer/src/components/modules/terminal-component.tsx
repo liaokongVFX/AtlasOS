@@ -141,6 +141,10 @@ function installTerminalClipboardShortcuts(terminal: Terminal, handlers: Termina
     const key = event.key.toLowerCase()
     const hasPrimaryModifier = event.ctrlKey || event.metaKey
 
+    if (isTerminalPasteShortcut(event)) {
+      return false
+    }
+
     if (hasPrimaryModifier && key === 'c' && terminal.hasSelection()) {
       event.preventDefault()
       event.stopPropagation()
@@ -274,12 +278,6 @@ function isTerminalPasteShortcut(event: KeyboardEvent): boolean {
   const key = event.key.toLowerCase()
   const hasPrimaryModifier = event.ctrlKey || event.metaKey
   return (hasPrimaryModifier && key === 'v') || (event.shiftKey && key === 'insert')
-}
-
-function stopTerminalKeyEvent(event: KeyboardEvent): void {
-  event.preventDefault()
-  event.stopPropagation()
-  event.stopImmediatePropagation?.()
 }
 
 export function TerminalComponent({ canvasId, component, updateState, isNodeSelected = false }: AtlasComponentRendererProps): JSX.Element {
@@ -510,7 +508,19 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
         return true
       }
 
+      const text = event?.clipboardData?.getData('text/plain') || ''
+      if (text) {
+        instance.paste(text)
+        return true
+      }
+
       if (await pasteNativeClipboardFilesIntoTerminal()) {
+        return true
+      }
+
+      const nativeText = readNativeClipboardText()
+      if (nativeText) {
+        instance.paste(nativeText)
         return true
       }
 
@@ -520,12 +530,6 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
       }
 
       if (await pasteNativeClipboardImageIntoTerminal()) {
-        return true
-      }
-
-      const text = event?.clipboardData?.getData('text/plain') || readNativeClipboardText()
-      if (text) {
-        instance.paste(text)
         return true
       }
 
@@ -657,7 +661,7 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
       const handlePasteShortcutKeyDown = (event: KeyboardEvent): void => {
         if (event.defaultPrevented || !isTerminalPasteShortcut(event)) return
 
-        stopTerminalKeyEvent(event)
+        // Let Chromium emit the native paste event for text; this fallback only runs if no paste event arrives.
         scheduleShortcutPasteFallback(instance)
       }
 

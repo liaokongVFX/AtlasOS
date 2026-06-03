@@ -64,7 +64,7 @@ const nodeTypes = {
 const NODE_FOCUS_DURATION = 180
 const NODE_FOCUS_ZOOM = 1.15
 const OPEN_KANBAN_CARD_EVENT = 'atlas:open-kanban-card'
-const CANVAS_SHORTCUT_BLOCKLIST_SELECTOR = [
+const CANVAS_INTERACTIVE_SHORTCUT_BLOCKLIST_SELECTORS = [
   'input',
   'textarea',
   'select',
@@ -74,12 +74,13 @@ const CANVAS_SHORTCUT_BLOCKLIST_SELECTOR = [
   '[role="textbox"]',
   '.cm-editor',
   '.xterm',
-  '.component-node__body',
   '.dialog-content',
   '.popover-content',
   '.menu-content',
   '.top-bar'
-].join(',')
+]
+const CANVAS_SHORTCUT_BLOCKLIST_SELECTOR = [...CANVAS_INTERACTIVE_SHORTCUT_BLOCKLIST_SELECTORS, '.component-node__body'].join(',')
+const CANVAS_FIND_SHORTCUT_BLOCKLIST_SELECTOR = CANVAS_INTERACTIVE_SHORTCUT_BLOCKLIST_SELECTORS.join(',')
 const CANVAS_DESELECT_SHORTCUT_BLOCKLIST_SELECTOR = [
   '.component-node__title-input',
   '.dialog-content',
@@ -113,7 +114,13 @@ function componentToNode(
     height: component.frame.height,
     measured: { width: component.frame.width, height: component.frame.height },
     zIndex: component.zIndex,
-    data: { canvasId, component, onRequestSelect, registryVersion },
+    data: {
+      canvasId,
+      component,
+      parentGroupPosition: parentGroup ? { x: parentGroup.frame.x, y: parentGroup.frame.y } : undefined,
+      onRequestSelect,
+      registryVersion
+    },
     style: {
       width: component.frame.width,
       height: component.frame.height,
@@ -318,6 +325,9 @@ function isCanvasShortcutBlocked(
   shortcut: 'create' | 'delete' | 'deselect' | 'duplicate' | 'find'
 ): boolean {
   if (shortcut === 'delete' && isSelectedTerminalTarget(target, selectedNodeIds)) return false
+  if (shortcut === 'find') {
+    return target instanceof Element && Boolean(target.closest(CANVAS_FIND_SHORTCUT_BLOCKLIST_SELECTOR))
+  }
   if (shortcut === 'deselect' && isSelectedNodeTarget(target, selectedNodeIds)) {
     return target instanceof Element && Boolean(target.closest(CANVAS_DESELECT_SHORTCUT_BLOCKLIST_SELECTOR))
   }
@@ -926,6 +936,7 @@ export function CanvasBoard(): JSX.Element {
   const [isFileDragActive, setIsFileDragActive] = useState(false)
   const [isViewportInteracting, setIsViewportInteracting] = useState(false)
   const createMenuAnchorRef = useRef<Measurable>(createPointAnchor(0, 0))
+  const canvasBoardRef = useRef<HTMLElement | null>(null)
   const lastPointerScreenPositionRef = useRef<ScreenPosition | null>(null)
   const pendingSelectedNodeIdsRef = useRef<Set<string> | null>(null)
   const pendingPetTargetRef = useRef<PetAlertTarget | null>(null)
@@ -1358,7 +1369,11 @@ export function CanvasBoard(): JSX.Element {
 
         event.preventDefault()
         event.stopPropagation()
+        const shouldRestoreCanvasFocus = isSelectedNodeTarget(event.target, selectedNodeIdSet)
         clearSelectedNodes(selectedIds)
+        if (shouldRestoreCanvasFocus) {
+          canvasBoardRef.current?.focus({ preventScroll: true })
+        }
         return
       }
 
@@ -1611,6 +1626,7 @@ export function CanvasBoard(): JSX.Element {
 
   return (
     <main
+      ref={canvasBoardRef}
       className={[
         'canvas-board',
         isFileDragActive ? 'canvas-board--file-drag-active' : '',
@@ -1622,6 +1638,7 @@ export function CanvasBoard(): JSX.Element {
       onPointerEnter={trackPointerPosition}
       onPointerMove={trackPointerPosition}
       onPointerLeave={clearTrackedPointerPosition}
+      tabIndex={-1}
     >
       {backgroundImageStyle ? <div className="canvas-background-image" style={backgroundImageStyle} /> : null}
       <ReactFlow

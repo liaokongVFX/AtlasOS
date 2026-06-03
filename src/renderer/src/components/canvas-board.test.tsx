@@ -204,6 +204,24 @@ function createXtermKeyboardTarget(componentId: string): HTMLTextAreaElement {
   return textarea
 }
 
+function createComponentBodyKeyboardTarget(componentId: string): HTMLDivElement {
+  const nodeElement = document.createElement('div')
+  nodeElement.className = 'react-flow__node'
+  nodeElement.dataset.id = componentId
+
+  const body = document.createElement('div')
+  body.className = 'component-node__body'
+
+  const target = document.createElement('div')
+  target.tabIndex = 0
+
+  body.appendChild(target)
+  nodeElement.appendChild(body)
+  document.body.appendChild(nodeElement)
+
+  return target
+}
+
 describe('CanvasBoard', () => {
   beforeEach(() => {
     if (!HTMLElement.prototype.scrollIntoView) {
@@ -878,6 +896,30 @@ describe('CanvasBoard', () => {
     expect(canvas.components[0].frame).toMatchObject({ x: 140, y: 140 })
   })
 
+  it('passes parent group position to grouped component nodes', () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [createComponent('component-1')],
+          groups: [createGroup('group-1', { memberIds: ['component-1'] })]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    const componentNode = reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')
+    expect(componentNode).toMatchObject({
+      parentId: 'group-1',
+      position: { x: 20, y: 40 },
+      data: {
+        parentGroupPosition: { x: 80, y: 80 }
+      }
+    })
+  })
+
   it('opens group-aware delete confirmation and can remove only the group frame', async () => {
     useCanvasStore.setState((state) => ({
       canvases: {
@@ -1015,7 +1057,7 @@ describe('CanvasBoard', () => {
     expect(reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')?.selected).toBe(false)
   })
 
-  it('clears a selected terminal with Ctrl+Q from inside xterm focus', () => {
+  it('clears a selected terminal and restores canvas shortcuts with Ctrl+Q from inside xterm focus', async () => {
     useCanvasStore.setState((state) => ({
       canvases: {
         ...state.canvases,
@@ -1041,12 +1083,19 @@ describe('CanvasBoard', () => {
     const textarea = createXtermKeyboardTarget('component-1')
 
     try {
+      textarea.focus()
+      expect(document.activeElement).toBe(textarea)
       fireEvent.keyDown(textarea, { key: 'q', ctrlKey: true })
+
+      expect(reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')?.selected).toBe(false)
+      expect(document.activeElement).not.toBe(textarea)
+
+      const keyboardTarget = document.activeElement instanceof HTMLElement ? document.activeElement : document.body
+      fireEvent.keyDown(keyboardTarget, { key: 'f', ctrlKey: true })
+      expect(await screen.findByRole('dialog', { name: 'Find canvas node' })).toBeInTheDocument()
     } finally {
       textarea.closest('.react-flow__node')?.remove()
     }
-
-    expect(reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')?.selected).toBe(false)
   })
 
   it('opens the node finder with Ctrl+F and focuses the clicked node', async () => {
@@ -1095,6 +1144,34 @@ describe('CanvasBoard', () => {
       await waitFor(() => expect(document.activeElement).toBe(nodeElement))
     } finally {
       nodeElement.remove()
+    }
+  })
+
+  it('opens the node finder from a selected node body with Ctrl+F', async () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [createComponent('component-1', { title: 'First note' })]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([{ id: 'component-1', type: 'select', selected: true }])
+    })
+
+    const target = createComponentBodyKeyboardTarget('component-1')
+
+    try {
+      fireEvent.keyDown(target, { key: 'f', ctrlKey: true })
+      expect(await screen.findByRole('dialog', { name: 'Find canvas node' })).toBeInTheDocument()
+      expect(await screen.findByRole('option', { name: /First note/ })).toBeInTheDocument()
+    } finally {
+      target.closest('.react-flow__node')?.remove()
     }
   })
 

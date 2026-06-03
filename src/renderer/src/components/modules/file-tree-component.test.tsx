@@ -118,6 +118,27 @@ function renderFileTree(
   return props
 }
 
+function mockResizeObserverSize(width: number, height: number): () => void {
+  const originalResizeObserver = globalThis.ResizeObserver
+
+  class SizedResizeObserver implements ResizeObserver {
+    constructor(private readonly callback: ResizeObserverCallback) {}
+
+    observe(target: Element): void {
+      this.callback([{ target, contentRect: { width, height } as DOMRectReadOnly } as ResizeObserverEntry], this)
+    }
+
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+
+  globalThis.ResizeObserver = SizedResizeObserver
+
+  return () => {
+    globalThis.ResizeObserver = originalResizeObserver
+  }
+}
+
 async function expandSrcDirectory(): Promise<void> {
   const folderName = await screen.findByText('src')
   const folderRow = folderName.closest('.file-tree-row')
@@ -154,7 +175,7 @@ describe('FileTreeComponent', () => {
           })),
           trash: vi.fn(async () => undefined),
           unwatch: vi.fn(),
-          watch: vi.fn(async () => ({ watchId: 'watch-1' }))
+          watch: vi.fn(async (rootPath: string, targetPath = rootPath) => ({ watchId: `watch:${targetPath}` }))
         }
       }
     })
@@ -218,6 +239,33 @@ describe('FileTreeComponent', () => {
     expect(updateState).toHaveBeenCalledWith({ openPaths: ['D:\\repo', 'D:\\repo\\src'] }, true)
   })
 
+  it('watches only the open directories in the lazy file tree', async () => {
+    const component = createComponent()
+    component.state = { openPaths: ['D:\\repo', 'D:\\repo\\src'] }
+
+    renderFileTree(component)
+
+    expect(await screen.findByText('index.ts')).toBeVisible()
+    await waitFor(() => {
+      expect(window.atlas.filesystem.watch).toHaveBeenCalledWith('D:\\repo', 'D:\\repo')
+      expect(window.atlas.filesystem.watch).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src')
+    })
+  })
+
+  it('sizes the virtual tree from the available viewport', async () => {
+    const restoreResizeObserver = mockResizeObserverSize(196, 128)
+
+    try {
+      renderFileTree()
+
+      expect(await screen.findByText('src')).toBeVisible()
+      const viewport = document.querySelector('.file-tree-viewport')
+      expect(viewport?.firstElementChild).toHaveStyle({ width: '196px', height: '128px' })
+    } finally {
+      restoreResizeObserver()
+    }
+  })
+
   it('restores persisted open paths and lazy-loads those directories on mount', async () => {
     const component = createComponent()
     component.state = { openPaths: ['D:\\repo', 'D:\\repo\\src'] }
@@ -247,6 +295,52 @@ describe('FileTreeComponent', () => {
       ['D:\\repo', 'D:\\repo\\src', 1],
       ['D:\\repo', 'D:\\repo\\src\\components', 1]
     ])
+  })
+
+  it('keeps loaded descendant directories visible after a parent refresh', async () => {
+    const component = createComponent()
+    component.state = { openPaths: ['D:\\repo', 'D:\\repo\\src', 'D:\\repo\\src\\components'] }
+
+    renderFileTree(component)
+    expect(await screen.findByText('Button.tsx')).toBeVisible()
+
+    const srcName = await screen.findByText('src')
+    await act(async () => {
+      fireEvent.contextMenu(srcName, { button: 2, clientX: 64, clientY: 96 })
+    })
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('menuitem', { name: '新建文件夹' }))
+    })
+    fireEvent.change(await screen.findByLabelText('名称'), { target: { value: 'new-folder' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    })
+
+    expect(await screen.findByText('Button.tsx')).toBeVisible()
+    expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src\\components', 1)
+  })
+
+  it('keeps loaded descendant directories visible after a watched parent changes', async () => {
+    const component = createComponent()
+    component.state = { openPaths: ['D:\\repo', 'D:\\repo\\src', 'D:\\repo\\src\\components'] }
+    let watchListener: ((event: { watchId: string; eventName: string; path: string }) => void) | null = null
+    vi.mocked(window.atlas.filesystem.onWatchEvent).mockImplementation((listener) => {
+      watchListener = listener
+      return vi.fn()
+    })
+
+    renderFileTree(component)
+    expect(await screen.findByText('Button.tsx')).toBeVisible()
+
+    await waitFor(() => {
+      expect(window.atlas.filesystem.watch).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src')
+    })
+    act(() => {
+      watchListener?.({ watchId: 'watch:D:\\repo\\src', eventName: 'add', path: 'D:\\repo\\src\\new-folder' })
+    })
+
+    expect(await screen.findByText('Button.tsx')).toBeVisible()
+    expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo\\src\\components', 1)
   })
 
   it('restores missing ancestor directories from persisted descendant paths', async () => {

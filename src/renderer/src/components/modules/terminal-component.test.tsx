@@ -582,6 +582,44 @@ describe('TerminalComponent', () => {
     expect(window.atlas.clipboard.writeText).not.toHaveBeenCalled()
   })
 
+  it('blocks xterm from sending Ctrl+V as terminal input while preserving browser paste', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const keyHandler = terminalInstances[0].attachCustomKeyEventHandler.mock.calls[0][0]
+    const event = {
+      type: 'keydown',
+      key: 'v',
+      ctrlKey: true,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn()
+    } as unknown as KeyboardEvent
+
+    expect(keyHandler(event)).toBe(false)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(event.stopPropagation).not.toHaveBeenCalled()
+  })
+
   it('pastes clipboard text from the native paste event', async () => {
     const updateState = vi.fn()
     const updateConfig = vi.fn()
@@ -611,6 +649,52 @@ describe('TerminalComponent', () => {
     })
 
     expect(terminalInstances[0].paste).toHaveBeenCalledWith('pasted text')
+  })
+
+  it('prefers native paste text over native clipboard file and image probes', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    vi.mocked(window.atlas.terminal.readClipboardFiles).mockResolvedValue({
+      paths: ['C:\\Users\\xhwz2\\Desktop\\image.png'],
+      formats: ['CF_HDROP']
+    })
+    vi.mocked(window.atlas.terminal.saveClipboardImage).mockResolvedValue({
+      saved: true,
+      path: 'C:\\Temp\\atlas-terminal-native.png',
+      width: 800,
+      height: 600,
+      byteLength: 4567,
+      formats: ['CF_DIB']
+    })
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      dispatchPasteEvent(terminalTextarea(), {
+        getData: (type) => (type === 'text/plain' ? 'agent prompt text' : '')
+      })
+      await Promise.resolve()
+    })
+
+    expect(terminalInstances[0].paste).toHaveBeenCalledWith('agent prompt text')
+    expect(window.atlas.terminal.readClipboardFiles).not.toHaveBeenCalled()
+    expect(window.atlas.terminal.saveClipboardImage).not.toHaveBeenCalled()
   })
 
   it('lets the native paste event win after Ctrl+V and cancels the delayed fallback', async () => {
@@ -657,6 +741,44 @@ describe('TerminalComponent', () => {
 
     expect(terminalInstances[0].paste).toHaveBeenCalledTimes(1)
     expect(terminalInstances[0].paste).toHaveBeenCalledWith('event text')
+    expect(window.atlas.clipboard.readText).not.toHaveBeenCalled()
+  })
+
+  it('does not cancel Ctrl+V before the browser can emit the native paste event', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    vi.useFakeTimers()
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'v',
+      ctrlKey: true,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+      bubbles: true,
+      cancelable: true
+    })
+
+    expect(terminalTextarea().dispatchEvent(event)).toBe(true)
+    expect(event.defaultPrevented).toBe(false)
     expect(window.atlas.clipboard.readText).not.toHaveBeenCalled()
   })
 
@@ -875,7 +997,7 @@ describe('TerminalComponent', () => {
     expect(document.querySelector('.terminal-module__paste-feedback--error')).not.toBeNull()
   })
 
-  it('falls back to text when the native clipboard has no image', async () => {
+  it('falls back to text before probing native clipboard images', async () => {
     const updateState = vi.fn()
     const updateConfig = vi.fn()
     const setTitle = vi.fn()
@@ -917,7 +1039,7 @@ describe('TerminalComponent', () => {
 
     await advanceShortcutPasteFallback()
 
-    expect(window.atlas.terminal.saveClipboardImage).toHaveBeenCalled()
+    expect(window.atlas.terminal.saveClipboardImage).not.toHaveBeenCalled()
     expect(terminalInstances[0].paste).toHaveBeenCalledWith('plain text')
   })
 

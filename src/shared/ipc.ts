@@ -62,7 +62,8 @@ export const searchFilesInputSchema = z.object({
 })
 
 export const watchDirectoryInputSchema = z.object({
-  rootPath: z.string().min(1)
+  rootPath: z.string().min(1),
+  targetPath: z.string().min(1).optional()
 })
 
 export const terminalWriteInputSchema = z.object({

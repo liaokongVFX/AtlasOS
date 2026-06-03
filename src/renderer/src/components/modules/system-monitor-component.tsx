@@ -1,7 +1,9 @@
-import { Activity, Cpu, MemoryStick, type LucideIcon } from 'lucide-react'
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { Activity, ChartSpline, Cpu, Gauge, MemoryStick, type LucideIcon } from 'lucide-react'
+import { useEffect, useId, useMemo, useState, type CSSProperties } from 'react'
 import type { SystemMetricsSnapshot } from '@shared/system-metrics'
 import { useI18n } from '../../i18n'
+import { asString, cn } from '../../lib/utils'
+import type { AtlasComponentRendererProps } from '../registry'
 
 type MetricPanelProps = {
   detail: string
@@ -10,12 +12,35 @@ type MetricPanelProps = {
   value?: number
 }
 
+type MetricHistoryPoint = Pick<SystemMetricsSnapshot, 'cpuUsagePercent' | 'memoryUsagePercent' | 'memoryUsedBytes' | 'memoryTotalBytes' | 'sampledAt'>
+
+type MetricWavePanelProps = Omit<MetricPanelProps, 'icon'> & {
+  axisLabels: readonly [string, string, string]
+  chartLabel: string
+  samples: MetricHistoryPoint[]
+  valueForSample: (sample: MetricHistoryPoint) => number
+  variant: 'cpu' | 'memory'
+}
+
 type GaugeStyle = CSSProperties & {
   '--metric-angle': string
   '--metric-value': string
 }
 
 const POLL_INTERVAL_MS = 1000
+const HISTORY_SAMPLE_LIMIT = 90
+const WAVE_CHART_WIDTH = 320
+const WAVE_CHART_HEIGHT = 112
+const WAVE_CHART_PADDING_X = 4
+const WAVE_CHART_PADDING_Y = 8
+const PERCENT_AXIS_LABELS = ['100', '50', '0'] as const
+
+type SystemMonitorViewMode = 'gauge' | 'wave'
+
+type ChartPoint = {
+  x: number
+  y: number
+}
 
 function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0
@@ -48,6 +73,68 @@ function formatSampleTime(sampledAt: string): string {
   }).format(date)
 }
 
+function readViewMode(value: unknown): SystemMonitorViewMode {
+  return asString(value, 'gauge') === 'wave' ? 'wave' : 'gauge'
+}
+
+function snapshotToHistoryPoint(snapshot: SystemMetricsSnapshot): MetricHistoryPoint {
+  return {
+    cpuUsagePercent: snapshot.cpuUsagePercent,
+    memoryUsagePercent: snapshot.memoryUsagePercent,
+    memoryUsedBytes: snapshot.memoryUsedBytes,
+    memoryTotalBytes: snapshot.memoryTotalBytes,
+    sampledAt: snapshot.sampledAt
+  }
+}
+
+function appendHistorySample(history: MetricHistoryPoint[], snapshot: SystemMetricsSnapshot): MetricHistoryPoint[] {
+  const nextSample = snapshotToHistoryPoint(snapshot)
+  const previousSample = history.at(-1)
+  const nextHistory = previousSample?.sampledAt === nextSample.sampledAt ? [...history.slice(0, -1), nextSample] : [...history, nextSample]
+
+  return nextHistory.length > HISTORY_SAMPLE_LIMIT ? nextHistory.slice(nextHistory.length - HISTORY_SAMPLE_LIMIT) : nextHistory
+}
+
+function chartY(value: number): number {
+  const plotHeight = WAVE_CHART_HEIGHT - WAVE_CHART_PADDING_Y * 2
+  return WAVE_CHART_PADDING_Y + (1 - clampPercent(value) / 100) * plotHeight
+}
+
+function chartPoints(samples: MetricHistoryPoint[], valueForSample: (sample: MetricHistoryPoint) => number): ChartPoint[] {
+  const plotWidth = WAVE_CHART_WIDTH - WAVE_CHART_PADDING_X * 2
+
+  if (samples.length === 1) {
+    const y = chartY(valueForSample(samples[0]))
+    return [
+      { x: WAVE_CHART_PADDING_X, y },
+      { x: WAVE_CHART_WIDTH - WAVE_CHART_PADDING_X, y }
+    ]
+  }
+
+  return samples.map((sample, index) => ({
+    x: WAVE_CHART_PADDING_X + (plotWidth * index) / Math.max(1, samples.length - 1),
+    y: chartY(valueForSample(sample))
+  }))
+}
+
+function linePath(points: ChartPoint[]): string {
+  return points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ')
+}
+
+function areaPath(points: ChartPoint[]): string {
+  if (!points.length) return ''
+
+  const baseline = WAVE_CHART_HEIGHT - WAVE_CHART_PADDING_Y
+  return `${linePath(points)} L ${points.at(-1)?.x.toFixed(2) ?? WAVE_CHART_PADDING_X} ${baseline} L ${points[0].x.toFixed(2)} ${baseline} Z`
+}
+
+function timeTicks(samples: MetricHistoryPoint[]): string[] {
+  if (!samples.length) return ['--', '--', '--']
+
+  const middleIndex = Math.floor((samples.length - 1) / 2)
+  return [samples[0], samples[middleIndex], samples.at(-1) ?? samples[middleIndex]].map((sample) => formatSampleTime(sample.sampledAt))
+}
+
 function MetricPanel({ detail, icon: Icon, label, value }: MetricPanelProps): JSX.Element {
   const percent = value === undefined ? 0 : clampPercent(value)
   const formattedValue = formatPercent(value)
@@ -63,9 +150,6 @@ function MetricPanel({ detail, icon: Icon, label, value }: MetricPanelProps): JS
   return (
     <section className="system-monitor-metric" aria-label={`${label} ${formattedValue}`}>
       <div className="system-monitor-metric__topline">
-        <span className="system-monitor-metric__icon" aria-hidden="true">
-          <Icon size={16} />
-        </span>
         <span>{label}</span>
       </div>
       <div className="system-monitor-metric__body">
@@ -84,10 +168,55 @@ function MetricPanel({ detail, icon: Icon, label, value }: MetricPanelProps): JS
   )
 }
 
-export function SystemMonitorComponent(): JSX.Element {
+function MetricWavePanel({ axisLabels, chartLabel, detail, label, samples, value, valueForSample, variant }: MetricWavePanelProps): JSX.Element {
+  const gradientId = useId().replace(/:/g, '')
+  const points = chartPoints(samples, valueForSample)
+  const line = linePath(points)
+  const area = areaPath(points)
+  const ticks = timeTicks(samples)
+  const formattedValue = formatPercent(value)
+
+  return (
+    <section className={cn('system-monitor-wave-panel', `system-monitor-wave-panel--${variant}`)} aria-label={`${label} ${formattedValue}. ${detail}`} title={detail}>
+      <div className="system-monitor-wave-panel__topline">
+        <span>{label}</span>
+        <strong>{formattedValue}</strong>
+      </div>
+      <div className="system-monitor-wave-chart">
+        <div className="system-monitor-wave-chart__axis" aria-hidden="true">
+          {axisLabels.map((axisLabel) => (
+            <span key={axisLabel}>{axisLabel}</span>
+          ))}
+        </div>
+        <div className="system-monitor-wave-chart__plot">
+          <svg viewBox={`0 0 ${WAVE_CHART_WIDTH} ${WAVE_CHART_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label={chartLabel}>
+            <defs>
+              <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="var(--wave-color)" stopOpacity="0.58" />
+                <stop offset="100%" stopColor="var(--wave-color)" stopOpacity="0.06" />
+              </linearGradient>
+            </defs>
+            <path className="system-monitor-wave-chart__grid" d="M 0 8 H 320 M 0 56 H 320 M 0 104 H 320 M 64 0 V 112 M 160 0 V 112 M 256 0 V 112" />
+            {area ? <path className="system-monitor-wave-chart__area" d={area} fill={`url(#${gradientId})`} /> : null}
+            {line ? <path className="system-monitor-wave-chart__line" d={line} /> : null}
+          </svg>
+          <div className="system-monitor-wave-chart__ticks" aria-hidden="true">
+            {ticks.map((tick, index) => (
+              <span key={`${tick}-${index}`}>{tick}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+export function SystemMonitorComponent({ component, updateState }: AtlasComponentRendererProps): JSX.Element {
   const { t } = useI18n()
   const [snapshot, setSnapshot] = useState<SystemMetricsSnapshot | null>(null)
+  const [history, setHistory] = useState<MetricHistoryPoint[]>([])
   const [error, setError] = useState<string | null>(null)
+  const viewMode = readViewMode(component.state.viewMode)
 
   useEffect(() => {
     let disposed = false
@@ -99,6 +228,7 @@ export function SystemMonitorComponent(): JSX.Element {
         if (disposed) return
 
         setSnapshot(nextSnapshot)
+        setHistory((currentHistory) => appendHistorySample(currentHistory, nextSnapshot))
         setError(null)
       } catch (nextError) {
         if (disposed) return
@@ -122,6 +252,9 @@ export function SystemMonitorComponent(): JSX.Element {
     }
   }, [])
 
+  const switchViewMode = (nextViewMode: SystemMonitorViewMode): void => {
+    if (nextViewMode !== viewMode) updateState({ viewMode: nextViewMode }, true)
+  }
   const sampledAt = useMemo(() => (snapshot ? formatSampleTime(snapshot.sampledAt) : null), [snapshot])
   const memoryDetail = snapshot
     ? t('systemMonitor.memoryUsed', {
@@ -129,26 +262,78 @@ export function SystemMonitorComponent(): JSX.Element {
         total: formatBytes(snapshot.memoryTotalBytes)
       })
     : t('systemMonitor.loading')
+  const memoryAxisLabels = snapshot
+    ? ([formatBytes(snapshot.memoryTotalBytes), formatBytes(snapshot.memoryTotalBytes / 2), formatBytes(0)] as const)
+    : PERCENT_AXIS_LABELS
 
   return (
-    <div className="system-monitor-module">
+    <div className={cn('system-monitor-module', viewMode === 'wave' && 'system-monitor-module--wave')}>
       <header className="system-monitor-header">
         <span className="system-monitor-header__icon" aria-hidden="true">
           <Activity size={17} />
         </span>
-        <div>
+        <div className="system-monitor-header__title">
           <strong>{t('component.systemMonitor')}</strong>
           <span>{sampledAt ? t('systemMonitor.updatedAt', { time: sampledAt }) : t('systemMonitor.loading')}</span>
         </div>
-        <span className="system-monitor-live">{t('systemMonitor.live')}</span>
+        <div className="system-monitor-header__actions">
+          <span className="system-monitor-live">{t('systemMonitor.live')}</span>
+          <div className="system-monitor-view-toggle" role="group" aria-label={t('systemMonitor.viewToggle')}>
+            <button
+              type="button"
+              className={cn('system-monitor-view-toggle__button', viewMode === 'gauge' && 'system-monitor-view-toggle__button--active')}
+              onClick={() => switchViewMode('gauge')}
+              title={t('systemMonitor.showGaugeView')}
+              aria-label={t('systemMonitor.showGaugeView')}
+              aria-pressed={viewMode === 'gauge'}
+            >
+              <Gauge size={14} />
+            </button>
+            <button
+              type="button"
+              className={cn('system-monitor-view-toggle__button', viewMode === 'wave' && 'system-monitor-view-toggle__button--active')}
+              onClick={() => switchViewMode('wave')}
+              title={t('systemMonitor.showWaveView')}
+              aria-label={t('systemMonitor.showWaveView')}
+              aria-pressed={viewMode === 'wave'}
+            >
+              <ChartSpline size={14} />
+            </button>
+          </div>
+        </div>
       </header>
 
       {error ? <div className="module-error">{t('systemMonitor.failedLoad', { message: error })}</div> : null}
 
-      <div className="system-monitor-grid">
-        <MetricPanel icon={Cpu} label={t('systemMonitor.cpu')} value={snapshot?.cpuUsagePercent} detail={t('systemMonitor.cpuDetail')} />
-        <MetricPanel icon={MemoryStick} label={t('systemMonitor.memory')} value={snapshot?.memoryUsagePercent} detail={memoryDetail} />
-      </div>
+      {viewMode === 'wave' ? (
+        <div className="system-monitor-wave-grid">
+          <MetricWavePanel
+            axisLabels={PERCENT_AXIS_LABELS}
+            chartLabel={t('systemMonitor.waveChartLabel', { label: t('systemMonitor.cpu') })}
+            detail={t('systemMonitor.cpuDetail')}
+            label={t('systemMonitor.cpu')}
+            samples={history}
+            value={snapshot?.cpuUsagePercent}
+            valueForSample={(sample) => sample.cpuUsagePercent}
+            variant="cpu"
+          />
+          <MetricWavePanel
+            axisLabels={memoryAxisLabels}
+            chartLabel={t('systemMonitor.waveChartLabel', { label: t('systemMonitor.memory') })}
+            detail={memoryDetail}
+            label={t('systemMonitor.memory')}
+            samples={history}
+            value={snapshot?.memoryUsagePercent}
+            valueForSample={(sample) => sample.memoryUsagePercent}
+            variant="memory"
+          />
+        </div>
+      ) : (
+        <div className="system-monitor-grid">
+          <MetricPanel icon={Cpu} label={t('systemMonitor.cpu')} value={snapshot?.cpuUsagePercent} detail={t('systemMonitor.cpuDetail')} />
+          <MetricPanel icon={MemoryStick} label={t('systemMonitor.memory')} value={snapshot?.memoryUsagePercent} detail={memoryDetail} />
+        </div>
+      )}
     </div>
   )
 }

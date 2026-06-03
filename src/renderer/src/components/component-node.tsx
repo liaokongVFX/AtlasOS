@@ -12,6 +12,7 @@ import { componentDefinitionTitle, getComponentDefinition, type NodeResizeParams
 type AtlasNodeData = Record<string, unknown> & {
   canvasId: string
   component: CanvasComponent
+  parentGroupPosition?: { x: number; y: number }
   onRequestSelect?: (componentId: string) => void
 }
 
@@ -60,7 +61,7 @@ function createForwardedContextMenuEvent(event: MouseEvent<HTMLElement>): global
 
 function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode>): JSX.Element {
   const { t } = useI18n()
-  const { canvasId, component } = data
+  const { canvasId, component, parentGroupPosition } = data
   const definition = getComponentDefinition(component.type)
   const defaultTitle = componentDefinitionTitle(definition, t)
   const updateComponent = useCanvasStore((state) => state.updateComponent)
@@ -180,18 +181,18 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
   const persistResize = useCallback<OnResizeEnd>((_, params) => {
     setIsResizing(false)
     const resizeParams: NodeResizeParams = {
-      x: params.x,
-      y: params.y,
+      x: params.x + (parentGroupPosition?.x ?? 0),
+      y: params.y + (parentGroupPosition?.y ?? 0),
       width: params.width,
       height: params.height
     }
     const normalizedFrame = resizeBehavior?.normalizeFrame
       ? resizeBehavior.normalizeFrame(resizeParams, { component, direction: resizeDirectionRef.current })
       : {
-          x: Math.round(params.x),
-          y: Math.round(params.y),
-          width: Math.round(params.width),
-          height: Math.round(params.height)
+          x: Math.round(resizeParams.x),
+          y: Math.round(resizeParams.y),
+          width: Math.round(resizeParams.width),
+          height: Math.round(resizeParams.height)
         }
 
     resizeDirectionRef.current = null
@@ -199,7 +200,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
       draft.frame = normalizedFrame
     })
     notifyCanvasViewportSync()
-  }, [canvasId, component, resizeBehavior, updateComponent])
+  }, [canvasId, component, parentGroupPosition?.x, parentGroupPosition?.y, resizeBehavior, updateComponent])
 
   const markResizing = useCallback(() => {
     setIsResizing(true)

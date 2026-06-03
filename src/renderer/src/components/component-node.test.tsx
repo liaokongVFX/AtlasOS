@@ -101,11 +101,11 @@ function createComponent(patch: Partial<CanvasComponent> = {}): CanvasComponent 
   }
 }
 
-function renderNode(component = createComponent(), selected = true): void {
+function renderNode(component = createComponent(), selected = true, parentGroupPosition?: { x: number; y: number }): void {
   render(
     <ComponentNode
       {...({
-        data: { canvasId: 'canvas-1', component },
+        data: { canvasId: 'canvas-1', component, parentGroupPosition },
         selected,
         dragging: false,
         width: component.frame.width,
@@ -310,6 +310,32 @@ describe('ComponentNode', () => {
     })
 
     expect(savedFrame).toEqual({ x: 0, y: 0, width: 640, height: 398 })
+  })
+
+  it('persists grouped resize positions in canvas coordinates', () => {
+    const component = createComponent({
+      frame: { x: 140, y: 132, width: 420, height: 300 }
+    })
+    let savedFrame = component.frame
+    const updateComponent = vi.fn((_canvasId: string, _componentId: string, updater: (component: CanvasComponent) => void) => {
+      const draft = structuredClone(component)
+      updater(draft)
+      savedFrame = draft.frame
+    })
+    useCanvasStore.setState({ updateComponent } as Partial<CanvasStoreState>)
+
+    renderNode(component, true, { x: 80, y: 62 })
+
+    act(() => {
+      nodeResizerProps.current?.onResizeEnd?.({} as never, {
+        x: 60,
+        y: 70,
+        width: 460,
+        height: 320
+      })
+    })
+
+    expect(savedFrame).toEqual({ x: 140, y: 132, width: 460, height: 320 })
   })
 
   it('notifies native browser overlays when resize ends', () => {

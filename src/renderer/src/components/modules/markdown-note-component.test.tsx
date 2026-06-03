@@ -13,7 +13,7 @@ vi.mock('@uiw/react-codemirror', async () => {
   }
 })
 
-function createMarkdownComponent(content: string): CanvasComponent {
+function createMarkdownComponent(content?: string): CanvasComponent {
   const timestamp = '2026-05-22T00:00:00.000Z'
 
   return {
@@ -23,7 +23,7 @@ function createMarkdownComponent(content: string): CanvasComponent {
     frame: { x: 0, y: 0, width: 420, height: 320 },
     zIndex: 1,
     config: {},
-    state: { content },
+    state: content === undefined ? {} : { content },
     bindings: {},
     createdAt: timestamp,
     updatedAt: timestamp
@@ -49,6 +49,20 @@ function renderMarkdownPreview(content: string): HTMLElement {
 describe('MarkdownNoteComponent', () => {
   afterEach(() => {
     cleanup()
+  })
+
+  it('renders missing note content as empty text', () => {
+    render(
+      <MarkdownNoteComponent
+        canvasId="canvas-1"
+        component={createMarkdownComponent()}
+        updateConfig={vi.fn()}
+        updateState={vi.fn()}
+        setTitle={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole('textbox', { name: 'Markdown editor' })).toHaveValue('')
   })
 
   it('renders fenced code blocks with syntax highlighting', () => {

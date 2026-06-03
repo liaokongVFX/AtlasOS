@@ -104,6 +104,16 @@ describe('canvas group store operations', () => {
     }
   })
 
+  it('creates markdown notes with empty content', () => {
+    useCanvasStore.getState().addComponent('markdown-note', { x: 240, y: 180 })
+
+    const component = useCanvasStore.getState().canvases['canvas-1'].components[0]
+    expect(component).toMatchObject({
+      type: 'markdown-note',
+      state: { content: '' }
+    })
+  })
+
   it('creates a padded group and removes members from old groups without deleting empty groups', () => {
     const canvas = createCanvas({
       components: [

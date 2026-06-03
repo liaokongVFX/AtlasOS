@@ -2145,6 +2145,24 @@ svg {
   grid-template-rows: 42px 1fr;
 }
 
+.file-tree-content {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.file-tree-content--with-error {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.file-tree-viewport {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .file-tree-toolbar,
 .browser-toolbar,
 .quick-launcher-toolbar,
@@ -3204,6 +3222,10 @@ svg {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
+.system-monitor-module--wave {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .system-monitor-header {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr) auto;
@@ -3216,8 +3238,23 @@ svg {
   box-shadow: var(--edge-highlight);
 }
 
-.system-monitor-header__icon,
-.system-monitor-metric__icon {
+.system-monitor-module--wave .system-monitor-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  padding: 7px var(--space-2);
+  background: var(--color-surface-1);
+}
+
+.system-monitor-module--wave .system-monitor-header__icon,
+.system-monitor-module--wave .system-monitor-header strong {
+  display: none;
+}
+
+.system-monitor-module--wave .system-monitor-header__title span {
+  font-size: 10px;
+}
+
+.system-monitor-header__icon {
   display: inline-grid;
   place-items: center;
   border: 1px solid rgb(130 143 255 / 30%);
@@ -3231,7 +3268,7 @@ svg {
   height: 32px;
 }
 
-.system-monitor-header div {
+.system-monitor-header__title {
   display: grid;
   gap: 1px;
   min-width: 0;
@@ -3248,7 +3285,7 @@ svg {
   white-space: nowrap;
 }
 
-.system-monitor-header div span {
+.system-monitor-header__title span {
   min-width: 0;
   overflow: hidden;
   color: var(--color-ink-subtle);
@@ -3257,6 +3294,14 @@ svg {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.system-monitor-header__actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .system-monitor-live {
@@ -3284,6 +3329,45 @@ svg {
   box-shadow: 0 0 0 3px rgb(94 106 210 / 16%);
 }
 
+.system-monitor-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  background: var(--color-surface-1);
+  box-shadow: var(--edge-highlight);
+}
+
+.system-monitor-view-toggle__button {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-ink-subtle);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.system-monitor-view-toggle__button:hover {
+  background: var(--color-surface-3);
+  color: var(--color-ink);
+}
+
+.system-monitor-view-toggle__button--active {
+  border-color: rgb(130 143 255 / 46%);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
 .system-monitor-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3292,6 +3376,169 @@ svg {
   min-height: 0;
   overflow: auto;
   padding: var(--space-3);
+}
+
+.system-monitor-wave-grid {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  align-content: stretch;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow: auto;
+  padding: 6px;
+}
+
+.system-monitor-wave-panel {
+  --wave-color: var(--color-primary-hover);
+  --wave-axis-gutter: 48px;
+
+  position: relative;
+  display: block;
+  min-width: 0;
+  min-height: 98px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  padding: 6px;
+  background: var(--color-surface-1);
+  color: var(--color-ink-muted);
+  box-shadow: var(--edge-highlight);
+}
+
+.system-monitor-wave-panel--cpu {
+  --wave-color: rgb(88 214 88);
+}
+
+.system-monitor-wave-panel--memory {
+  --wave-color: rgb(82 181 238);
+}
+
+.system-monitor-wave-panel__topline {
+  position: absolute;
+  top: 12px;
+  right: var(--space-3);
+  left: calc(var(--space-3) + var(--wave-axis-gutter));
+  z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--color-ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.system-monitor-wave-panel__topline > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-monitor-wave-panel__topline strong {
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.system-monitor-wave-chart {
+  position: relative;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+.system-monitor-wave-chart__axis {
+  position: absolute;
+  top: var(--space-2);
+  bottom: 22px;
+  left: var(--space-2);
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 0;
+  justify-items: start;
+  color: var(--color-ink-subtle);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.system-monitor-wave-chart__axis span:nth-child(2) {
+  align-self: center;
+}
+
+.system-monitor-wave-chart__axis span:last-child {
+  align-self: end;
+}
+
+.system-monitor-wave-chart__plot {
+  position: relative;
+  min-width: 0;
+  height: 100%;
+  min-height: 86px;
+  overflow: hidden;
+  border: 1px solid var(--color-hairline-tertiary);
+  border-radius: var(--radius-md);
+  background: rgb(1 1 2 / 74%);
+}
+
+.system-monitor-wave-chart__plot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.system-monitor-wave-chart__grid {
+  fill: none;
+  stroke: rgb(83 94 120 / 34%);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.system-monitor-wave-chart__area {
+  pointer-events: none;
+}
+
+.system-monitor-wave-chart__line {
+  fill: none;
+  stroke: var(--wave-color);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.35;
+  vector-effect: non-scaling-stroke;
+}
+
+.system-monitor-wave-chart__ticks {
+  position: absolute;
+  right: var(--space-2);
+  bottom: 7px;
+  left: calc(var(--space-2) + 30px);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  color: var(--color-ink-subtle);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.system-monitor-wave-chart__ticks span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-monitor-wave-chart__ticks span:nth-child(2) {
+  text-align: center;
+}
+
+.system-monitor-wave-chart__ticks span:last-child {
+  text-align: right;
 }
 
 .system-monitor-metric {
@@ -3319,13 +3566,7 @@ svg {
   font-weight: 600;
 }
 
-.system-monitor-metric__icon {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-}
-
-.system-monitor-metric__topline > span:last-child,
+.system-monitor-metric__topline > span,
 .system-monitor-metric__detail {
   min-width: 0;
   overflow: hidden;
@@ -3413,6 +3654,24 @@ svg {
 }
 
 @container (max-width: 500px) {
+  .system-monitor-header {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .system-monitor-header__actions {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+
+  .system-monitor-module--wave .system-monitor-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .system-monitor-module--wave .system-monitor-header__actions {
+    grid-column: auto;
+    justify-content: flex-end;
+  }
+
   .system-monitor-grid {
     grid-template-columns: 1fr;
   }
@@ -3423,6 +3682,15 @@ svg {
 
   .system-monitor-metric__body {
     grid-template-columns: minmax(82px, 1fr) minmax(76px, auto);
+  }
+
+  .system-monitor-wave-panel {
+    min-height: 106px;
+  }
+
+  .system-monitor-wave-panel__topline {
+    top: 10px;
+    font-size: 10px;
   }
 }
 
@@ -3767,14 +4035,15 @@ svg {
 
 .calendar-grid {
   align-content: start;
+  grid-auto-rows: minmax(30px, 1fr);
   min-height: 0;
 }
 
 .calendar-day {
   display: grid;
+  height: 100%;
   min-width: 0;
-  min-height: 30px;
-  aspect-ratio: 1;
+  min-height: 0;
   place-items: center;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
@@ -3802,6 +4071,14 @@ svg {
 @container (max-width: 620px) {
   .calendar-body {
     grid-template-columns: 1fr;
+  }
+
+  .calendar-month-panel {
+    grid-template-rows: auto auto auto;
+  }
+
+  .calendar-grid {
+    grid-auto-rows: 30px;
   }
 }
 

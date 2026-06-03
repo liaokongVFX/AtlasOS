@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 import { Bell, CheckCircle2, CircleAlert, MonitorDot, Trash2, X } from 'lucide-react'
-import type { PetAgentSession, PetAlert, PetRuntimeState } from '@shared/pet'
+import { DEFAULT_PET_WINDOW_STATE, type PetAgentSession, type PetAlert, type PetRuntimeState } from '@shared/pet'
 
 const PANEL_CLOSE_DELAY_MS = 140
 
@@ -130,7 +130,12 @@ export function PetApp(): JSX.Element {
   const needsAttention = attentionCount > 0
   const hasRunningSession = (state?.agentSessions ?? []).some(isRunningSession)
   const presentationState: keyof PetRuntimeState['settings']['actionMap'] = needsAttention ? 'attention' : hasRunningSession ? 'running' : 'idle'
-  const panelSide = state?.window.panelSide ?? 'right'
+  const panelSide = state?.window.panelSide ?? DEFAULT_PET_WINDOW_STATE.panelSide
+  const orbOffset = state?.window.orbOffset ?? DEFAULT_PET_WINDOW_STATE.orbOffset
+  const orbStyle: CSSProperties = {
+    left: `${orbOffset.x}px`,
+    top: `${orbOffset.y}px`
+  }
   const petMedia = state
     ? presentationState === 'attention' && state.settings.assetPack.attentionSrc
       ? mediaElement(
@@ -263,6 +268,7 @@ export function PetApp(): JSX.Element {
           onPointerMove={moveDrag}
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
+          style={orbStyle}
           aria-label="AtlasOS pet"
         >
           {petMedia ? <span className="pet-orb__asset">{petMedia}</span> : <span className="pet-orb__core"><MonitorDot size={28} /></span>}

@@ -1,3 +1,4 @@
+import type { Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -20,6 +21,7 @@ import { assertInsideRoot, childPath, sanitizeFileName } from './path-safety'
 import { handleValidated } from './ipc-helpers'
 
 const FILESYSTEM_SCAN_DEPTH = 64
+const FILESYSTEM_WATCH_DEPTH = 0
 
 export class FileSystemService {
   private readonly watchers = new Map<string, FSWatcher>()
@@ -109,7 +111,9 @@ export class FileSystemService {
         .map((item) => join(rootPath, item))
     })
 
-    handleValidated('filesystem:watch', watchDirectoryInputSchema, (event, input) => this.watch(event.sender, input.rootPath))
+    handleValidated('filesystem:watch', watchDirectoryInputSchema, (event, input) =>
+      this.watch(event.sender, input.rootPath, input.targetPath ?? input.rootPath)
+    )
     handleValidated('filesystem:unwatch', z.object({ watchId: z.string() }), (_, input) => this.unwatch(input.watchId))
   }
 
@@ -120,12 +124,13 @@ export class FileSystemService {
     this.watchers.clear()
   }
 
-  private watch(webContents: WebContents, rootPathInput: string): { watchId: string } {
+  private watch(webContents: WebContents, rootPathInput: string, targetPathInput: string): { watchId: string } {
     const rootPath = assertInsideRoot(rootPathInput, rootPathInput)
+    const targetPath = assertInsideRoot(rootPath, targetPathInput)
     const watchId = randomUUID()
-    const watcher = chokidar.watch(rootPath, {
+    const watcher = chokidar.watch(targetPath, {
       ignoreInitial: true,
-      depth: FILESYSTEM_SCAN_DEPTH
+      depth: FILESYSTEM_WATCH_DEPTH
     })
 
     watcher.on('all', (eventName, targetPath) => {
@@ -157,17 +162,17 @@ export class FileSystemService {
     return entry
   }
 
-  private async entryFor(rootPath: string, targetPath: string, depth: number): Promise<FileEntry> {
+  private async entryFor(rootPath: string, targetPath: string, depth: number, dirent?: Dirent): Promise<FileEntry> {
     const safePath = assertInsideRoot(rootPath, targetPath)
-    const info = await lstat(safePath)
-    const kind = info.isDirectory() ? 'directory' : 'file'
+    const info = dirent ? null : await lstat(safePath)
+    const kind = dirent ? (dirent.isDirectory() ? 'directory' : 'file') : info?.isDirectory() ? 'directory' : 'file'
     const entry: FileEntry = {
       id: safePath,
       name: safePath === rootPath ? safePath : safePath.split(/[\\/]/).at(-1) ?? safePath,
       path: safePath,
       kind,
-      size: kind === 'file' ? info.size : undefined,
-      modifiedAt: info.mtime.toISOString()
+      size: !dirent && kind === 'file' ? info?.size : undefined,
+      modifiedAt: info?.mtime.toISOString()
     }
 
     if (kind === 'directory' && depth > 0) {
@@ -176,7 +181,7 @@ export class FileSystemService {
       entry.children = await Promise.all(
         dirents
           .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
-          .map((dirent) => this.entryFor(rootPath, join(safePath, dirent.name), depth - 1))
+          .map((childDirent) => this.entryFor(rootPath, join(safePath, childDirent.name), depth - 1, childDirent))
       )
     } else if (kind === 'directory') {
       entry.childrenLoaded = false

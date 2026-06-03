@@ -45,6 +45,11 @@ export const DEFAULT_PET_SETTINGS = {
   }
 } as const
 
+export const DEFAULT_PET_WINDOW_STATE = {
+  panelSide: 'right',
+  orbOffset: { x: 284, y: 12 }
+} as const
+
 export const petAlertTargetSchema = z.object({
   canvasId: z.string().min(1).optional(),
   componentId: z.string().min(1).optional(),
@@ -67,6 +72,8 @@ export const petAlertSchema = z.object({
 
 export const petAgentSessionSchema = z.object({
   id: z.string().min(1),
+  terminalSessionId: z.string().min(1).optional(),
+  providerSessionId: z.string().min(1).optional(),
   source: z.enum(PET_AGENT_SOURCES),
   status: z.enum(PET_AGENT_STATUSES),
   canvasId: z.string().min(1),
@@ -146,9 +153,15 @@ export const petRuntimeStateSchema = z.object({
   agentSessions: z.array(petAgentSessionSchema).default([]),
   window: z
     .object({
-      panelSide: z.enum(PET_PANEL_SIDES).default('right')
+      panelSide: z.enum(PET_PANEL_SIDES).default(DEFAULT_PET_WINDOW_STATE.panelSide),
+      orbOffset: z
+        .object({
+          x: z.number().int().default(DEFAULT_PET_WINDOW_STATE.orbOffset.x),
+          y: z.number().int().default(DEFAULT_PET_WINDOW_STATE.orbOffset.y)
+        })
+        .default(DEFAULT_PET_WINDOW_STATE.orbOffset)
     })
-    .default({ panelSide: 'right' }),
+    .default(DEFAULT_PET_WINDOW_STATE),
   bridge: z.object({
     enabled: z.boolean(),
     port: z.number().int().min(0),

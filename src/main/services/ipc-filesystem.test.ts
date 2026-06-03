@@ -7,6 +7,18 @@ const electronMocks = vi.hoisted(() => ({
   ipcHandle: vi.fn()
 }))
 
+const chokidarMocks = vi.hoisted(() => {
+  const watcher = {
+    close: vi.fn(async () => undefined),
+    on: vi.fn()
+  }
+
+  return {
+    watch: vi.fn(() => watcher),
+    watcher
+  }
+})
+
 vi.mock('electron', () => ({
   dialog: {
     showOpenDialog: vi.fn()
@@ -20,11 +32,20 @@ vi.mock('electron', () => ({
   }
 }))
 
+vi.mock('chokidar', () => ({
+  default: {
+    watch: chokidarMocks.watch
+  }
+}))
+
 const testRoot = join(process.cwd(), '.atlasos-dev', 'ipc-filesystem-test')
 
 describe('FileSystemService', () => {
   beforeEach(async () => {
     electronMocks.ipcHandle.mockClear()
+    chokidarMocks.watch.mockClear()
+    chokidarMocks.watcher.close.mockClear()
+    chokidarMocks.watcher.on.mockClear()
     await rm(testRoot, { recursive: true, force: true })
     await mkdir(testRoot, { recursive: true })
   })
@@ -47,5 +68,27 @@ describe('FileSystemService', () => {
     expect(tree.children.map((entry: { name: string }) => entry.name)).toEqual(
       expect.arrayContaining(['.git', 'node_modules', 'out', 'dist', 'release', '.vite'])
     )
+  })
+
+  it('watches the requested directory shallowly instead of crawling the root tree', async () => {
+    const targetPath = join(testRoot, 'src')
+    await mkdir(targetPath)
+
+    const service = new FileSystemService()
+    service.registerIpc()
+
+    const watchHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'filesystem:watch')?.[1]
+    const webContents = {
+      isDestroyed: vi.fn(() => false),
+      once: vi.fn(),
+      send: vi.fn()
+    }
+    const result = await watchHandler({ sender: webContents }, { rootPath: testRoot, targetPath })
+
+    expect(result).toEqual({ watchId: expect.any(String) })
+    expect(chokidarMocks.watch).toHaveBeenCalledWith(targetPath, {
+      ignoreInitial: true,
+      depth: 0
+    })
   })
 })

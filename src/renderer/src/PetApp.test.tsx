@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_PET_SETTINGS, type PetRuntimeState } from '@shared/pet'
+import { DEFAULT_PET_SETTINGS, DEFAULT_PET_WINDOW_STATE, type PetRuntimeState } from '@shared/pet'
 import { PetApp } from './PetApp'
 
 const petApi = {
@@ -47,7 +47,7 @@ function createState(): PetRuntimeState {
         attentionReason: 'Waiting for input'
       }
     ],
-    window: { panelSide: 'right' },
+    window: { ...DEFAULT_PET_WINDOW_STATE, orbOffset: { ...DEFAULT_PET_WINDOW_STATE.orbOffset } },
     bridge: {
       enabled: true,
       port: 7237,
@@ -280,6 +280,24 @@ describe('PetApp', () => {
     expect(sprite?.style.getPropertyValue('--pet-sprite-frame-count')).toBe('6')
     expect(sprite?.style.getPropertyValue('--pet-sprite-strip-width')).toBe('600%')
     expect(sprite?.style.getPropertyValue('--pet-sprite-duration')).toBe('0.5s')
+  })
+
+  it('positions the orb from the runtime window offset', async () => {
+    petApi.getState.mockResolvedValue({
+      ...createReadyState(),
+      window: {
+        panelSide: 'right',
+        orbOffset: { x: 284, y: 348 }
+      }
+    })
+
+    render(<PetApp />)
+
+    const orb = await screen.findByRole('button', { name: 'AtlasOS pet' })
+    expect(orb).toHaveStyle({
+      left: '284px',
+      top: '348px'
+    })
   })
 
   it('dismisses individual alerts and clears visible alerts from the panel', async () => {

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanvasComponent } from '@shared/schema'
-import { I18nProvider } from '../../i18n'
+import { I18nProvider, type Locale } from '../../i18n'
 import { CalendarComponent } from './calendar-component'
 
 const TIMESTAMP = '2026-05-27T00:00:00.000Z'
@@ -36,9 +36,9 @@ function formatShortTime(date: Date): string {
   }).format(date)
 }
 
-function renderCalendar(component = createComponent(), updateState = vi.fn()) {
+function renderCalendar(component = createComponent(), updateState = vi.fn(), locale: Locale = 'en-US') {
   render(
-    <I18nProvider locale="en-US">
+    <I18nProvider locale={locale}>
       <CalendarComponent
         canvasId="canvas-1"
         component={component}
@@ -50,6 +50,10 @@ function renderCalendar(component = createComponent(), updateState = vi.fn()) {
   )
 
   return updateState
+}
+
+function getGridDates(): string[] {
+  return screen.getAllByRole('gridcell').map((day) => day.getAttribute('datetime') ?? '')
 }
 
 describe('CalendarComponent', () => {
@@ -97,6 +101,29 @@ describe('CalendarComponent', () => {
     })
 
     expect(screen.getByText(formatTime(nextSecond))).toBeInTheDocument()
+  })
+
+  it('renders only the complete weeks needed for a five-week month', () => {
+    vi.setSystemTime(new Date(2026, 5, 3, 21, 52, 17))
+
+    renderCalendar(createComponent(), vi.fn(), 'zh-CN')
+
+    const dates = getGridDates()
+    expect(dates).toHaveLength(35)
+    expect(dates[0]).toBe('2026-06-01')
+    expect(dates[dates.length - 1]).toBe('2026-07-05')
+    expect(dates).not.toContain('2026-07-06')
+  })
+
+  it('keeps six complete weeks when the month requires them', () => {
+    vi.setSystemTime(new Date(2026, 7, 15, 12, 0, 0))
+
+    renderCalendar(createComponent(), vi.fn(), 'zh-CN')
+
+    const dates = getGridDates()
+    expect(dates).toHaveLength(42)
+    expect(dates[0]).toBe('2026-07-27')
+    expect(dates[dates.length - 1]).toBe('2026-09-06')
   })
 
   it('persists compact mode from the collapse control', () => {

@@ -15,6 +15,7 @@ import type { AtlasComponentRendererProps } from '../registry'
 type FileNodeData = FileEntry
 const FILE_TREE_LOAD_DEPTH = 1
 const FILE_TREE_DESKTOP_OFFSET = 24
+const FILE_TREE_WATCH_REFRESH_DELAY_MS = 80
 
 type FileTreeRowActions = {
   onContextTarget: (entry: FileEntry) => void
@@ -90,6 +91,12 @@ function collectLoadedDirectoryPaths(entry: FileEntry): string[] {
   if (entry.kind !== 'directory' || entry.childrenLoaded !== true) return []
 
   return [entry.path, ...(entry.children ?? []).flatMap(collectLoadedDirectoryPaths)]
+}
+
+function descendantDirectoryPaths(rootPath: string, targetPath: string, paths: Iterable<string>): string[] {
+  return uniqueSortedPaths(
+    [...paths].filter((path) => path !== targetPath && isPathInRoot(rootPath, path) && isPathInRoot(targetPath, path))
+  )
 }
 
 function pathDepth(path: string): number {
@@ -169,6 +176,13 @@ function rebaseOpenPaths(rootPath: string, paths: Iterable<string>, oldPath: str
 
 function uniqueSortedPaths(paths: string[]): string[] {
   return sortByPathDepth([...new Set(paths)])
+}
+
+function clearRefreshTimers(timers: Map<string, number>): void {
+  for (const timer of timers.values()) {
+    window.clearTimeout(timer)
+  }
+  timers.clear()
 }
 
 function readOpenPaths(rootPath: string, value: unknown): string[] {
@@ -311,8 +325,8 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
   const { t } = useI18n()
   const rootPath = asString(component.config.rootPath)
   const persistedOpenPaths = useMemo(() => readOpenPaths(rootPath, component.state.openPaths), [component.state.openPaths, rootPath])
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const size = useElementSize(containerRef)
+  const treeViewportRef = useRef<HTMLDivElement | null>(null)
+  const treeViewportSize = useElementSize(treeViewportRef)
   const addComponent = useCanvasStore((state) => state.addComponent)
   const [tree, setTree] = useState<FileEntry | null>(null)
   const [selected, setSelected] = useState<FileEntry | null>(null)
@@ -325,6 +339,7 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
   const treeRef = useRef<FileEntry | null>(null)
   const loadingPathsRef = useRef(new Set<string>())
   const openPathsRef = useRef(new Set<string>())
+  const refreshTimersRef = useRef(new Map<string, number>())
 
   useEffect(() => {
     treeRef.current = tree
@@ -371,18 +386,35 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
       const currentEntry = currentTree ? findEntry(currentTree, targetPath) : null
       if (!currentEntry || currentEntry.kind !== 'directory') return
       if (!force && currentEntry.childrenLoaded) return
+      const descendantPaths = force
+        ? descendantDirectoryPaths(rootPath, targetPath, [
+            ...collectLoadedDirectoryPaths(currentEntry),
+            ...openPathsRef.current
+          ])
+        : []
 
       loadingPathsRef.current.add(targetPath)
       try {
         const loadedEntry = (await window.atlas.filesystem.listTree(rootPath, targetPath, FILE_TREE_LOAD_DEPTH)) as FileEntry
+        let nextLoadedEntry = loadedEntry
+        const loadedDescendants = await Promise.allSettled(
+          descendantPaths.map((path) => window.atlas.filesystem.listTree(rootPath, path, FILE_TREE_LOAD_DEPTH) as Promise<FileEntry>)
+        )
+
+        for (const loadedDescendant of loadedDescendants) {
+          if (loadedDescendant.status === 'fulfilled') {
+            nextLoadedEntry = replaceEntry(nextLoadedEntry, loadedDescendant.value)
+          }
+        }
+
         setTree((current) => {
           if (!current) return current
 
-          const nextTree = replaceEntry(current, loadedEntry)
+          const nextTree = replaceEntry(current, nextLoadedEntry)
           treeRef.current = nextTree
           return nextTree
         })
-        setSelected((current) => (current?.path === loadedEntry.path ? loadedEntry : current))
+        setSelected((current) => (current?.path === nextLoadedEntry.path ? nextLoadedEntry : current))
         setError(null)
       } catch (loadError) {
         setError(errorMessage(loadError, t('fileTree.failedLoadFolder')))
@@ -424,37 +456,73 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
     [loadDirectory, persistOpenPaths]
   )
 
+  const scheduleWatchedDirectoryRefresh = useCallback(
+    (targetPath: string) => {
+      if (!rootPath || !isPathInRoot(rootPath, targetPath)) return
+
+      const currentTree = treeRef.current
+      const currentEntry = currentTree ? findEntry(currentTree, targetPath) : null
+      if (currentTree && targetPath !== rootPath && (currentEntry?.kind !== 'directory' || !currentEntry.childrenLoaded)) return
+
+      const currentTimer = refreshTimersRef.current.get(targetPath)
+      if (currentTimer !== undefined) window.clearTimeout(currentTimer)
+
+      const timer = window.setTimeout(() => {
+        refreshTimersRef.current.delete(targetPath)
+
+        const latestTree = treeRef.current
+        const latestEntry = latestTree ? findEntry(latestTree, targetPath) : null
+        if (latestEntry?.kind === 'directory' && latestEntry.childrenLoaded) {
+          void loadDirectory(targetPath, true)
+          return
+        }
+
+        if (!latestTree || targetPath === rootPath) void loadTree()
+      }, FILE_TREE_WATCH_REFRESH_DELAY_MS)
+
+      refreshTimersRef.current.set(targetPath, timer)
+    },
+    [loadDirectory, loadTree, rootPath]
+  )
+
   useEffect(() => {
     void loadTree()
   }, [loadTree])
 
   useEffect(() => {
-    if (!rootPath) return
-    let watchId: string | null = null
-    let dispose: () => void = () => undefined
+    if (!rootPath || persistedOpenPaths.length === 0) return
 
-    void window.atlas.filesystem.watch(rootPath).then((watch) => {
-      watchId = watch.watchId
-      dispose = window.atlas.filesystem.onWatchEvent((event) => {
-        if (event.watchId !== watch.watchId) return
+    let disposed = false
+    const watchIds = new Set<string>()
+    const disposeWatchEvents = window.atlas.filesystem.onWatchEvent((event) => {
+      if (!watchIds.has(event.watchId)) return
 
-        const currentTree = treeRef.current
-        const parentPath = parentDirectoryPath(event.path)
-        const parentEntry = currentTree ? findEntry(currentTree, parentPath) : null
-        if (parentEntry?.kind === 'directory' && parentEntry.childrenLoaded) {
-          void loadDirectory(parentPath, true)
-          return
-        }
-
-        if (!currentTree || parentPath === rootPath) void loadTree()
-      })
+      scheduleWatchedDirectoryRefresh(parentDirectoryPath(event.path))
     })
 
-    return () => {
-      dispose()
-      if (watchId) void window.atlas.filesystem.unwatch(watchId)
+    for (const targetPath of persistedOpenPaths) {
+      void window.atlas.filesystem
+        .watch(rootPath, targetPath)
+        .then((watch) => {
+          if (disposed) {
+            void window.atlas.filesystem.unwatch(watch.watchId)
+            return
+          }
+
+          watchIds.add(watch.watchId)
+        })
+        .catch(() => undefined)
     }
-  }, [loadDirectory, loadTree, rootPath])
+
+    return () => {
+      disposed = true
+      disposeWatchEvents()
+      clearRefreshTimers(refreshTimersRef.current)
+      for (const watchId of watchIds) {
+        void window.atlas.filesystem.unwatch(watchId)
+      }
+    }
+  }, [persistedOpenPaths, rootPath, scheduleWatchedDirectoryRefresh])
 
   const treeData = useMemo(() => (tree ? [tree] : []), [tree])
   const initialOpenState = useMemo(
@@ -643,6 +711,9 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
     }
   }
 
+  const treeViewportWidth = Math.max(treeViewportSize.width || component.frame.width, 1)
+  const treeViewportHeight = Math.max(treeViewportSize.height || component.frame.height, 1)
+
   if (!rootPath) {
     return (
       <div className="empty-module">
@@ -656,7 +727,7 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
 
   return (
     <>
-      <div className="file-tree-module" ref={containerRef}>
+      <div className="file-tree-module">
         <div className="file-tree-toolbar">
           <button className="icon-button" onClick={chooseDirectory} title={t('fileTree.chooseFolder')} aria-label={t('fileTree.chooseFolder')}>
             <Folder size={15} />
@@ -665,23 +736,27 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
             <RefreshCw size={15} />
           </button>
         </div>
-        {error ? <div className="module-error">{error}</div> : null}
-        <Tree
-          key={rootPath}
-          data={treeData}
-          width={Math.max(size.width, 280)}
-          height={Math.max(size.height - 42, 240)}
-          indent={18}
-          rowHeight={28}
-          childrenAccessor={treeChildren}
-          openByDefault={false}
-          initialOpenState={initialOpenState}
-          selection={selected?.id}
-          onSelect={(nodes) => setSelected(nodes[0]?.data ?? null)}
-          onToggle={toggleDirectory}
-        >
-          {Row}
-        </Tree>
+        <div className={cn('file-tree-content', error && 'file-tree-content--with-error')}>
+          {error ? <div className="module-error">{error}</div> : null}
+          <div className="file-tree-viewport" ref={treeViewportRef}>
+            <Tree
+              key={rootPath}
+              data={treeData}
+              width={treeViewportWidth}
+              height={treeViewportHeight}
+              indent={18}
+              rowHeight={28}
+              childrenAccessor={treeChildren}
+              openByDefault={false}
+              initialOpenState={initialOpenState}
+              selection={selected?.id}
+              onSelect={(nodes) => setSelected(nodes[0]?.data ?? null)}
+              onToggle={toggleDirectory}
+            >
+              {Row}
+            </Tree>
+          </div>
+        </div>
       </div>
 
       <Dialog.Root open={Boolean(pendingCreate)} onOpenChange={(open) => !open && closeCreateDialog()}>
