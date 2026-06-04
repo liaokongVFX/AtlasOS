@@ -1,6 +1,6 @@
 {
   "name": "atlasos",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Local-first infinite canvas workspace built with Electron and React.",
   "main": "out/main/index.js",
   "author": "AtlasOS",
