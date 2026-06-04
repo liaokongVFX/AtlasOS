@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import type { AgentHistoryListResult, AgentHistorySessionDetail, AgentHistorySessionSummary } from '@shared/agent-history'
 import type { AtlasComponentRendererProps } from '../registry'
 import { AgentHistoryExplorer } from './agent-history-explorer'
@@ -28,6 +28,7 @@ export function ClaudeHistoryComponent(props: AtlasComponentRendererProps): JSX.
     }),
     []
   )
+  const resumeCommand = useCallback((session: AgentHistorySessionSummary) => `claude --resume ${session.sessionId}`, [])
 
   return (
     <AgentHistoryExplorer
@@ -36,7 +37,7 @@ export function ClaudeHistoryComponent(props: AtlasComponentRendererProps): JSX.
       agentSource="claude"
       labels={labels}
       terminalTitlePrefix="Claude"
-      resumeCommand={(session: AgentHistorySessionSummary) => `claude --resume ${session.sessionId}`}
+      resumeCommand={resumeCommand}
     />
   )
 }

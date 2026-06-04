@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow, WebContentsView } from 'electron'
 import { BrowserService } from './browser-service'
 
 const electronMocks = vi.hoisted(() => ({
   ipcHandle: vi.fn(),
+  ipcOn: vi.fn(),
+  ipcRemoveListener: vi.fn(),
   loadURL: vi.fn(() => Promise.resolve()),
   openExternal: vi.fn(),
   setWebRTCIPHandlingPolicy: vi.fn(),
@@ -20,6 +22,7 @@ vi.mock('electron', () => ({
     removeChildView = vi.fn()
     setBackgroundColor = electronMocks.viewSetBackgroundColor
     setBounds = vi.fn()
+    setVisible = vi.fn()
   },
   WebContentsView: class WebContentsView {
     constructor(options: unknown) {
@@ -28,17 +31,23 @@ vi.mock('electron', () => ({
 
     setBackgroundColor = electronMocks.webContentsViewSetBackgroundColor
     setBounds = vi.fn()
+    setVisible = vi.fn()
     webContents = {
       setWindowOpenHandler: vi.fn((handler) => {
         electronMocks.windowOpenHandler = handler
       }),
       setWebRTCIPHandlingPolicy: electronMocks.setWebRTCIPHandlingPolicy,
       on: vi.fn(),
-      loadURL: electronMocks.loadURL
+      getType: vi.fn(() => 'webContentsView'),
+      getZoomFactor: vi.fn(() => 1),
+      loadURL: electronMocks.loadURL,
+      setZoomFactor: vi.fn()
     }
   },
   ipcMain: {
-    handle: electronMocks.ipcHandle
+    handle: electronMocks.ipcHandle,
+    on: electronMocks.ipcOn,
+    removeListener: electronMocks.ipcRemoveListener
   },
   shell: {
     openExternal: electronMocks.openExternal
@@ -50,15 +59,17 @@ function setTabs(service: BrowserService, tabs: Map<string, unknown>): void {
 }
 
 describe('BrowserService', () => {
-  it('returns created tabs before the page load settles so bounds can be applied immediately', async () => {
-    electronMocks.ipcHandle.mockClear()
-    electronMocks.loadURL.mockReset()
-    electronMocks.loadURL.mockReturnValue(new Promise(() => undefined))
-    electronMocks.setWebRTCIPHandlingPolicy.mockClear()
+  beforeEach(() => {
+    vi.clearAllMocks()
+    electronMocks.loadURL.mockResolvedValue(undefined)
     electronMocks.viewSetBackgroundColor.mockClear()
     electronMocks.webContentsViewOptions = []
-    electronMocks.webContentsViewSetBackgroundColor.mockClear()
+    electronMocks.windowOpenHandler = null
+  })
 
+  it('returns created tabs before the page load settles so bounds can be applied immediately', async () => {
+    electronMocks.loadURL.mockReset()
+    electronMocks.loadURL.mockReturnValue(new Promise(() => undefined))
     const window = {
       isDestroyed: () => false,
       contentView: {
@@ -83,6 +94,7 @@ describe('BrowserService', () => {
       url: 'https://slow.example.com'
     })
     expect(electronMocks.loadURL).toHaveBeenCalledWith('https://slow.example.com')
+    expect(electronMocks.ipcOn).toHaveBeenCalled()
     expect(electronMocks.viewSetBackgroundColor).toHaveBeenCalledWith('#ffffff')
     expect(electronMocks.webContentsViewSetBackgroundColor).toHaveBeenCalledWith('#ffffff')
     expect(electronMocks.webContentsViewOptions[0]).toMatchObject({
@@ -94,12 +106,6 @@ describe('BrowserService', () => {
   })
 
   it('routes embedded new-window requests into Atlas browser tabs instead of the system browser', async () => {
-    electronMocks.ipcHandle.mockClear()
-    electronMocks.loadURL.mockReset()
-    electronMocks.loadURL.mockResolvedValue(undefined)
-    electronMocks.openExternal.mockClear()
-    electronMocks.windowOpenHandler = null
-
     const send = vi.fn()
     const window = {
       isDestroyed: () => false,
@@ -128,19 +134,24 @@ describe('BrowserService', () => {
     })
   })
 
-  it('clips a browser tab with a native container and offsets the web contents', () => {
-    const window = {} as BrowserWindow
+  it('clips a native browser tab with a container view without reattaching the web contents', () => {
+    const window = {} as unknown as BrowserWindow
     const service = new BrowserService(window)
     const containerSetBounds = vi.fn()
+    const containerSetVisible = vi.fn()
     const viewSetBounds = vi.fn()
+    const viewSetVisible = vi.fn()
     const tab = {
       id: 'tab-1',
       componentId: 'component-1',
       container: {
-        setBounds: containerSetBounds
+        setBounds: containerSetBounds,
+        setVisible: containerSetVisible
       },
+      visible: false,
       view: {
-        setBounds: viewSetBounds
+        setBounds: viewSetBounds,
+        setVisible: viewSetVisible
       }
     }
 
@@ -157,6 +168,108 @@ describe('BrowserService', () => {
 
     expect(containerSetBounds).toHaveBeenCalledWith({ x: 20, y: 56, width: 420, height: 284 })
     expect(viewSetBounds).toHaveBeenCalledWith({ x: 0, y: -16, width: 420, height: 300 })
+    expect(viewSetVisible).toHaveBeenCalledWith(true)
+    expect(containerSetVisible).toHaveBeenCalledWith(true)
+    expect(tab.visible).toBe(true)
+  })
+
+  it('hides native browser views explicitly so inactive tabs cannot receive input', () => {
+    const window = {} as BrowserWindow
+    const service = new BrowserService(window)
+    const containerSetBounds = vi.fn()
+    const containerSetVisible = vi.fn()
+    const viewSetBounds = vi.fn()
+    const viewSetVisible = vi.fn()
+    const tab = {
+      id: 'tab-1',
+      componentId: 'component-1',
+      container: {
+        setBounds: containerSetBounds,
+        setVisible: containerSetVisible
+      },
+      visible: true,
+      view: {
+        setBounds: viewSetBounds,
+        setVisible: viewSetVisible
+      }
+    }
+
+    ;(
+      service as unknown as {
+        setTabBounds: (
+          tab: unknown,
+          visible: boolean,
+          containerBounds: { x: number; y: number; width: number; height: number },
+          contentBounds: { x: number; y: number; width: number; height: number }
+        ) => void
+      }
+    ).setTabBounds(tab, false, { x: 20, y: 56, width: 420, height: 284 }, { x: 20, y: 40, width: 420, height: 300 })
+
+    expect(viewSetVisible).toHaveBeenCalledWith(false)
+    expect(viewSetBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(containerSetVisible).toHaveBeenCalledWith(false)
+    expect(containerSetBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
+    expect(tab.visible).toBe(false)
+  })
+
+  it('zooms DOM webview guests from Ctrl+wheel requests and reports the persisted zoom', () => {
+    const send = vi.fn()
+    const window = {
+      isDestroyed: () => false,
+      webContents: {
+        isDestroyed: () => false,
+        send
+      }
+    } as unknown as BrowserWindow
+    const service = new BrowserService(window)
+    service.registerIpc()
+
+    const zoomHandler = electronMocks.ipcOn.mock.calls.find(([channel]) => channel === 'atlas-browser:zoom-request')?.[1]
+    const setZoomFactor = vi.fn()
+    const sender = {
+      id: 42,
+      getType: () => 'webview',
+      getZoomFactor: () => 1,
+      setZoomFactor
+    }
+
+    zoomHandler({ sender }, { direction: 1 })
+
+    expect(setZoomFactor).toHaveBeenCalledWith(1.1)
+    expect(send).toHaveBeenCalledWith('browser:webview-zoom-updated', {
+      sourceWebContentsId: 42,
+      zoomFactor: 1.1
+    })
+  })
+
+  it('suppresses aborted page loads from superseded browser navigations', async () => {
+    electronMocks.loadURL.mockReset()
+    electronMocks.loadURL.mockRejectedValue(Object.assign(new Error('ERR_ABORTED (-3) loading'), { errno: -3 }))
+
+    const send = vi.fn()
+    const window = {
+      isDestroyed: () => false,
+      contentView: {
+        addChildView: vi.fn()
+      },
+      webContents: {
+        isDestroyed: () => false,
+        send
+      }
+    } as unknown as BrowserWindow
+    const service = new BrowserService(window)
+    service.registerIpc()
+
+    const createTabHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'browser:create-tab')?.[1]
+    await createTabHandler({}, { componentId: 'component-1', url: 'https://example.com' })
+    await Promise.resolve()
+
+    expect(send).not.toHaveBeenCalledWith(
+      'browser:tab-updated',
+      expect.objectContaining({
+        patch: expect.objectContaining({ loadError: expect.any(String) })
+      })
+    )
   })
 
   it('does not touch BrowserWindow contentView after the window is destroyed', () => {
@@ -189,7 +302,9 @@ describe('BrowserService', () => {
           {
             id: 'tab-1',
             componentId: 'component-1',
-            view
+            container: {},
+            view,
+            visible: false
           }
         ]
       ])

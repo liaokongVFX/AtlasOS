@@ -201,6 +201,7 @@ const atlasApi = {
     reload: (tabId: string) => ipcRenderer.invoke('browser:reload', { tabId }),
     devtools: (tabId: string) => ipcRenderer.invoke('browser:devtools', { tabId }),
     capture: (tabId: string) => ipcRenderer.invoke('browser:capture', { tabId }) as Promise<string>,
+    setZoom: (tabId: string, zoomFactor: number) => ipcRenderer.invoke('browser:set-zoom', { tabId, zoomFactor }),
     queryText: (tabId: string, selector: string) => ipcRenderer.invoke('browser:query-text', { tabId, selector }),
     click: (tabId: string, selector: string) => ipcRenderer.invoke('browser:click', { tabId, selector }),
     type: (tabId: string, selector: string, text: string) => ipcRenderer.invoke('browser:type', { tabId, selector, text }),
@@ -209,7 +210,9 @@ const atlasApi = {
     onOpenTabRequested: (listener: Listener<{ componentId: string; sourceTabId: string; url: string }>) =>
       on('browser:open-tab-requested', listener),
     onWebviewOpenTabRequested: (listener: Listener<{ sourceWebContentsId: number; url: string }>) =>
-      on('browser:webview-open-tab-requested', listener)
+      on('browser:webview-open-tab-requested', listener),
+    onWebviewZoomUpdated: (listener: Listener<{ sourceWebContentsId: number; zoomFactor: number }>) =>
+      on('browser:webview-zoom-updated', listener)
   },
   plugins: {
     getSettings: () => ipcRenderer.invoke('plugins:get-settings', {}) as Promise<PluginSettings>,

@@ -29,12 +29,20 @@ vi.mock('./registry', async () => {
   const React = await vi.importActual<typeof import('react')>('react')
   const mediaFrame = await vi.importActual<typeof import('../lib/media-frame')>('../lib/media-frame')
   const Icon = () => React.createElement('svg', { 'aria-hidden': true })
-  const Renderer = () =>
-    React.createElement(
+  const Renderer = ({ component, setHeaderActions }: { component: CanvasComponent; setHeaderActions?: (actions: any) => void }) => {
+    React.useEffect(() => {
+      if (component.type !== 'file-tree') return undefined
+
+      setHeaderActions?.(React.createElement('button', { type: 'button' }, 'Header action'))
+      return () => setHeaderActions?.(null)
+    }, [component.type, setHeaderActions])
+
+    return React.createElement(
       'div',
       { 'data-component-context-menu-trigger': '', 'data-testid': 'renderer-target', onContextMenu: rendererContextMenu.current },
       'Renderer'
     )
+  }
   const definition = {
     title: 'Markdown Note',
     defaultFrame: { x: 0, y: 0, width: 320, height: 240 },
@@ -161,6 +169,21 @@ describe('ComponentNode', () => {
     expect(body).toHaveClass('nodrag')
     expect(body).toHaveClass('nowheel')
     expect(document.querySelector('.component-node__interaction-shield')).not.toBeInTheDocument()
+  })
+
+  it('renders renderer-provided actions in the node header', async () => {
+    renderNode(
+      createComponent({
+        type: 'file-tree',
+        title: 'Files',
+        config: { rootPath: 'D:\\repo' }
+      })
+    )
+
+    const action = await screen.findByRole('button', { name: 'Header action' })
+
+    expect(action.closest('.component-node__header-actions')).toBeInTheDocument()
+    expect(action.closest('.component-node__header-actions')).toHaveClass('nodrag')
   })
 
   it('keeps resize affordance styling in CSS-controlled hit targets', () => {

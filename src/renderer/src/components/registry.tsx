@@ -1,5 +1,5 @@
 import { Puzzle, type LucideIcon } from 'lucide-react'
-import { useSyncExternalStore } from 'react'
+import { useSyncExternalStore, type ReactNode } from 'react'
 import type { CanvasComponent, ComponentType, Frame } from '@shared/schema'
 import type { CanvasFileSource, FileComponentPatch } from '../lib/file-component-factory'
 import { translateCurrent, useI18n, type TFunction } from '../i18n'
@@ -12,6 +12,7 @@ export type AtlasComponentRendererProps = {
   updateState: (patch: Record<string, unknown>, immediate?: boolean) => void
   updateFrame?: (patch: Partial<Frame>, immediate?: boolean) => void
   setTitle: (title: string) => void
+  setHeaderActions?: (actions: ReactNode | null) => void
   isCanvasInteracting?: boolean
   isNodeSelected?: boolean
 }

@@ -36,16 +36,20 @@ function statusLabel(status: PetAgentSession['status']): string {
   return 'running'
 }
 
+function agentDisplayTitle(session: PetAgentSession): string {
+  return session.componentTitle || session.title
+}
+
+function shouldShowSessionTitle(session: PetAgentSession): boolean {
+  return Boolean(session.componentTitle && session.componentTitle !== session.title)
+}
+
 function isAttentionSession(session: PetAgentSession): boolean {
   return session.status === 'waiting_for_confirmation' || session.status === 'error'
 }
 
 function isRunningSession(session: PetAgentSession): boolean {
   return session.status === 'running'
-}
-
-function isVisibleAgentSession(session: PetAgentSession): boolean {
-  return session.status !== 'completed'
 }
 
 function isAttentionAlert(alert: PetAlert): boolean {
@@ -114,7 +118,7 @@ export function PetApp(): JSX.Element {
 
   const alerts = useMemo(() => (state?.alerts ?? []).filter(isVisibleAlert), [state?.alerts])
   const agentSessions = useMemo(
-    () => (state?.settings.showRunningAgents ? state.agentSessions.filter(isVisibleAgentSession) : []),
+    () => (state?.settings.showRunningAgents ? state.agentSessions : []),
     [state]
   )
   const alertSessionIds = new Set(
@@ -290,7 +294,8 @@ export function PetApp(): JSX.Element {
                     <span className={`pet-row__dot pet-row__dot--${session.status}`} />
                     <span className="pet-row__main">
                       <strong>{sourceLabel(session)}</strong>
-                      <span>{session.title}</span>
+                      <span>{agentDisplayTitle(session)}</span>
+                      {shouldShowSessionTitle(session) ? <small>{session.title}</small> : null}
                       {session.cwd ? <small>{session.cwd}</small> : null}
                     </span>
                     <span className="pet-row__status">{statusLabel(session.status)}</span>

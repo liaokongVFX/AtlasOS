@@ -1,6 +1,12 @@
 import { nanoid } from 'nanoid'
-import { ArrowLeft, ArrowRight, Bug, Camera, Plus, RefreshCw, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bug, Camera, Plus, RefreshCw, RotateCcw, ZoomIn, X } from 'lucide-react'
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import {
+  BROWSER_ZOOM_DEFAULT_FACTOR,
+  BROWSER_ZOOM_MAX_FACTOR,
+  BROWSER_ZOOM_MIN_FACTOR,
+  BROWSER_ZOOM_STEP
+} from '@shared/browser'
 import { useI18n } from '../../i18n'
 import { asString, normalizeUrl } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
@@ -10,11 +16,17 @@ type BrowserTabState = {
   title: string
   url: string
   partition?: string
+  zoomFactor?: number
 }
 
 type BrowserWebviewOpenTabRequest = {
   sourceWebContentsId: number
   url: string
+}
+
+type BrowserWebviewZoomUpdated = {
+  sourceWebContentsId: number
+  zoomFactor: number
 }
 
 type BrowserWebviewElement = Electron.WebviewTag
@@ -38,8 +50,33 @@ function createBrowserTab(title: string, url = DEFAULT_BROWSER_URL): BrowserTabS
   return { localId: nanoid(), title, url }
 }
 
+function clampZoomFactor(value: number): number {
+  return Math.min(Math.max(value, BROWSER_ZOOM_MIN_FACTOR), BROWSER_ZOOM_MAX_FACTOR)
+}
+
+function normalizeZoomFactor(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return clampZoomFactor(value)
+}
+
+function normalizeCommittedZoomFactor(value: number): number {
+  return Math.round(clampZoomFactor(value) * 100) / 100
+}
+
+function formatZoomPercent(zoomFactor: number): string {
+  return `${Math.round(zoomFactor * 100)}%`
+}
+
 function partitionForTab(componentId: string, tab: BrowserTabState): string {
   return tab.partition ?? `persist:atlas-browser-${componentId}-${tab.localId}`
+}
+
+function applyWebviewZoom(webview: BrowserWebviewElement, zoomFactor: number): void {
+  try {
+    webview.setZoomFactor(zoomFactor)
+  } catch {
+    // The webview can briefly reject commands before its guest WebContents is attached.
+  }
 }
 
 type BrowserWebviewProps = {
@@ -50,6 +87,7 @@ type BrowserWebviewProps = {
   onUrlChange: (localId: string, url: string) => void
   registerWebview: (localId: string, webview: BrowserWebviewElement | null) => void
   tab: BrowserTabState
+  zoomFactor: number
 }
 
 function BrowserWebview({
@@ -59,7 +97,8 @@ function BrowserWebview({
   onTitleChange,
   onUrlChange,
   registerWebview,
-  tab
+  tab,
+  zoomFactor
 }: BrowserWebviewProps): JSX.Element {
   const webviewRef = useRef<BrowserWebviewElement | null>(null)
   const style = useMemo<CSSProperties>(
@@ -108,6 +147,19 @@ function BrowserWebview({
     }
   }, [onTitleChange, onUrlChange, tab.localId])
 
+  useEffect(() => {
+    const webview = webviewRef.current
+    if (!webview) return undefined
+
+    const applyCurrentZoom = () => applyWebviewZoom(webview, zoomFactor)
+    applyCurrentZoom()
+    webview.addEventListener('dom-ready', applyCurrentZoom)
+
+    return () => {
+      webview.removeEventListener('dom-ready', applyCurrentZoom)
+    }
+  }, [zoomFactor])
+
   return createElement('webview', {
     allowpopups: '',
     className: 'browser-webview',
@@ -142,6 +194,32 @@ export function BrowserComponent({
     [activeLocalId, updateState]
   )
 
+  const patchTab = useCallback(
+    (localId: string, patch: Partial<Pick<BrowserTabState, 'title' | 'url' | 'zoomFactor'>>) => {
+      let didChange = false
+      const nextTabs = tabs.map((tab) => {
+        if (tab.localId !== localId) return tab
+
+        const nextZoomFactor = normalizeZoomFactor(patch.zoomFactor)
+        const nextTab = {
+          ...tab,
+          title: asString(patch.title, tab.title),
+          url: asString(patch.url, tab.url),
+          zoomFactor: nextZoomFactor ?? tab.zoomFactor
+        }
+        didChange =
+          nextTab.title !== tab.title ||
+          nextTab.url !== tab.url ||
+          normalizeZoomFactor(nextTab.zoomFactor) !== normalizeZoomFactor(tab.zoomFactor)
+
+        return didChange ? nextTab : tab
+      })
+
+      if (didChange) updateState({ tabs: nextTabs }, false)
+    },
+    [tabs, updateState]
+  )
+
   const getActiveWebview = useCallback((): BrowserWebviewElement | null => {
     if (!activeTab) return null
     return webviewsRef.current.get(activeTab.localId) ?? null
@@ -154,25 +232,6 @@ export function BrowserComponent({
       webviewsRef.current.delete(localId)
     }
   }, [])
-
-  const patchTab = useCallback(
-    (localId: string, patch: Partial<Pick<BrowserTabState, 'title' | 'url'>>) => {
-      let didChange = false
-      const nextTabs = tabs.map((tab) => {
-        if (tab.localId !== localId) return tab
-        const nextTab = {
-          ...tab,
-          title: asString(patch.title, tab.title),
-          url: asString(patch.url, tab.url)
-        }
-        didChange = nextTab.title !== tab.title || nextTab.url !== tab.url
-        return didChange ? nextTab : tab
-      })
-
-      if (didChange) updateState({ tabs: nextTabs }, false)
-    },
-    [tabs, updateState]
-  )
 
   const handleTitleChange = useCallback((localId: string, title: string) => patchTab(localId, { title }), [patchTab])
   const handleUrlChange = useCallback((localId: string, url: string) => patchTab(localId, { url }), [patchTab])
@@ -220,7 +279,19 @@ export function BrowserComponent({
     })
 
     return dispose
-  }, [patchTabs, tabs, webviewLocalIdForContents])
+  }, [patchTabs, tabs, t, webviewLocalIdForContents])
+
+  useEffect(() => {
+    const dispose = window.atlas.browser.onWebviewZoomUpdated((update: BrowserWebviewZoomUpdated) => {
+      const localId = webviewLocalIdForContents(update.sourceWebContentsId)
+      const zoomFactor = normalizeZoomFactor(update.zoomFactor)
+      if (!localId || zoomFactor === undefined) return
+
+      patchTab(localId, { zoomFactor })
+    })
+
+    return dispose
+  }, [patchTab, webviewLocalIdForContents])
 
   useEffect(() => {
     setAddress(activeTab?.url ?? '')
@@ -236,7 +307,11 @@ export function BrowserComponent({
     const url = normalizeUrl(address)
     const webview = getActiveWebview()
     if (activeTab.url === url) {
-      void webview?.loadURL(url).catch(() => undefined)
+      try {
+        webview?.reload()
+      } catch {
+        // Navigation commands can fail while the guest view is attaching; the state remains unchanged.
+      }
       return
     }
 
@@ -267,7 +342,23 @@ export function BrowserComponent({
     setSnapshot(image.toDataURL())
   }
 
-  const activeWebviewAvailable = Boolean(activeTab)
+  const commitZoomFactor = useCallback(
+    (localId: string, value: number) => {
+      if (!Number.isFinite(value)) return
+
+      const zoomFactor = normalizeCommittedZoomFactor(value)
+      const webview = webviewsRef.current.get(localId)
+      if (webview) applyWebviewZoom(webview, zoomFactor)
+
+      patchTab(localId, { zoomFactor })
+    },
+    [patchTab]
+  )
+
+  const activeBrowserAvailable = Boolean(activeTab)
+  const activeZoomFactor = normalizeZoomFactor(activeTab?.zoomFactor) ?? BROWSER_ZOOM_DEFAULT_FACTOR
+  const activeZoomPercent = formatZoomPercent(activeZoomFactor)
+  const canResetZoom = Boolean(activeTab) && activeZoomFactor !== BROWSER_ZOOM_DEFAULT_FACTOR
 
   return (
     <div className="browser-module">
@@ -293,13 +384,13 @@ export function BrowserComponent({
         </button>
       </div>
       <div className="browser-toolbar">
-        <button className="icon-button" disabled={!activeWebviewAvailable} title={t('browser.back')} aria-label={t('browser.back')} onClick={() => getActiveWebview()?.goBack()}>
+        <button className="icon-button" disabled={!activeBrowserAvailable} title={t('browser.back')} aria-label={t('browser.back')} onClick={() => getActiveWebview()?.goBack()}>
           <ArrowLeft size={15} />
         </button>
-        <button className="icon-button" disabled={!activeWebviewAvailable} title={t('browser.forward')} aria-label={t('browser.forward')} onClick={() => getActiveWebview()?.goForward()}>
+        <button className="icon-button" disabled={!activeBrowserAvailable} title={t('browser.forward')} aria-label={t('browser.forward')} onClick={() => getActiveWebview()?.goForward()}>
           <ArrowRight size={15} />
         </button>
-        <button className="icon-button" disabled={!activeWebviewAvailable} title={t('browser.reload')} aria-label={t('browser.reload')} onClick={() => getActiveWebview()?.reload()}>
+        <button className="icon-button" disabled={!activeBrowserAvailable} title={t('browser.reload')} aria-label={t('browser.reload')} onClick={() => getActiveWebview()?.reload()}>
           <RefreshCw size={15} />
         </button>
         <form
@@ -310,11 +401,45 @@ export function BrowserComponent({
         >
           <input value={address} aria-label={t('browser.address')} onChange={(event) => setAddress(event.target.value)} />
         </form>
-        <button className="icon-button" disabled={!activeWebviewAvailable} title={t('browser.devtools')} aria-label={t('browser.devtools')} onClick={() => getActiveWebview()?.openDevTools()}>
+        <button className="icon-button" disabled={!activeBrowserAvailable} title={t('browser.devtools')} aria-label={t('browser.devtools')} onClick={() => getActiveWebview()?.openDevTools()}>
           <Bug size={15} />
         </button>
-        <button className="icon-button" disabled={!activeWebviewAvailable} title={t('browser.capture')} aria-label={t('browser.capture')} onClick={() => void captureActiveTab()}>
+        <button className="icon-button" disabled={!activeBrowserAvailable} title={t('browser.capture')} aria-label={t('browser.capture')} onClick={() => void captureActiveTab()}>
           <Camera size={15} />
+        </button>
+      </div>
+      <div className="browser-zoom-bar">
+        <label className="browser-zoom-control" title={t('browser.zoom')}>
+          <ZoomIn size={14} aria-hidden="true" />
+          <input
+            className="browser-zoom-slider"
+            type="range"
+            min={BROWSER_ZOOM_MIN_FACTOR}
+            max={BROWSER_ZOOM_MAX_FACTOR}
+            step={BROWSER_ZOOM_STEP}
+            value={activeZoomFactor}
+            disabled={!activeTab}
+            aria-label={t('browser.zoom')}
+            aria-valuetext={activeZoomPercent}
+            onChange={(event) => {
+              if (!activeTab) return
+              commitZoomFactor(activeTab.localId, Number.parseFloat(event.currentTarget.value))
+            }}
+          />
+          <span className="browser-zoom-value">{activeZoomPercent}</span>
+        </label>
+        <button
+          type="button"
+          className="icon-button browser-zoom-reset"
+          disabled={!canResetZoom}
+          title={t('browser.resetZoom')}
+          aria-label={t('browser.resetZoom')}
+          onClick={() => {
+            if (!activeTab) return
+            commitZoomFactor(activeTab.localId, BROWSER_ZOOM_DEFAULT_FACTOR)
+          }}
+        >
+          <RotateCcw size={13} />
         </button>
       </div>
       <div className="browser-viewport">
@@ -328,6 +453,7 @@ export function BrowserComponent({
             onUrlChange={handleUrlChange}
             registerWebview={registerWebview}
             tab={tab}
+            zoomFactor={normalizeZoomFactor(tab.zoomFactor) ?? BROWSER_ZOOM_DEFAULT_FACTOR}
           />
         ))}
         {snapshot ? <img className="browser-snapshot" src={snapshot} alt={t('browser.screenshotAlt')} onClick={() => setSnapshot(null)} /> : null}

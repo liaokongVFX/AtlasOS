@@ -1,4 +1,5 @@
 ﻿import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { type ReactNode, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanvasComponent, FileEntry } from '@shared/schema'
 import { useCanvasStore } from '../../store/canvas-store'
@@ -105,15 +106,25 @@ function renderFileTree(
     setTitle: overrides.setTitle ?? vi.fn()
   }
 
-  render(
-    <FileTreeComponent
-      canvasId="canvas-1"
-      component={component}
-      updateConfig={props.updateConfig}
-      updateState={props.updateState}
-      setTitle={props.setTitle}
-    />
-  )
+  function FileTreeTestHost(): JSX.Element {
+    const [headerActions, setHeaderActions] = useState<ReactNode | null>(null)
+
+    return (
+      <>
+        <div data-testid="file-tree-header-actions">{headerActions}</div>
+        <FileTreeComponent
+          canvasId="canvas-1"
+          component={component}
+          updateConfig={props.updateConfig}
+          updateState={props.updateState}
+          setTitle={props.setTitle}
+          setHeaderActions={setHeaderActions}
+        />
+      </>
+    )
+  }
+
+  render(<FileTreeTestHost />)
 
   return props
 }
@@ -204,12 +215,15 @@ describe('FileTreeComponent', () => {
     expect(fileName.closest('.file-tree-row')).toHaveClass('file-tree-row--selected')
   })
 
-  it('keeps file creation controls out of the file tree toolbar', async () => {
+  it('renders root actions in the node header slot without file creation controls', async () => {
     renderFileTree()
 
-    expect(await screen.findByTitle('选择文件夹')).toBeVisible()
+    const headerActions = screen.getByTestId('file-tree-header-actions')
+
+    expect(await within(headerActions).findByTitle('选择文件夹')).toBeVisible()
     expect(window.atlas.filesystem.listTree).toHaveBeenCalledWith('D:\\repo', 'D:\\repo', 1)
-    expect(screen.getByTitle('重新加载')).toBeVisible()
+    expect(within(headerActions).getByTitle('重新加载')).toBeVisible()
+    expect(document.querySelector('.file-tree-toolbar')).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     expect(screen.queryByPlaceholderText('new file or folder')).not.toBeInTheDocument()
     expect(screen.queryByTitle('New file')).not.toBeInTheDocument()

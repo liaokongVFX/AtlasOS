@@ -1,14 +1,22 @@
 import { randomUUID } from 'node:crypto'
-import { BrowserWindow, View, WebContentsView, type WebContents } from 'electron'
+import { BrowserWindow, ipcMain, View, WebContentsView, type IpcMainEvent, type WebContents } from 'electron'
 import {
   browserBoundsInputSchema,
   browserClickInputSchema,
   browserCreateTabInputSchema,
   browserNavigateInputSchema,
   browserSelectorInputSchema,
+  browserSetZoomInputSchema,
   browserTabInputSchema,
   browserTypeInputSchema
 } from '@shared/ipc'
+import {
+  BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL,
+  BROWSER_ZOOM_DEFAULT_FACTOR,
+  BROWSER_ZOOM_MAX_FACTOR,
+  BROWSER_ZOOM_MIN_FACTOR,
+  BROWSER_ZOOM_STEP
+} from '@shared/browser'
 import { applyAtlasBrowserNetworkPolicy, applyAtlasBrowserWebPreferences } from './browser-network-policy'
 import { handleValidated } from './ipc-helpers'
 
@@ -18,6 +26,7 @@ type BrowserTab = {
   container: View
   loadSequence: number
   view: WebContentsView
+  visible: boolean
 }
 
 function jsString(value: string): string {
@@ -43,12 +52,42 @@ function childBoundsForClippedContainer(containerBounds: BrowserBounds, contentB
   }
 }
 
+function clampZoomFactor(value: number): number {
+  return Math.min(Math.max(value, BROWSER_ZOOM_MIN_FACTOR), BROWSER_ZOOM_MAX_FACTOR)
+}
+
+function normalizeCommittedZoomFactor(value: number): number {
+  return Math.round(clampZoomFactor(value) * 100) / 100
+}
+
+function nextZoomFactor(current: number, direction: -1 | 1): number {
+  return normalizeCommittedZoomFactor(current + direction * BROWSER_ZOOM_STEP)
+}
+
+function readZoomDirection(value: unknown): -1 | 1 | null {
+  if (!value || typeof value !== 'object') return null
+
+  const direction = (value as { direction?: unknown }).direction
+  return direction === -1 || direction === 1 ? direction : null
+}
+
+function isNavigationAbort(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+
+  const candidate = error as { errno?: unknown; message?: unknown }
+  return candidate.errno === -3 || (typeof candidate.message === 'string' && candidate.message.includes('ERR_ABORTED'))
+}
+
 export class BrowserService {
   private readonly tabs = new Map<string, BrowserTab>()
+  private zoomRequestHandler: ((event: IpcMainEvent, payload: unknown) => void) | null = null
 
   constructor(private readonly window: BrowserWindow) {}
 
   registerIpc(): void {
+    this.zoomRequestHandler = (event, payload) => this.handleGuestZoomRequest(event.sender, payload)
+    ipcMain.on(BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL, this.zoomRequestHandler)
+
     handleValidated('browser:create-tab', browserCreateTabInputSchema, async (_, input) => {
       const tabId = randomUUID()
       const partition = input.partition || `persist:atlas-browser-${input.componentId}-${tabId}`
@@ -81,9 +120,10 @@ export class BrowserService {
 
       container.addChildView(view)
       this.window.contentView.addChildView(container)
+      container.setVisible(false)
       container.setBounds(HIDDEN_BOUNDS)
       view.setBounds(HIDDEN_BOUNDS)
-      const tab = { id: tabId, componentId: input.componentId, container, loadSequence: 0, view }
+      const tab = { id: tabId, componentId: input.componentId, container, loadSequence: 0, view, visible: false }
       this.tabs.set(tabId, tab)
       this.loadTabUrl(tab, input.url)
       return { tabId, partition, url: input.url }
@@ -121,6 +161,11 @@ export class BrowserService {
 
     handleValidated('browser:devtools', browserTabInputSchema, (_, input) => {
       this.getTab(input.tabId).view.webContents.openDevTools({ mode: 'detach' })
+      return { ok: true }
+    })
+
+    handleValidated('browser:set-zoom', browserSetZoomInputSchema, (_, input) => {
+      this.setTabZoom(this.getTab(input.tabId), input.zoomFactor)
       return { ok: true }
     })
 
@@ -173,6 +218,11 @@ export class BrowserService {
   }
 
   dispose(): void {
+    if (this.zoomRequestHandler) {
+      ipcMain.removeListener(BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL, this.zoomRequestHandler)
+      this.zoomRequestHandler = null
+    }
+
     for (const tabId of [...this.tabs.keys()]) {
       this.close(tabId)
     }
@@ -229,6 +279,7 @@ export class BrowserService {
 
     void tab.view.webContents.loadURL(url).catch((error: unknown) => {
       if (this.tabs.get(tab.id) !== tab || tab.loadSequence !== loadSequence) return
+      if (isNavigationAbort(error)) return
 
       this.emitUpdate(tab.id, {
         isLoading: false,
@@ -237,15 +288,86 @@ export class BrowserService {
     })
   }
 
+  private tabForWebContents(webContents: WebContents): BrowserTab | null {
+    for (const tab of this.tabs.values()) {
+      if (tab.view.webContents === webContents) return tab
+    }
+
+    return null
+  }
+
+  private getCurrentZoomFactor(webContents: WebContents): number {
+    try {
+      return webContents.getZoomFactor()
+    } catch {
+      return BROWSER_ZOOM_DEFAULT_FACTOR
+    }
+  }
+
+  private handleGuestZoomRequest(webContents: WebContents, payload: unknown): void {
+    const direction = readZoomDirection(payload)
+    if (!direction) return
+
+    const tab = this.tabForWebContents(webContents)
+    if (tab) {
+      this.setTabZoom(tab, nextZoomFactor(this.getCurrentZoomFactor(tab.view.webContents), direction))
+      return
+    }
+
+    if (webContents.getType() !== 'webview') return
+
+    const zoomFactor = this.setWebContentsZoom(webContents, nextZoomFactor(this.getCurrentZoomFactor(webContents), direction))
+    if (zoomFactor !== null) {
+      this.emitWebviewZoomUpdated({
+        sourceWebContentsId: webContents.id,
+        zoomFactor
+      })
+    }
+  }
+
+  private setWebContentsZoom(webContents: WebContents, value: number): number | null {
+    const zoomFactor = normalizeCommittedZoomFactor(value)
+
+    try {
+      webContents.setZoomFactor(zoomFactor)
+    } catch {
+      return null
+    }
+
+    return zoomFactor
+  }
+
+  private setTabZoom(tab: BrowserTab, value: number): void {
+    const zoomFactor = this.setWebContentsZoom(tab.view.webContents, value)
+    if (zoomFactor === null) return
+
+    this.emitUpdate(tab.id, { zoomFactor })
+  }
+
   private setTabBounds(tab: BrowserTab, visible: boolean, containerBounds: BrowserBounds, contentBounds: BrowserBounds): void {
     if (!visible) {
+      tab.visible = false
+      tab.view.setVisible(false)
       tab.view.setBounds(HIDDEN_BOUNDS)
+      tab.container.setVisible(false)
       tab.container.setBounds(HIDDEN_BOUNDS)
       return
     }
 
+    tab.visible = true
     tab.container.setBounds(containerBounds)
     tab.view.setBounds(childBoundsForClippedContainer(containerBounds, contentBounds))
+    tab.view.setVisible(true)
+    tab.container.setVisible(true)
+  }
+
+  private emitWebviewZoomUpdated(payload: { sourceWebContentsId: number; zoomFactor: number }): void {
+    if (this.window.isDestroyed()) return
+
+    const webContents = this.window.webContents
+    if (!webContents.isDestroyed()) {
+      webContents.send('browser:webview-zoom-updated', payload)
+    }
   }
 
   private emitUpdate(tabId: string, patch: Record<string, unknown>): void {

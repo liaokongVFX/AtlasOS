@@ -1,5 +1,6 @@
 import { RefreshCw, RotateCcw, SearchX, TerminalSquare } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   AgentHistoryChildSessionDetail,
   AgentHistoryListResult,
@@ -44,6 +45,10 @@ type AgentHistoryExplorerProps = AtlasComponentRendererProps & {
 }
 
 const TERMINAL_OFFSET = 24
+const HISTORY_LIST_OVERSCAN = 8
+const PROJECT_ROW_ESTIMATE = 58
+const SESSION_ROW_ESTIMATE = 62
+const TRANSCRIPT_ROW_ESTIMATE = 148
 
 function formatTimestamp(timestamp?: string): string {
   if (!timestamp) return '--'
@@ -70,8 +75,74 @@ function terminalPlacement(component: AtlasComponentRendererProps['component']):
   }
 }
 
+type VirtualHistoryListProps<T> = {
+  ariaLabel?: string
+  className: string
+  empty?: ReactNode
+  estimateSize: number
+  getKey: (item: T, index: number) => string
+  items: T[]
+  renderItem: (item: T) => ReactNode
+}
+
+function VirtualHistoryList<T>({
+  ariaLabel,
+  className,
+  empty,
+  estimateSize,
+  getKey,
+  items,
+  renderItem
+}: VirtualHistoryListProps<T>): JSX.Element {
+  const scrollElementRef = useRef<HTMLDivElement | null>(null)
+  const rowVirtualizer = useVirtualizer({
+    count: items.length,
+    estimateSize: () => estimateSize,
+    getItemKey: (index) => getKey(items[index], index),
+    getScrollElement: () => scrollElementRef.current,
+    initialRect: { width: 1, height: estimateSize * 8 },
+    overscan: HISTORY_LIST_OVERSCAN
+  })
+  const measuredVirtualItems = rowVirtualizer.getVirtualItems()
+  const virtualItems =
+    measuredVirtualItems.length > 0 || items.length === 0
+      ? measuredVirtualItems
+      : Array.from({ length: Math.min(items.length, HISTORY_LIST_OVERSCAN * 2) }, (_, index) => ({
+          index,
+          key: getKey(items[index], index),
+          start: index * estimateSize
+        }))
+  const totalSize = rowVirtualizer.getTotalSize() || items.length * estimateSize
+
+  return (
+    <div ref={scrollElementRef} className={className} aria-label={ariaLabel}>
+      {items.length === 0 ? empty : null}
+      {items.length > 0 ? (
+        <div className="claude-history-virtual-list" style={{ height: `${totalSize}px` }}>
+          {virtualItems.map((virtualItem) => {
+            const item = items[virtualItem.index]
+
+            return (
+              <div
+                key={virtualItem.key}
+                ref={rowVirtualizer.measureElement}
+                className="claude-history-virtual-item"
+                data-index={virtualItem.index}
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
+              >
+                {renderItem(item)}
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function TranscriptEntry({ entry, labels }: { entry: AgentHistoryTranscriptEntry; labels: AgentHistoryLabels }): JSX.Element {
   const { t } = useI18n()
+  const [isExpanded, setIsExpanded] = useState(false)
   const label = entry.role === 'assistant' ? labels.assistantName : entry.role === 'user' ? 'User' : t(labels.toolEventKey)
 
   return (
@@ -81,9 +152,9 @@ function TranscriptEntry({ entry, labels }: { entry: AgentHistoryTranscriptEntry
         <span>{formatTimestamp(entry.timestamp)}</span>
       </header>
       {entry.collapsed ? (
-        <details>
+        <details onToggle={(event) => setIsExpanded(event.currentTarget.open)}>
           <summary>{entry.title ?? t(labels.toolEventKey)}</summary>
-          <pre>{entry.text}</pre>
+          {isExpanded ? <pre>{entry.text}</pre> : null}
         </details>
       ) : (
         <pre>{entry.text}</pre>
@@ -93,28 +164,34 @@ function TranscriptEntry({ entry, labels }: { entry: AgentHistoryTranscriptEntry
 }
 
 function TranscriptList({ labels, messages }: { labels: AgentHistoryLabels; messages: AgentHistoryTranscriptEntry[] }): JSX.Element {
+  const renderMessage = useCallback((message: AgentHistoryTranscriptEntry) => <TranscriptEntry entry={message} labels={labels} />, [labels])
+
   return (
-    <div className="claude-history-transcript">
-      {messages.map((message) => (
-        <TranscriptEntry key={message.id} entry={message} labels={labels} />
-      ))}
-    </div>
+    <VirtualHistoryList
+      className="claude-history-transcript"
+      estimateSize={TRANSCRIPT_ROW_ESTIMATE}
+      getKey={(message) => message.id}
+      items={messages}
+      renderItem={renderMessage}
+    />
   )
 }
 
 function ChildSession({ child, labels }: { child: AgentHistoryChildSessionDetail; labels: AgentHistoryLabels }): JSX.Element {
+  const [isOpen, setIsOpen] = useState(false)
+
   return (
-    <details className="claude-history-child-session">
+    <details className="claude-history-child-session" onToggle={(event) => setIsOpen(event.currentTarget.open)}>
       <summary>
         <span>{child.summary.title}</span>
         <small>{sessionDetailLine(child.summary)}</small>
       </summary>
-      <TranscriptList labels={labels} messages={child.messages} />
+      {isOpen ? <TranscriptList labels={labels} messages={child.messages} /> : null}
     </details>
   )
 }
 
-export function AgentHistoryExplorer({
+function AgentHistoryExplorerBase({
   api,
   agentSource,
   component,
@@ -158,6 +235,8 @@ export function AgentHistoryExplorer({
     () => history?.sessions.filter((session) => session.projectId === selectedProject?.id) ?? [],
     [history, selectedProject?.id]
   )
+  const projectListLabel = t(labels.projectListKey)
+  const sessionsLabel = t(labels.sessionsKey)
 
   useEffect(() => {
     setSelectedSessionId((current) => (current && sessions.some((session) => session.sessionId === current) ? current : sessions[0]?.sessionId ?? null))
@@ -227,9 +306,46 @@ export function AgentHistoryExplorer({
     [addComponent, agentSource, component, resumeCommand, terminalTitlePrefix]
   )
 
+  const renderProject = useCallback(
+    (project: AgentHistoryProjectSummary) => (
+      <button
+        type="button"
+        className={project.id === selectedProject?.id ? 'claude-history-project claude-history-project--active' : 'claude-history-project'}
+        onClick={() => setSelectedProjectId(project.id)}
+      >
+        <span>
+          <strong>{project.name}</strong>
+          <small>{project.path}</small>
+        </span>
+        <span className="claude-history-project__meta">{project.sessionCount}</span>
+      </button>
+    ),
+    [selectedProject?.id]
+  )
+
+  const renderSession = useCallback(
+    (session: AgentHistorySessionSummary) => (
+      <button
+        type="button"
+        className={session.sessionId === selectedSessionId ? 'claude-history-session claude-history-session--active' : 'claude-history-session'}
+        onClick={() => setSelectedSessionId(session.sessionId)}
+      >
+        <span>
+          <strong>{session.title}</strong>
+          <small>{sessionDetailLine(session)}</small>
+        </span>
+        <span className="claude-history-session__badges">
+          {session.metadataOnly ? <em>{t(labels.metadataOnlyKey)}</em> : null}
+          {session.childCount > 0 ? <em>{session.childCount}</em> : null}
+        </span>
+      </button>
+    ),
+    [labels.metadataOnlyKey, selectedSessionId, t]
+  )
+
   return (
     <div className="claude-history-module">
-      <aside className="claude-history-projects" aria-label={t(labels.projectListKey)}>
+      <aside className="claude-history-projects" aria-label={projectListLabel}>
         <header>
           <div>
             <strong>{t(labels.titleKey)}</strong>
@@ -242,35 +358,28 @@ export function AgentHistoryExplorer({
 
         {error ? <div className="module-error">{t(labels.detailFailedKey, { message: error })}</div> : null}
 
-        <div className="claude-history-project-list">
-          {history && history.projects.length === 0 ? (
+        <VirtualHistoryList
+          className="claude-history-project-list"
+          empty={
+            history && history.projects.length === 0 ? (
             <div className="claude-history-empty">
               <SearchX size={18} />
               <span>{t(labels.emptyKey)}</span>
             </div>
-          ) : null}
-          {history?.projects.map((project) => (
-            <button
-              key={project.id}
-              type="button"
-              className={project.id === selectedProject?.id ? 'claude-history-project claude-history-project--active' : 'claude-history-project'}
-              onClick={() => setSelectedProjectId(project.id)}
-            >
-              <span>
-                <strong>{project.name}</strong>
-                <small>{project.path}</small>
-              </span>
-              <span className="claude-history-project__meta">{project.sessionCount}</span>
-            </button>
-          ))}
-        </div>
+            ) : null
+          }
+          estimateSize={PROJECT_ROW_ESTIMATE}
+          getKey={(project) => project.id}
+          items={history?.projects ?? []}
+          renderItem={renderProject}
+        />
       </aside>
 
       <section className="claude-history-main">
-        <div className="claude-history-session-list" aria-label={t(labels.sessionsKey)}>
+        <div className="claude-history-session-list">
           <header>
             <div>
-              <strong>{selectedProject?.name ?? t(labels.sessionsKey)}</strong>
+              <strong>{selectedProject?.name ?? sessionsLabel}</strong>
               <span>{selectedProject?.path}</span>
             </div>
             {selectedProject ? (
@@ -286,26 +395,15 @@ export function AgentHistoryExplorer({
             ) : null}
           </header>
 
-          <div className="claude-history-sessions">
-            {sessions.length === 0 && !isLoading ? <div className="claude-history-empty">{t(labels.noProjectSessionsKey)}</div> : null}
-            {sessions.map((session) => (
-              <button
-                key={session.sessionId}
-                type="button"
-                className={session.sessionId === selectedSessionId ? 'claude-history-session claude-history-session--active' : 'claude-history-session'}
-                onClick={() => setSelectedSessionId(session.sessionId)}
-              >
-                <span>
-                  <strong>{session.title}</strong>
-                  <small>{sessionDetailLine(session)}</small>
-                </span>
-                <span className="claude-history-session__badges">
-                  {session.metadataOnly ? <em>{t(labels.metadataOnlyKey)}</em> : null}
-                  {session.childCount > 0 ? <em>{session.childCount}</em> : null}
-                </span>
-              </button>
-            ))}
-          </div>
+          <VirtualHistoryList
+            ariaLabel={sessionsLabel}
+            className="claude-history-sessions"
+            empty={sessions.length === 0 && !isLoading ? <div className="claude-history-empty">{t(labels.noProjectSessionsKey)}</div> : null}
+            estimateSize={SESSION_ROW_ESTIMATE}
+            getKey={(session) => session.sessionId}
+            items={sessions}
+            renderItem={renderSession}
+          />
         </div>
 
         <article className="claude-history-detail">
@@ -349,3 +447,22 @@ export function AgentHistoryExplorer({
     </div>
   )
 }
+
+function areAgentHistoryExplorerPropsEqual(previous: AgentHistoryExplorerProps, next: AgentHistoryExplorerProps): boolean {
+  return (
+    previous.api === next.api &&
+    previous.agentSource === next.agentSource &&
+    previous.canvasId === next.canvasId &&
+    previous.component === next.component &&
+    previous.labels === next.labels &&
+    previous.resumeCommand === next.resumeCommand &&
+    previous.setHeaderActions === next.setHeaderActions &&
+    previous.setTitle === next.setTitle &&
+    previous.terminalTitlePrefix === next.terminalTitlePrefix &&
+    previous.updateConfig === next.updateConfig &&
+    previous.updateFrame === next.updateFrame &&
+    previous.updateState === next.updateState
+  )
+}
+
+export const AgentHistoryExplorer = memo(AgentHistoryExplorerBase, areAgentHistoryExplorerPropsEqual)

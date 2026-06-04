@@ -24,6 +24,16 @@ type XtermMouseService = {
   getMouseReportCoords?: (event: MouseEvent, element: HTMLElement) => unknown
 }
 
+type XtermSelectionService = {
+  _screenElement?: HTMLElement
+  _getMouseEventScrollAmount?: (event: MouseEvent) => number
+}
+
+type XtermCore = {
+  _mouseService?: XtermMouseService
+  _selectionService?: XtermSelectionService
+}
+
 type TerminalPasteFeedback = {
   tone: 'info' | 'error'
   message: string
@@ -96,26 +106,46 @@ function createUnscaledMouseEvent<T extends XtermMouseEvent>(event: T, element: 
 }
 
 function installTransformedCanvasMouseFix(terminal: Terminal): Disposable {
-  const mouseService = (terminal as unknown as { _core?: { _mouseService?: XtermMouseService } })._core?._mouseService
-  if (!mouseService) return { dispose: () => undefined }
+  const core = (terminal as unknown as { _core?: XtermCore })._core
+  const mouseService = core?._mouseService
+  const selectionService = core?._selectionService
+  if (!mouseService && !selectionService) return { dispose: () => undefined }
 
-  const originalGetCoords = mouseService.getCoords
-  const originalGetMouseReportCoords = mouseService.getMouseReportCoords
+  const originalGetCoords = mouseService?.getCoords
+  const originalGetMouseReportCoords = mouseService?.getMouseReportCoords
+  const originalGetMouseEventScrollAmount = selectionService?._getMouseEventScrollAmount
 
-  mouseService.getCoords = function getCoordsWithCanvasTransformFix(event, element, ...args) {
-    return originalGetCoords.call(mouseService, createUnscaledMouseEvent(event, element), element, ...args)
+  if (mouseService && originalGetCoords) {
+    mouseService.getCoords = function getCoordsWithCanvasTransformFix(event, element, ...args) {
+      return originalGetCoords.call(mouseService, createUnscaledMouseEvent(event, element), element, ...args)
+    }
+
+    if (originalGetMouseReportCoords) {
+      mouseService.getMouseReportCoords = function getMouseReportCoordsWithCanvasTransformFix(event, element) {
+        return originalGetMouseReportCoords.call(mouseService, createUnscaledMouseEvent(event, element), element)
+      }
+    }
   }
 
-  if (originalGetMouseReportCoords) {
-    mouseService.getMouseReportCoords = function getMouseReportCoordsWithCanvasTransformFix(event, element) {
-      return originalGetMouseReportCoords.call(mouseService, createUnscaledMouseEvent(event, element), element)
+  if (selectionService && originalGetMouseEventScrollAmount) {
+    selectionService._getMouseEventScrollAmount = function getMouseEventScrollAmountWithCanvasTransformFix(event) {
+      const screenElement = selectionService._screenElement
+      return originalGetMouseEventScrollAmount.call(
+        selectionService,
+        screenElement ? createUnscaledMouseEvent(event, screenElement) : event
+      )
     }
   }
 
   return {
     dispose: () => {
-      mouseService.getCoords = originalGetCoords
-      mouseService.getMouseReportCoords = originalGetMouseReportCoords
+      if (mouseService && originalGetCoords) {
+        mouseService.getCoords = originalGetCoords
+        mouseService.getMouseReportCoords = originalGetMouseReportCoords
+      }
+      if (selectionService && originalGetMouseEventScrollAmount) {
+        selectionService._getMouseEventScrollAmount = originalGetMouseEventScrollAmount
+      }
     }
   }
 }
@@ -149,6 +179,7 @@ function installTerminalClipboardShortcuts(terminal: Terminal, handlers: Termina
       event.preventDefault()
       event.stopPropagation()
       handlers.onCopySelection()
+      terminal.clearSelection()
       return false
     }
 

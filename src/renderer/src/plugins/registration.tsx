@@ -71,9 +71,10 @@ export function createRendererPluginApi(
       if (!manifestNode) throw new Error(`Plugin node is not declared in manifest: ${nodeId}`)
       if (typeof definition.Renderer !== 'function') throw new Error(`Plugin node renderer is missing: ${nodeId}`)
 
-      const Renderer = (props: AtlasComponentRendererProps): JSX.Element =>
+      const Renderer = ({ setHeaderActions, ...props }: AtlasComponentRendererProps): JSX.Element =>
         React.createElement(definition.Renderer, {
           ...props,
+          ...(options.includeHostHooks ? { setHeaderActions } : {}),
           plugin: pluginContext,
           invoke
         })

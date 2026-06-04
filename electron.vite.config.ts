@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import { createExcalidrawAssetPlugin } from './src/build/excalidraw-asset-plugin'
 
 const DEFAULT_RENDERER_DEV_PORT = 14200
 const requestedRendererDevPort = Number.parseInt(process.env.ATLAS_RENDERER_PORT ?? '', 10)
@@ -62,6 +63,6 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
-    plugins: [react(), tailwindcss()]
+    plugins: [react(), tailwindcss(), createExcalidrawAssetPlugin(__dirname)]
   }
 })

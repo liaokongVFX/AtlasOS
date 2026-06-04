@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { NodeResizer, type Node, type NodeProps, type OnResize, type OnResizeEnd } from '@xyflow/react'
 import type { CanvasComponent } from '@shared/schema'
 import { cn } from '../lib/utils'
@@ -12,6 +12,7 @@ import { componentDefinitionTitle, getComponentDefinition, type NodeResizeParams
 type AtlasNodeData = Record<string, unknown> & {
   canvasId: string
   component: CanvasComponent
+  isViewportInteracting?: boolean
   parentGroupPosition?: { x: number; y: number }
   onRequestSelect?: (componentId: string) => void
 }
@@ -67,6 +68,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
   const updateComponent = useCanvasStore((state) => state.updateComponent)
   const [isResizing, setIsResizing] = useState(false)
   const [isEditingTitle, setIsEditingTitle] = useState(false)
+  const [headerActions, setHeaderActions] = useState<ReactNode | null>(null)
   const [draftTitle, setDraftTitle] = useState(component.title)
   const titleInputRef = useRef<HTMLInputElement | null>(null)
   const shouldCommitTitleEditRef = useRef(true)
@@ -78,7 +80,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
 
   const Icon = definition.icon
   const Renderer = definition.Renderer
-  const isCanvasInteracting = dragging || isResizing
+  const isCanvasInteracting = dragging || isResizing || Boolean(data.isViewportInteracting)
   const showInteractionShield = !selected
 
   const updateConfig = useCallback((patch: Record<string, unknown>, immediate = false) => {
@@ -266,6 +268,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
             ) : null}
           </div>
         </div>
+        {headerActions ? <div className="component-node__header-actions nodrag nowheel">{headerActions}</div> : null}
       </header>
       <div className={cn('component-node__body', selected && 'nodrag nowheel')}>
         <ComponentErrorBoundary>
@@ -276,6 +279,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
             updateState={updateState}
             updateFrame={updateFrame}
             setTitle={setTitle}
+            setHeaderActions={setHeaderActions}
             isCanvasInteracting={isCanvasInteracting}
             isNodeSelected={selected}
           />

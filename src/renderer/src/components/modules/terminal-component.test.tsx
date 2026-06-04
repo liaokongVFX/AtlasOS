@@ -12,6 +12,10 @@ type MockTerminal = {
       getCoords: ReturnType<typeof vi.fn>
       getMouseReportCoords: ReturnType<typeof vi.fn>
     }
+    _selectionService: {
+      _screenElement?: HTMLElement
+      _getMouseEventScrollAmount: ReturnType<typeof vi.fn>
+    }
   }
   parser: {
     registerCsiHandler: ReturnType<typeof vi.fn>
@@ -23,6 +27,7 @@ type MockTerminal = {
   attachCustomWheelEventHandler: ReturnType<typeof vi.fn>
   hasSelection: ReturnType<typeof vi.fn>
   getSelection: ReturnType<typeof vi.fn>
+  clearSelection: ReturnType<typeof vi.fn>
   paste: ReturnType<typeof vi.fn>
   onData: ReturnType<typeof vi.fn>
   write: ReturnType<typeof vi.fn>
@@ -52,6 +57,21 @@ vi.mock('@xterm/xterm', () => ({
   Terminal: vi.fn().mockImplementation((options) => {
     terminalOptions.push(options)
 
+    const selectionService: MockTerminal['_core']['_selectionService'] = {
+      _getMouseEventScrollAmount: vi.fn(function (this: MockTerminal['_core']['_selectionService'], event: MouseEvent) {
+        const screenElement = this._screenElement
+        if (!screenElement) return 0
+
+        const rect = screenElement.getBoundingClientRect()
+        const topPadding = parseInt(window.getComputedStyle(screenElement).getPropertyValue('padding-top'))
+        const terminalHeight = 100
+        const offset = event.clientY - rect.top - topPadding
+
+        if (offset >= 0 && offset <= terminalHeight) return 0
+        return offset > terminalHeight ? 1 : -1
+      })
+    }
+
     const instance: MockTerminal = {
       cols: 100,
       rows: 30,
@@ -59,7 +79,8 @@ vi.mock('@xterm/xterm', () => ({
         _mouseService: {
           getCoords: vi.fn((event: MouseEvent) => [event.clientX, event.clientY]),
           getMouseReportCoords: vi.fn((event: MouseEvent) => ({ x: event.clientX, y: event.clientY }))
-        }
+        },
+        _selectionService: selectionService
       },
       parser: {
         registerCsiHandler: vi.fn(() => ({ dispose: vi.fn() }))
@@ -67,15 +88,20 @@ vi.mock('@xterm/xterm', () => ({
       focus: vi.fn(),
       loadAddon: vi.fn(),
       open: vi.fn((element: HTMLElement) => {
+        const screen = document.createElement('div')
+        screen.className = 'xterm-screen'
         const textarea = document.createElement('textarea')
         textarea.className = 'xterm-helper-textarea'
-        element.appendChild(textarea)
+        screen.appendChild(textarea)
+        element.appendChild(screen)
+        selectionService._screenElement = screen
         instance.textarea = textarea
       }),
       attachCustomKeyEventHandler: vi.fn(),
       attachCustomWheelEventHandler: vi.fn(),
       hasSelection: vi.fn(() => false),
       getSelection: vi.fn(() => ''),
+      clearSelection: vi.fn(),
       paste: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
       write: vi.fn(),
@@ -443,7 +469,7 @@ describe('TerminalComponent', () => {
     })
   })
 
-  it('copies the terminal selection with Ctrl+C without interrupting the process', async () => {
+  it('normalizes xterm selection drag scroll checks when the canvas is zoomed', async () => {
     const updateState = vi.fn()
     const updateConfig = vi.fn()
     const setTitle = vi.fn()
@@ -464,7 +490,57 @@ describe('TerminalComponent', () => {
       await Promise.resolve()
     })
 
-    terminalInstances[0].hasSelection.mockReturnValue(true)
+    const selectionService = terminalInstances[0]._core._selectionService
+    const screenElement = selectionService._screenElement
+    if (!screenElement) throw new Error('Terminal screen element not found')
+
+    screenElement.style.paddingTop = '0px'
+    Object.defineProperties(screenElement, {
+      offsetWidth: { value: 100 },
+      offsetHeight: { value: 100 }
+    })
+    screenElement.getBoundingClientRect = vi.fn(
+      () =>
+        ({
+          left: 10,
+          top: 20,
+          width: 200,
+          height: 200,
+          right: 210,
+          bottom: 220,
+          x: 10,
+          y: 20,
+          toJSON: () => ({})
+        }) as DOMRect
+    )
+
+    const mouseMoveInsideZoomedTerminal = { clientX: 110, clientY: 170 } as MouseEvent
+
+    expect(selectionService._getMouseEventScrollAmount(mouseMoveInsideZoomedTerminal)).toBe(0)
+  })
+
+  it('copies the terminal selection with Ctrl+C and clears it so the next Ctrl+C can interrupt', async () => {
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    terminalInstances[0].hasSelection.mockReturnValueOnce(true).mockReturnValue(false)
     terminalInstances[0].getSelection.mockReturnValue('selected text')
 
     const keyHandler = terminalInstances[0].attachCustomKeyEventHandler.mock.calls[0][0]
@@ -482,6 +558,21 @@ describe('TerminalComponent', () => {
     expect(event.preventDefault).toHaveBeenCalled()
     expect(event.stopPropagation).toHaveBeenCalled()
     expect(window.atlas.clipboard.writeText).toHaveBeenCalledWith('selected text')
+    expect(terminalInstances[0].clearSelection).toHaveBeenCalledTimes(1)
+
+    const nextEvent = {
+      type: 'keydown',
+      key: 'c',
+      ctrlKey: true,
+      metaKey: false,
+      altKey: false,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn()
+    } as unknown as KeyboardEvent
+
+    expect(keyHandler(nextEvent)).toBe(true)
+    expect(nextEvent.preventDefault).not.toHaveBeenCalled()
+    expect(nextEvent.stopPropagation).not.toHaveBeenCalled()
   })
 
   it('does not crash when Ctrl+C copies before the preload clipboard API is available', async () => {
@@ -534,6 +625,7 @@ describe('TerminalComponent', () => {
       expect(event.preventDefault).toHaveBeenCalled()
       expect(event.stopPropagation).toHaveBeenCalled()
       expect(document.execCommand).toHaveBeenCalledWith('copy')
+      expect(terminalInstances[0].clearSelection).toHaveBeenCalledTimes(1)
       expect(navigatorWriteText).not.toHaveBeenCalled()
       expect(consoleWarn).not.toHaveBeenCalled()
     } finally {

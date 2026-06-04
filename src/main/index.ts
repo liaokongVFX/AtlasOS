@@ -19,6 +19,7 @@ import { CodexHistoryService } from './services/codex-history-service'
 import { UpdateService } from './services/update-service'
 import { applyAtlasBrowserNetworkPolicy, applyAtlasBrowserWebPreferences } from './services/browser-network-policy'
 import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services/local-asset-protocol'
+import { createContentSecurityPolicy } from './security-policy'
 import type { PetAlertTarget } from '@shared/pet'
 
 let mainWindow: BrowserWindow | null = null
@@ -287,11 +288,7 @@ function installSecurityDefaults(): void {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': [
-          isDev
-            ? "default-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* data: blob:; script-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:* atlas-plugin:; style-src 'self' 'unsafe-inline' atlas-plugin:; img-src 'self' data: blob: atlas-file: atlas-plugin: https:; media-src 'self' data: blob: atlas-file: atlas-plugin:; frame-src http: https:;"
-            : "default-src 'self' data: blob:; script-src 'self' atlas-plugin:; style-src 'self' 'unsafe-inline' atlas-plugin:; img-src 'self' data: blob: atlas-file: atlas-plugin: https:; media-src 'self' data: blob: atlas-file: atlas-plugin:; frame-src http: https:;"
-        ]
+        'Content-Security-Policy': [createContentSecurityPolicy(isDev)]
       }
     })
   })

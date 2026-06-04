@@ -9,6 +9,7 @@ declare global {
 
   interface Window {
     atlas: AtlasApi
+    EXCALIDRAW_ASSET_PATH?: string | string[]
   }
 }
 

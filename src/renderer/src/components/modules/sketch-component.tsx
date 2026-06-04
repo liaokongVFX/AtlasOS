@@ -1,9 +1,9 @@
-import { Excalidraw, convertToExcalidrawElements } from '@excalidraw/excalidraw'
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types'
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI, UIOptions } from '@excalidraw/excalidraw/types'
 import { Network } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, type FocusEvent } from 'react'
 import { useI18n, type TFunction } from '../../i18n'
+import { Excalidraw, convertToExcalidrawElements } from '../../lib/excalidraw'
 import type { AtlasComponentRendererProps } from '../registry'
 import {
   createMindMapTemplateSkeletons,

@@ -27,7 +27,9 @@ const zhCN = {
   'browser.forward': '前进',
   'browser.newTab': '新标签页',
   'browser.reload': '刷新',
+  'browser.resetZoom': '重置缩放',
   'browser.screenshotAlt': '浏览器截图',
+  'browser.zoom': '缩放',
 
   'canvas.createComponent': '创建组件',
   'canvas.deleteCanvas': '删除画布',
@@ -455,7 +457,9 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'browser.forward': 'Forward',
   'browser.newTab': 'New tab',
   'browser.reload': 'Reload',
+  'browser.resetZoom': 'Reset zoom',
   'browser.screenshotAlt': 'Browser screenshot',
+  'browser.zoom': 'Zoom',
 
   'canvas.createComponent': 'Create component',
   'canvas.deleteCanvas': 'Delete canvas',

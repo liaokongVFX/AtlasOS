@@ -345,23 +345,38 @@ describe('CanvasBoard', () => {
     expect(backgroundImage?.getAttribute('style')).toContain('background-attachment: fixed')
   })
 
-  it('disables browser webview hit testing while the viewport is being dragged', () => {
+  it('marks component nodes as viewport-interacting while the viewport is being dragged', () => {
+    const canvas = createCanvas()
+    canvas.components = [
+      createComponent('browser-1', {
+        type: 'browser',
+        state: {
+          activeTabId: 'tab-1',
+          tabs: [{ localId: 'tab-1', title: 'Example', url: 'https://example.com' }]
+        }
+      })
+    ]
+    useCanvasStore.setState({ canvases: { 'canvas-1': canvas } })
+
     const { container } = renderCanvasBoard()
 
     const board = container.querySelector('.canvas-board')
     expect(board).not.toHaveClass('canvas-board--viewport-interacting')
+    expect((reactFlowProps.current?.nodes?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data.isViewportInteracting).toBe(false)
 
     act(() => {
       reactFlowProps.current?.onMoveStart?.(null, { x: 120, y: 80, zoom: 1 })
     })
 
     expect(board).toHaveClass('canvas-board--viewport-interacting')
+    expect((reactFlowProps.current?.nodes?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data.isViewportInteracting).toBe(true)
 
     act(() => {
       reactFlowProps.current?.onMoveEnd?.(null, DEFAULT_VIEWPORT)
     })
 
     expect(board).not.toHaveClass('canvas-board--viewport-interacting')
+    expect((reactFlowProps.current?.nodes?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data.isViewportInteracting).toBe(false)
   })
 
   it('defers pending autosaves while the viewport is being dragged', async () => {
@@ -465,6 +480,44 @@ describe('CanvasBoard', () => {
     expect(reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1')?.selected).not.toBe(true)
     expect(listener).toHaveBeenCalledTimes(1)
     unsubscribe()
+  })
+
+  it('temporarily renders dragged nodes above higher z-index nodes without persisting the layer change', () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('component-1', { zIndex: 1 }),
+            createComponent('component-2', { zIndex: 8, frame: { x: 560, y: 120, width: 420, height: 300 } })
+          ]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    const draggedNode = reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1')
+    expect(draggedNode).toBeDefined()
+    expect(draggedNode?.style).not.toHaveProperty('zIndex')
+
+    act(() => {
+      reactFlowProps.current?.onNodeDragStart?.({} as ReactMouseEvent, draggedNode!, [draggedNode!])
+    })
+
+    const raisedDraggedNode = reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1')
+    const stationaryNode = reactFlowProps.current?.nodes?.find((item) => item.id === 'component-2')
+    expect(raisedDraggedNode?.zIndex).toBeGreaterThan(stationaryNode?.zIndex ?? 0)
+    expect(useCanvasStore.getState().canvases['canvas-1'].components.find((component) => component.id === 'component-1')?.zIndex).toBe(1)
+
+    act(() => {
+      reactFlowProps.current?.onNodeDragStop?.({} as ReactMouseEvent, { ...draggedNode!, position: { x: 100, y: 120 } }, [
+        { ...draggedNode!, position: { x: 100, y: 120 } }
+      ])
+    })
+
+    expect(reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1')?.zIndex).toBe(1)
   })
 
   it('persists all selected node positions together when group dragging stops', () => {

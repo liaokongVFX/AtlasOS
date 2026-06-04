@@ -146,7 +146,7 @@ describe('CodexHistoryComponent', () => {
     renderCodexHistory()
 
     expect((await screen.findAllByText('alpha')).length).toBeGreaterThan(0)
-    expect(await screen.findByText('Codex session')).toBeInTheDocument()
+    expect((await screen.findAllByText('Codex session')).length).toBeGreaterThan(0)
     expect(await screen.findByText('Build codex')).toBeInTheDocument()
     expect(screen.getAllByText('Tool: shell_command')).toHaveLength(2)
     expect(screen.getByText('Done')).toBeInTheDocument()
@@ -219,5 +219,25 @@ describe('CodexHistoryComponent', () => {
 
     expect((await screen.findAllByText('beta')).length).toBeGreaterThan(0)
     expect(window.atlas.codexHistory.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps large transcripts virtualized instead of mounting every message at once', async () => {
+    const manyMessages: CodexHistorySessionDetail = {
+      ...codexDetail,
+      messages: Array.from({ length: 60 }, (_, index) => ({
+        id: `many-${index}`,
+        role: 'assistant',
+        kind: 'message',
+        timestamp: '2026-05-30T09:02:00.000Z',
+        text: `Virtualized message ${index}`,
+        collapsed: false
+      }))
+    }
+    vi.mocked(window.atlas.codexHistory.getSession).mockResolvedValue(manyMessages)
+
+    renderCodexHistory()
+
+    expect(await screen.findByText('Virtualized message 0')).toBeInTheDocument()
+    expect(screen.queryByText('Virtualized message 59')).not.toBeInTheDocument()
   })
 })

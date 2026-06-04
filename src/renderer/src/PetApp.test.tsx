@@ -169,6 +169,28 @@ describe('PetApp', () => {
     expect(container.querySelector('.pet-row__dot--waiting_for_confirmation')).toBeInTheDocument()
   })
 
+  it('shows the linked agent window title in the running agents list', async () => {
+    const state = createState()
+    petApi.getState.mockResolvedValue({
+      ...state,
+      agentSessions: [
+        {
+          ...state.agentSessions[0],
+          title: 'Claude review prompt',
+          componentTitle: 'Review agent window'
+        }
+      ]
+    })
+
+    render(<PetApp />)
+
+    const orb = await screen.findByRole('button', { name: 'AtlasOS pet' })
+    fireEvent.pointerEnter(orb.parentElement as Element)
+
+    expect(await screen.findByText('Review agent window')).toBeInTheDocument()
+    expect(screen.getByText('Claude review prompt')).toBeInTheDocument()
+  })
+
   it('labels newly started agents as ready instead of running', async () => {
     petApi.getState.mockResolvedValue(createReadyState())
 
@@ -184,7 +206,7 @@ describe('PetApp', () => {
     expect(screen.getByText('Nothing needs attention.')).toBeInTheDocument()
   })
 
-  it('keeps completed alerts while clearing completed agents from the running list', async () => {
+  it('keeps completed agents visible with completed alerts', async () => {
     petApi.getState.mockResolvedValue(createCompletedState())
 
     render(<PetApp />)
@@ -195,8 +217,8 @@ describe('PetApp', () => {
     fireEvent.pointerEnter(orb.parentElement as Element)
 
     expect(await screen.findByText('Claude Code completed')).toBeInTheDocument()
-    expect(screen.queryByText('completed')).not.toBeInTheDocument()
-    expect(screen.getByText('No Codex or Claude sessions.')).toBeInTheDocument()
+    expect(screen.getByText('completed')).toBeInTheDocument()
+    expect(screen.queryByText('No Codex or Claude sessions.')).not.toBeInTheDocument()
     expect(screen.queryByText('asking')).not.toBeInTheDocument()
   })
 

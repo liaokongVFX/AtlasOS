@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AtlasUpdateState } from '@shared/updates'
@@ -74,6 +76,18 @@ describe('UpdateApp', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Download' }))
 
     await waitFor(() => expect(updatesApi.download).toHaveBeenCalled())
+  })
+
+  it('keeps update action buttons clickable and labeled in the frameless window', () => {
+    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
+    const dragRule = css.match(/\.update-window__drag-region\s*\{([^}]*)\}/)?.[1] ?? ''
+    const actionsRule = css.match(/\.update-window__actions\s*\{([^}]*)\}/)?.[1] ?? ''
+    const laterTextRule = css.match(/\.update-window__actions \.tool-button span\s*\{([^}]*)\}/)?.[1] ?? ''
+
+    expect(dragRule).toContain('height: 48px;')
+    expect(dragRule).not.toContain('inset: 0 44px 0 0;')
+    expect(actionsRule).toContain('-webkit-app-region: no-drag;')
+    expect(laterTextRule).toContain('display: inline;')
   })
 
   it('shows download progress without offering install yet', async () => {

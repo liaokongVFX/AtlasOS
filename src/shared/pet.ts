@@ -78,6 +78,7 @@ export const petAgentSessionSchema = z.object({
   status: z.enum(PET_AGENT_STATUSES),
   canvasId: z.string().min(1),
   componentId: z.string().min(1),
+  componentTitle: z.string().min(1).optional(),
   title: z.string().min(1),
   cwd: z.string().optional(),
   lastActivityAt: z.string(),

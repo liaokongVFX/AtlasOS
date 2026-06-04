@@ -262,7 +262,6 @@ svg {
 .top-bar__tools,
 .browser-tabs,
 .browser-toolbar,
-.file-tree-toolbar,
 .quick-launcher-toolbar,
 .note-toolbar,
 .sketch-toolbar,
@@ -803,11 +802,38 @@ svg {
   border-top-right-radius: calc(var(--radius-lg) - 1px);
   padding: 0 var(--space-2);
   background: var(--color-surface-2);
+  cursor: grab;
+}
+
+.component-node__header:active {
+  cursor: grabbing;
 }
 
 .component-node__header--terminal {
   padding-top: 0;
   padding-bottom: 0;
+}
+
+.component-node__header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.component-node__header-action-button {
+  width: 28px;
+  height: 28px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-ink-subtle);
+}
+
+.component-node__header-action-button:hover {
+  border-color: var(--color-hairline-tertiary);
+  background: var(--color-surface-3);
+  color: var(--color-ink);
 }
 
 .component-node__title {
@@ -852,6 +878,7 @@ svg {
   color: var(--color-ink);
   font-size: 13px;
   font-weight: 500;
+  cursor: text;
 }
 
 .component-node__title-display {
@@ -866,7 +893,7 @@ svg {
   line-height: 28px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: text;
+  cursor: inherit;
   user-select: none;
 }
 
@@ -954,6 +981,12 @@ svg {
   padding: 0 var(--space-3);
   background: rgb(17 20 27 / 72%);
   color: var(--color-ink);
+  cursor: grab;
+  user-select: none;
+}
+
+.canvas-group-node__header:active {
+  cursor: grabbing;
 }
 
 .canvas-group-node__header svg {
@@ -973,6 +1006,7 @@ svg {
   color: var(--color-ink);
   font-size: 13px;
   font-weight: 600;
+  cursor: inherit;
 }
 
 .canvas-group-node__notes {
@@ -2144,7 +2178,7 @@ svg {
 }
 
 .file-tree-module {
-  grid-template-rows: 42px 1fr;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .file-tree-content {
@@ -2165,7 +2199,6 @@ svg {
   overflow: hidden;
 }
 
-.file-tree-toolbar,
 .browser-toolbar,
 .quick-launcher-toolbar,
 .note-toolbar,
@@ -2178,9 +2211,54 @@ svg {
   box-shadow: var(--edge-highlight);
 }
 
-.file-tree-toolbar input,
 .browser-toolbar input {
   flex: 1;
+}
+
+.browser-zoom-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  border-bottom: 1px solid var(--color-hairline);
+  padding: 4px var(--space-2);
+  background: var(--color-surface-2);
+  box-shadow: var(--edge-highlight);
+}
+
+.browser-zoom-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  color: var(--color-ink-subtle);
+}
+
+.browser-zoom-control svg {
+  color: var(--color-ink-subtle);
+}
+
+.browser-zoom-slider {
+  min-width: 72px;
+  flex: 1 1 auto;
+}
+
+.browser-zoom-value {
+  flex: 0 0 42px;
+  color: var(--color-ink-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.browser-zoom-reset {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-ink-subtle);
 }
 
 .file-tree-row {
@@ -2251,7 +2329,7 @@ svg {
 .browser-module {
   --browser-content-background: #ffffff;
 
-  grid-template-rows: 36px 40px 1fr;
+  grid-template-rows: 36px 40px 32px 1fr;
 }
 
 .browser-tabs {
@@ -6558,6 +6636,27 @@ svg {
   padding-right: var(--space-1);
 }
 
+.claude-history-virtual-list {
+  position: relative;
+  width: 100%;
+}
+
+.claude-history-virtual-item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding-bottom: var(--space-2);
+}
+
+.claude-history-transcript .claude-history-virtual-item {
+  padding-bottom: var(--space-3);
+}
+
+.claude-history-virtual-item > * {
+  width: 100%;
+}
+
 .claude-history-message {
   display: grid;
   gap: var(--space-2);
@@ -6724,7 +6823,10 @@ svg {
 
 .update-window__drag-region {
   position: absolute;
-  inset: 0 44px 0 0;
+  top: 0;
+  right: 44px;
+  left: 0;
+  height: 48px;
   -webkit-app-region: drag;
 }
 
@@ -6866,6 +6968,8 @@ svg {
 }
 
 .update-window__actions {
+  position: relative;
+  z-index: 1;
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
@@ -6876,6 +6980,23 @@ svg {
 .update-window__actions .primary-button,
 .update-window__actions .tool-button {
   height: 34px;
+}
+
+.update-window__actions .tool-button {
+  min-width: 76px;
+  border-color: var(--color-hairline-strong);
+  background: var(--color-surface-2);
+  color: var(--color-ink-muted);
+}
+
+.update-window__actions .tool-button:hover {
+  border-color: var(--color-hairline-strong);
+  background: var(--color-surface-3);
+  color: var(--color-ink);
+}
+
+.update-window__actions .tool-button span {
+  display: inline;
 }
 
 @keyframes update-spin {

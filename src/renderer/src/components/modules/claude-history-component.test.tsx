@@ -157,7 +157,7 @@ describe('ClaudeHistoryComponent', () => {
     renderClaudeHistory()
 
     expect((await screen.findAllByText('alpha')).length).toBeGreaterThan(0)
-    expect(await screen.findByText('Alpha session')).toBeInTheDocument()
+    expect((await screen.findAllByText('Alpha session')).length).toBeGreaterThan(0)
     expect(await screen.findByText('Build it')).toBeInTheDocument()
     expect(screen.getAllByText('Tool: Bash')).toHaveLength(2)
     expect(screen.getByText('Subagent task')).toBeInTheDocument()

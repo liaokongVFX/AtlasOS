@@ -39,6 +39,7 @@ import {
 type ComponentNodeCacheEntry = {
   canvasId: string
   component: CanvasComponent
+  isViewportInteracting: boolean
   parentGroupId?: string
   parentGroupX?: number
   parentGroupY?: number
@@ -94,7 +95,8 @@ function componentToNode(
   component: CanvasComponent,
   registryVersion = 0,
   onRequestSelect?: (componentId: string) => void,
-  parentGroup?: CanvasGroup
+  parentGroup?: CanvasGroup,
+  isViewportInteracting = false
 ): AtlasFlowNode {
   const position = parentGroup
     ? {
@@ -117,14 +119,14 @@ function componentToNode(
     data: {
       canvasId,
       component,
+      isViewportInteracting,
       parentGroupPosition: parentGroup ? { x: parentGroup.frame.x, y: parentGroup.frame.y } : undefined,
       onRequestSelect,
       registryVersion
     },
     style: {
       width: component.frame.width,
-      height: component.frame.height,
-      zIndex: component.zIndex
+      height: component.frame.height
     }
   }
 }
@@ -135,12 +137,14 @@ function cachedComponentToNode(
   component: CanvasComponent,
   registryVersion: number,
   onRequestSelect?: (componentId: string) => void,
-  parentGroup?: CanvasGroup
+  parentGroup?: CanvasGroup,
+  isViewportInteracting = false
 ): AtlasFlowNode {
   const cached = cache.get(component.id)
   if (
     cached?.canvasId === canvasId &&
     cached.component === component &&
+    cached.isViewportInteracting === isViewportInteracting &&
     cached.parentGroupId === parentGroup?.id &&
     cached.parentGroupX === parentGroup?.frame.x &&
     cached.parentGroupY === parentGroup?.frame.y &&
@@ -150,10 +154,11 @@ function cachedComponentToNode(
     return cached.node
   }
 
-  const node = componentToNode(canvasId, component, registryVersion, onRequestSelect, parentGroup)
+  const node = componentToNode(canvasId, component, registryVersion, onRequestSelect, parentGroup, isViewportInteracting)
   cache.set(component.id, {
     canvasId,
     component,
+    isViewportInteracting,
     parentGroupId: parentGroup?.id,
     parentGroupX: parentGroup?.frame.x,
     parentGroupY: parentGroup?.frame.y,
@@ -178,8 +183,7 @@ function groupToNode(canvasId: string, group: CanvasGroup): CanvasGroupFlowNode 
     data: { canvasId, group },
     style: {
       width: group.frame.width,
-      height: group.frame.height,
-      zIndex: group.zIndex
+      height: group.frame.height
     }
   }
 }
@@ -248,6 +252,52 @@ function selectOnlyNode(nodes: CanvasFlowNode[], nodeId: string): CanvasFlowNode
 
     didChange = true
     return { ...node, selected: shouldSelect }
+  })
+
+  return didChange ? nextNodes : nodes
+}
+
+function nodeZIndex(node: CanvasFlowNode): number {
+  return typeof node.zIndex === 'number' ? node.zIndex : 0
+}
+
+function elevateNodeIds(nodes: CanvasFlowNode[], nodeIds: Set<string>): CanvasFlowNode[] {
+  if (nodeIds.size === 0) return nodes
+
+  const elevatedNodes = nodes
+    .map((node, index) => ({ node, index }))
+    .filter(({ node }) => nodeIds.has(node.id))
+    .sort((first, second) => nodeZIndex(first.node) - nodeZIndex(second.node) || first.index - second.index)
+
+  if (elevatedNodes.length === 0) return nodes
+
+  const nextZIndexes = new Map<string, number>()
+  let nextZIndex = nodes.reduce((max, node) => Math.max(max, nodeZIndex(node)), 0) + 1
+
+  for (const { node } of elevatedNodes) {
+    nextZIndexes.set(node.id, nextZIndex)
+    nextZIndex += 1
+  }
+
+  return nodes.map((node) => {
+    const zIndex = nextZIndexes.get(node.id)
+    return zIndex === undefined ? node : { ...node, zIndex }
+  })
+}
+
+function restorePersistedZIndexes(nodes: CanvasFlowNode[], persistedNodes: CanvasFlowNode[], nodeIds: Set<string>): CanvasFlowNode[] {
+  if (nodeIds.size === 0) return nodes
+
+  const persistedZIndexes = new Map(persistedNodes.map((node) => [node.id, nodeZIndex(node)]))
+  let didChange = false
+  const nextNodes = nodes.map((node) => {
+    if (!nodeIds.has(node.id)) return node
+
+    const zIndex = persistedZIndexes.get(node.id)
+    if (zIndex === undefined || nodeZIndex(node) === zIndex) return node
+
+    didChange = true
+    return { ...node, zIndex }
   })
 
   return didChange ? nextNodes : nodes
@@ -998,7 +1048,15 @@ export function CanvasBoard(): JSX.Element {
     const memberGroups = groupByMemberId(groups)
     const nextComponentNodes = canvas.components.map((component) => {
       liveComponentIds.add(component.id)
-      return cachedComponentToNode(cache, canvas.id, component, componentRegistryVersion, selectComponentForContextMenu, memberGroups.get(component.id))
+      return cachedComponentToNode(
+        cache,
+        canvas.id,
+        component,
+        componentRegistryVersion,
+        selectComponentForContextMenu,
+        memberGroups.get(component.id),
+        isViewportInteracting
+      )
     })
 
     for (const [componentId, cached] of cache) {
@@ -1011,7 +1069,7 @@ export function CanvasBoard(): JSX.Element {
       ...groups.map((group) => groupToNode(canvas.id, group)),
       ...nextComponentNodes
     ]
-  }, [canvas, componentRegistryVersion, selectComponentForContextMenu])
+  }, [canvas, componentRegistryVersion, isViewportInteracting, selectComponentForContextMenu])
 
   useLayoutEffect(() => {
     setNodes((currentNodes) => {
@@ -1068,20 +1126,26 @@ export function CanvasBoard(): JSX.Element {
     [activeCanvasId, canvas?.groups, removeComponents, removeGroups]
   )
 
-  const onNodeDragStart: OnNodeDrag<CanvasFlowNode> = useCallback(() => {
-    closeCreateMenu()
-    if (nodeDragInteractionActiveRef.current) return
+  const onNodeDragStart: OnNodeDrag<CanvasFlowNode> = useCallback(
+    (_, node, draggedNodes) => {
+      closeCreateMenu()
+      const movingNodes = draggedNodes.length > 0 ? draggedNodes : [node]
+      setNodes((currentNodes) => elevateNodeIds(currentNodes, new Set(movingNodes.map((draggedNode) => draggedNode.id))))
 
-    nodeDragInteractionActiveRef.current = true
-    beginCanvasInteraction()
-  }, [beginCanvasInteraction, closeCreateMenu])
+      if (nodeDragInteractionActiveRef.current) return
+
+      nodeDragInteractionActiveRef.current = true
+      beginCanvasInteraction()
+    },
+    [beginCanvasInteraction, closeCreateMenu]
+  )
 
   const onNodeDragStop: OnNodeDrag<CanvasFlowNode> = useCallback(
     (_, node, draggedNodes) => {
       try {
         const stoppedNodes = draggedNodes.length > 0 ? draggedNodes : [node]
         const stoppedNodeIds = new Set(stoppedNodes.map((draggedNode) => draggedNode.id))
-        setNodes((currentNodes) => unselectNodeIds(currentNodes, stoppedNodeIds))
+        setNodes((currentNodes) => unselectNodeIds(restorePersistedZIndexes(currentNodes, persistedNodes, stoppedNodeIds), stoppedNodeIds))
 
         if (!activeCanvasId || !canvas) return
 
@@ -1137,7 +1201,7 @@ export function CanvasBoard(): JSX.Element {
         finishNodeDragInteraction()
       }
     },
-    [activeCanvasId, canvas, finishNodeDragInteraction, moveGroup, updateComponentFrames]
+    [activeCanvasId, canvas, finishNodeDragInteraction, moveGroup, persistedNodes, updateComponentFrames]
   )
 
   const openNodeFinder = useCallback(() => {

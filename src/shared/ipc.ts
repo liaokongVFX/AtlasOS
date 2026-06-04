@@ -253,6 +253,10 @@ export const browserTabInputSchema = z.object({
   tabId: z.string().min(1)
 })
 
+export const browserSetZoomInputSchema = browserTabInputSchema.extend({
+  zoomFactor: z.number().min(0.5).max(3)
+})
+
 export const browserSelectorInputSchema = z.object({
   tabId: z.string().min(1),
   selector: z.string().min(1).max(500)

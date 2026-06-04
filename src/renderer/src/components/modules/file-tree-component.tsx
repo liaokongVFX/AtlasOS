@@ -321,7 +321,7 @@ function createRow(rootPath: string, actions: FileTreeRowActions, t: TFunction) 
   }
 }
 
-export function FileTreeComponent({ component, updateConfig, updateState }: AtlasComponentRendererProps): JSX.Element {
+export function FileTreeComponent({ component, updateConfig, updateState, setHeaderActions }: AtlasComponentRendererProps): JSX.Element {
   const { t } = useI18n()
   const rootPath = asString(component.config.rootPath)
   const persistedOpenPaths = useMemo(() => readOpenPaths(rootPath, component.state.openPaths), [component.state.openPaths, rootPath])
@@ -703,13 +703,45 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
   )
   const Row = useMemo(() => createRow(rootPath, rowActions, t), [rootPath, rowActions, t])
 
-  const chooseDirectory = async () => {
+  const chooseDirectory = useCallback(async () => {
     const directory = await window.atlas.filesystem.chooseDirectory(t('fileTree.bindTitle'))
     if (directory) {
       updateConfig({ rootPath: directory }, true)
       updateState({ openPaths: [directory] }, true)
     }
-  }
+  }, [t, updateConfig, updateState])
+
+  const headerActions = useMemo(() => {
+    if (!rootPath) return null
+
+    return (
+      <>
+        <button
+          className="icon-button component-node__header-action-button"
+          onClick={chooseDirectory}
+          title={t('fileTree.chooseFolder')}
+          aria-label={t('fileTree.chooseFolder')}
+        >
+          <Folder size={14} />
+        </button>
+        <button
+          className="icon-button component-node__header-action-button"
+          onClick={() => void loadTree()}
+          title={t('common.reload')}
+          aria-label={t('common.reload')}
+        >
+          <RefreshCw size={14} />
+        </button>
+      </>
+    )
+  }, [chooseDirectory, loadTree, rootPath, t])
+
+  useEffect(() => {
+    if (!setHeaderActions) return undefined
+
+    setHeaderActions(headerActions)
+    return () => setHeaderActions(null)
+  }, [headerActions, setHeaderActions])
 
   const treeViewportWidth = Math.max(treeViewportSize.width || component.frame.width, 1)
   const treeViewportHeight = Math.max(treeViewportSize.height || component.frame.height, 1)
@@ -728,14 +760,6 @@ export function FileTreeComponent({ component, updateConfig, updateState }: Atla
   return (
     <>
       <div className="file-tree-module">
-        <div className="file-tree-toolbar">
-          <button className="icon-button" onClick={chooseDirectory} title={t('fileTree.chooseFolder')} aria-label={t('fileTree.chooseFolder')}>
-            <Folder size={15} />
-          </button>
-          <button className="icon-button" onClick={() => void loadTree()} title={t('common.reload')} aria-label={t('common.reload')}>
-            <RefreshCw size={15} />
-          </button>
-        </div>
         <div className={cn('file-tree-content', error && 'file-tree-content--with-error')}>
           {error ? <div className="module-error">{error}</div> : null}
           <div className="file-tree-viewport" ref={treeViewportRef}>

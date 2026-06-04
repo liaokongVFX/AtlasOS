@@ -169,16 +169,21 @@ const bridgeConfigPath = process.env.ATLAS_PET_BRIDGE_CONFIG || path.join(__dirn
 function readBridgeConfig() {
   try {
     const config = JSON.parse(fs.readFileSync(bridgeConfigPath, 'utf8'))
-    if (!config || config.enabled === false) return {}
-    return config
+    if (!config || config.enabled === false) return { found: true, enabled: false }
+    return {
+      found: true,
+      enabled: true,
+      bridgeUrl: typeof config.bridgeUrl === 'string' ? config.bridgeUrl : '',
+      token: typeof config.token === 'string' ? config.token : ''
+    }
   } catch {
-    return {}
+    return { found: false, enabled: false }
   }
 }
 
 const bridgeConfig = readBridgeConfig()
-const bridgeUrl = process.env.ATLAS_PET_BRIDGE_URL || bridgeConfig.bridgeUrl
-const token = process.env.ATLAS_PET_BRIDGE_TOKEN || bridgeConfig.token
+const bridgeUrl = bridgeConfig.found ? bridgeConfig.bridgeUrl : process.env.ATLAS_PET_BRIDGE_URL
+const token = bridgeConfig.found ? bridgeConfig.token : process.env.ATLAS_PET_BRIDGE_TOKEN
 
 if (!bridgeUrl || !token) process.exit(0)
 
@@ -778,7 +783,25 @@ function isTerminalAgentStatus(status: PetAgentSession['status'] | undefined): b
 }
 
 function visibleAgentSessions(agentSessions: Map<string, PetAgentSession>): PetAgentSession[] {
-  return [...agentSessions.values()].filter((session) => session.status !== 'completed')
+  return [...agentSessions.values()]
+}
+
+function componentTitleKey(canvasId: string, componentId: string): string {
+  return `${canvasId}:${componentId}`
+}
+
+function agentSessionsWithComponentTitles(sessions: PetAgentSession[], canvases: CanvasDocument[]): PetAgentSession[] {
+  const titles = new Map<string, string>()
+  for (const canvas of canvases) {
+    for (const component of canvas.components) {
+      titles.set(componentTitleKey(canvas.id, component.id), component.title)
+    }
+  }
+
+  return sessions.map((session) => {
+    const componentTitle = titles.get(componentTitleKey(session.canvasId, session.componentId)) ?? session.componentTitle
+    return componentTitle ? { ...session, componentTitle } : session
+  })
 }
 
 function agentSessionId(source: PetAgentSource, terminalSessionId: string, providerSessionId: string | undefined): string {
@@ -857,11 +880,7 @@ export class PetService {
   }
 
   getAgentHookEnvironment(context: AgentHookBridgeEnvironmentContext): Record<string, string> {
-    if (!this.bridgePort) return {}
-
     const env: Record<string, string> = {
-      ATLAS_PET_BRIDGE_URL: `http://127.0.0.1:${this.bridgePort}/agent-hook`,
-      ATLAS_PET_BRIDGE_TOKEN: this.storedState.bridgeToken,
       ATLAS_PET_BRIDGE_CONFIG: this.hookBridgeConfigPath,
       ATLAS_PET_HOOK_FORWARDER: this.hookForwarderPath,
       ATLAS_TERMINAL_SESSION_ID: context.sessionId,
@@ -942,7 +961,11 @@ export class PetService {
 
   async scanKanban(): Promise<void> {
     const settings = await this.options.appSettingsService.getSettings()
-    if (!settings.pet.enabled || !settings.pet.kanban.enabled) return
+    if (!settings.pet.enabled) return
+    if (!settings.pet.kanban.enabled) {
+      await this.broadcastState()
+      return
+    }
 
     const canvases = await this.options.persistence.listCanvases()
     const dueDate = todayDate()
@@ -1055,7 +1078,7 @@ export class PetService {
     handleValidated('pet:install-claude-hooks', z.object({}), () => this.installClaudeHooks())
     handleValidated('pet:install-codex-hooks', z.object({}), () => this.installCodexHooks())
 
-    handleValidated('pet:list-agent-sessions', z.object({}), () => visibleAgentSessions(this.agentSessions))
+    handleValidated('pet:list-agent-sessions', z.object({}), () => this.getAgentSessionsForRuntime())
   }
 
   private async ensurePetWindow(): Promise<void> {
@@ -1456,11 +1479,11 @@ export class PetService {
   private async getRuntimeState(): Promise<PetRuntimeState> {
     const settings = await this.options.appSettingsService.getSettings()
     const layout = petWindowLayout(settings)
-    const [claudeHook, codexHook] = await Promise.all([this.getClaudeHookStatus(), this.getCodexHookStatus()])
+    const [claudeHook, codexHook, agentSessions] = await Promise.all([this.getClaudeHookStatus(), this.getCodexHookStatus(), this.getAgentSessionsForRuntime()])
     return petRuntimeStateSchema.parse({
       settings: settings.pet,
       alerts: this.storedState.alerts,
-      agentSessions: visibleAgentSessions(this.agentSessions),
+      agentSessions,
       window: {
         panelSide: layout.panelSide,
         orbOffset: layout.orbOffset
@@ -1473,6 +1496,18 @@ export class PetService {
         codexHook
       }
     })
+  }
+
+  private async getAgentSessionsForRuntime(): Promise<PetAgentSession[]> {
+    const sessions = visibleAgentSessions(this.agentSessions)
+    if (sessions.length === 0) return sessions
+
+    try {
+      return agentSessionsWithComponentTitles(sessions, await this.options.persistence.listCanvases())
+    } catch (error) {
+      console.warn('Failed to read pet agent window titles:', error)
+      return sessions
+    }
   }
 
   private async broadcastState(): Promise<void> {
