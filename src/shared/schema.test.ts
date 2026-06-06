@@ -198,6 +198,7 @@ describe('appSettingsSchema', () => {
         position: { x: 36, y: 120 },
         size: 72,
         kanban: { enabled: true },
+        alertSound: { enabled: false, askingSrc: '', askingName: '', completionSrc: '', completionName: '' },
         agentBridge: { enabled: true },
         assetPack: {
           id: 'atlas-orb',
@@ -250,6 +251,26 @@ describe('appSettingsSchema', () => {
     expect(parsed.pet.assetPack.idleSprite).toEqual({ frameCount: 6, fps: 12 })
     expect(parsed.pet.assetPack.runningSprite).toEqual({ frameCount: 8, fps: 8 })
     expect(parsed.pet.assetPack.attentionSprite).toEqual({ frameCount: 8, fps: 8 })
+  })
+
+  it('migrates a single pet reminder sound to both alert sound slots', () => {
+    const parsed = appSettingsSchema.parse({
+      pet: {
+        alertSound: {
+          enabled: true,
+          src: 'atlas-file://preview?path=reminder.mp3',
+          name: 'reminder.mp3'
+        }
+      }
+    })
+
+    expect(parsed.pet.alertSound).toEqual({
+      enabled: true,
+      askingSrc: 'atlas-file://preview?path=reminder.mp3',
+      askingName: 'reminder.mp3',
+      completionSrc: 'atlas-file://preview?path=reminder.mp3',
+      completionName: 'reminder.mp3'
+    })
   })
 
   it('normalizes custom keyboard shortcuts', () => {

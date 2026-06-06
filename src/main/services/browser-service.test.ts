@@ -3,8 +3,6 @@ import type { BrowserWindow, WebContentsView } from 'electron'
 import { BrowserService } from './browser-service'
 
 const electronMocks = vi.hoisted(() => ({
-  beforeMouseHandler: null as ((event: { preventDefault: () => void }, mouse: { type: string }) => void) | null,
-  capturePage: vi.fn(async () => ({ toDataURL: () => 'data:image/png;base64,native' })),
   ipcHandle: vi.fn(),
   ipcOn: vi.fn(),
   ipcRemoveListener: vi.fn(),
@@ -39,12 +37,9 @@ vi.mock('electron', () => ({
         electronMocks.windowOpenHandler = handler
       }),
       setWebRTCIPHandlingPolicy: electronMocks.setWebRTCIPHandlingPolicy,
-      on: vi.fn((event, handler) => {
-        if (event === 'before-mouse-event') electronMocks.beforeMouseHandler = handler
-      }),
+      on: vi.fn(),
       getType: vi.fn(() => 'webContentsView'),
       getZoomFactor: vi.fn(() => 1),
-      capturePage: electronMocks.capturePage,
       loadURL: electronMocks.loadURL,
       setZoomFactor: vi.fn()
     }
@@ -66,9 +61,7 @@ function setTabs(service: BrowserService, tabs: Map<string, unknown>): void {
 describe('BrowserService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    electronMocks.capturePage.mockResolvedValue({ toDataURL: () => 'data:image/png;base64,native' })
     electronMocks.loadURL.mockResolvedValue(undefined)
-    electronMocks.beforeMouseHandler = null
     electronMocks.viewSetBackgroundColor.mockClear()
     electronMocks.webContentsViewOptions = []
     electronMocks.windowOpenHandler = null
@@ -217,134 +210,6 @@ describe('BrowserService', () => {
     expect(containerSetVisible).toHaveBeenCalledWith(false)
     expect(containerSetBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
     expect(tab.visible).toBe(false)
-  })
-
-  it('blocks page mouse events and requests node selection while native content is non-interactive', async () => {
-    const window = {
-      isDestroyed: () => false,
-      contentView: {
-        addChildView: vi.fn()
-      },
-      webContents: {
-        isDestroyed: () => false,
-        send: vi.fn()
-      }
-    } as unknown as BrowserWindow
-    const service = new BrowserService(window)
-    service.registerIpc()
-
-    const createTabHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'browser:create-tab')?.[1]
-    const setBoundsHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'browser:set-bounds')?.[1]
-    const createdTab = (await createTabHandler({}, { componentId: 'component-1', url: 'https://example.com' })) as { tabId: string }
-
-    await setBoundsHandler(
-      {},
-      {
-        tabId: createdTab.tabId,
-        visible: true,
-        interactive: false,
-        bounds: { x: 20, y: 56, width: 420, height: 284 }
-      }
-    )
-    const prevented = vi.fn()
-
-    electronMocks.beforeMouseHandler?.({ preventDefault: prevented }, { type: 'mouseDown' })
-
-    expect(prevented).toHaveBeenCalled()
-    expect(window.webContents.send).toHaveBeenCalledWith('browser:content-interaction-requested', {
-      componentId: 'component-1'
-    })
-
-    await setBoundsHandler(
-      {},
-      {
-        tabId: createdTab.tabId,
-        visible: true,
-        interactive: true,
-        bounds: { x: 20, y: 56, width: 420, height: 284 }
-      }
-    )
-    vi.mocked(window.webContents.send).mockClear()
-    prevented.mockClear()
-
-    electronMocks.beforeMouseHandler?.({ preventDefault: prevented }, { type: 'mouseDown' })
-
-    expect(prevented).not.toHaveBeenCalled()
-    expect(window.webContents.send).not.toHaveBeenCalledWith('browser:content-interaction-requested', expect.anything())
-  })
-
-  it('can apply native tab zoom without emitting a tab update', async () => {
-    const send = vi.fn()
-    const window = {
-      isDestroyed: () => false,
-      contentView: {
-        addChildView: vi.fn()
-      },
-      webContents: {
-        isDestroyed: () => false,
-        send
-      }
-    } as unknown as BrowserWindow
-    const service = new BrowserService(window)
-    service.registerIpc()
-
-    const createTabHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'browser:create-tab')?.[1]
-    const setZoomHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'browser:set-zoom')?.[1]
-    const createdTab = (await createTabHandler({}, { componentId: 'component-1', url: 'https://example.com' })) as { tabId: string }
-    const tab = (
-      service as unknown as {
-        tabs: Map<string, { view: { webContents: { setZoomFactor: ReturnType<typeof vi.fn> } } }>
-      }
-    ).tabs.get(createdTab.tabId)
-
-    send.mockClear()
-    await setZoomHandler({}, { tabId: createdTab.tabId, zoomFactor: 0.75, emitUpdate: false })
-
-    expect(tab?.view.webContents.setZoomFactor).toHaveBeenCalledWith(0.75)
-    expect(send).not.toHaveBeenCalledWith(
-      'browser:tab-updated',
-      expect.objectContaining({ tabId: createdTab.tabId, patch: expect.objectContaining({ zoomFactor: expect.any(Number) }) })
-    )
-
-    await setZoomHandler({}, { tabId: createdTab.tabId, zoomFactor: 0.8 })
-
-    expect(send).toHaveBeenCalledWith('browser:tab-updated', {
-      tabId: createdTab.tabId,
-      patch: { zoomFactor: 0.8 }
-    })
-  })
-
-  it('forwards native tab zoom requests to the renderer without mutating composed native zoom', async () => {
-    const send = vi.fn()
-    const window = {
-      isDestroyed: () => false,
-      contentView: {
-        addChildView: vi.fn()
-      },
-      webContents: {
-        isDestroyed: () => false,
-        send
-      }
-    } as unknown as BrowserWindow
-    const service = new BrowserService(window)
-    service.registerIpc()
-
-    const createTabHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'browser:create-tab')?.[1]
-    const zoomHandler = electronMocks.ipcOn.mock.calls.find(([channel]) => channel === 'atlas-browser:zoom-request')?.[1]
-    const createdTab = (await createTabHandler({}, { componentId: 'component-1', url: 'https://example.com' })) as { tabId: string }
-    const tab = (
-      service as unknown as {
-        tabs: Map<string, { view: { webContents: { setZoomFactor: ReturnType<typeof vi.fn> } } }>
-      }
-    ).tabs.get(createdTab.tabId)
-
-    zoomHandler({ sender: tab?.view.webContents }, { direction: 1 })
-
-    expect(tab?.view.webContents.setZoomFactor).not.toHaveBeenCalled()
-    expect(send).toHaveBeenCalledWith('browser:tab-zoom-requested', {
-      tabId: createdTab.tabId,
-      direction: 1
-    })
   })
 
   it('zooms DOM webview guests from Ctrl+wheel requests and reports the persisted zoom', () => {

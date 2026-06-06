@@ -1,5 +1,5 @@
-import { Activity, ChartSpline, Cpu, Gauge, MemoryStick, type LucideIcon } from 'lucide-react'
-import { useEffect, useId, useMemo, useState, type CSSProperties } from 'react'
+import { ChartSpline, Cpu, Gauge, MemoryStick, type LucideIcon } from 'lucide-react'
+import { useCallback, useEffect, useId, useMemo, useState, type CSSProperties } from 'react'
 import type { SystemMetricsSnapshot } from '@shared/system-metrics'
 import { useI18n } from '../../i18n'
 import { asString, cn } from '../../lib/utils'
@@ -211,7 +211,7 @@ function MetricWavePanel({ axisLabels, chartLabel, detail, label, samples, value
   )
 }
 
-export function SystemMonitorComponent({ component, updateState }: AtlasComponentRendererProps): JSX.Element {
+export function SystemMonitorComponent({ component, updateState, setHeaderActions }: AtlasComponentRendererProps): JSX.Element {
   const { t } = useI18n()
   const [snapshot, setSnapshot] = useState<SystemMetricsSnapshot | null>(null)
   const [history, setHistory] = useState<MetricHistoryPoint[]>([])
@@ -252,10 +252,44 @@ export function SystemMonitorComponent({ component, updateState }: AtlasComponen
     }
   }, [])
 
-  const switchViewMode = (nextViewMode: SystemMonitorViewMode): void => {
+  const switchViewMode = useCallback((nextViewMode: SystemMonitorViewMode): void => {
     if (nextViewMode !== viewMode) updateState({ viewMode: nextViewMode }, true)
-  }
-  const sampledAt = useMemo(() => (snapshot ? formatSampleTime(snapshot.sampledAt) : null), [snapshot])
+  }, [updateState, viewMode])
+  const headerActions = useMemo(
+    () => (
+      <div className="system-monitor-view-toggle" role="group" aria-label={t('systemMonitor.viewToggle')}>
+        <button
+          type="button"
+          className={cn('system-monitor-view-toggle__button', viewMode === 'gauge' && 'system-monitor-view-toggle__button--active')}
+          onClick={() => switchViewMode('gauge')}
+          title={t('systemMonitor.showGaugeView')}
+          aria-label={t('systemMonitor.showGaugeView')}
+          aria-pressed={viewMode === 'gauge'}
+        >
+          <Gauge size={14} />
+        </button>
+        <button
+          type="button"
+          className={cn('system-monitor-view-toggle__button', viewMode === 'wave' && 'system-monitor-view-toggle__button--active')}
+          onClick={() => switchViewMode('wave')}
+          title={t('systemMonitor.showWaveView')}
+          aria-label={t('systemMonitor.showWaveView')}
+          aria-pressed={viewMode === 'wave'}
+        >
+          <ChartSpline size={14} />
+        </button>
+      </div>
+    ),
+    [switchViewMode, t, viewMode]
+  )
+
+  useEffect(() => {
+    if (!setHeaderActions) return undefined
+
+    setHeaderActions(headerActions)
+    return () => setHeaderActions(null)
+  }, [headerActions, setHeaderActions])
+
   const memoryDetail = snapshot
     ? t('systemMonitor.memoryUsed', {
         used: formatBytes(snapshot.memoryUsedBytes),
@@ -268,41 +302,6 @@ export function SystemMonitorComponent({ component, updateState }: AtlasComponen
 
   return (
     <div className={cn('system-monitor-module', viewMode === 'wave' && 'system-monitor-module--wave')}>
-      <header className="system-monitor-header">
-        <span className="system-monitor-header__icon" aria-hidden="true">
-          <Activity size={17} />
-        </span>
-        <div className="system-monitor-header__title">
-          <strong>{t('component.systemMonitor')}</strong>
-          <span>{sampledAt ? t('systemMonitor.updatedAt', { time: sampledAt }) : t('systemMonitor.loading')}</span>
-        </div>
-        <div className="system-monitor-header__actions">
-          <span className="system-monitor-live">{t('systemMonitor.live')}</span>
-          <div className="system-monitor-view-toggle" role="group" aria-label={t('systemMonitor.viewToggle')}>
-            <button
-              type="button"
-              className={cn('system-monitor-view-toggle__button', viewMode === 'gauge' && 'system-monitor-view-toggle__button--active')}
-              onClick={() => switchViewMode('gauge')}
-              title={t('systemMonitor.showGaugeView')}
-              aria-label={t('systemMonitor.showGaugeView')}
-              aria-pressed={viewMode === 'gauge'}
-            >
-              <Gauge size={14} />
-            </button>
-            <button
-              type="button"
-              className={cn('system-monitor-view-toggle__button', viewMode === 'wave' && 'system-monitor-view-toggle__button--active')}
-              onClick={() => switchViewMode('wave')}
-              title={t('systemMonitor.showWaveView')}
-              aria-label={t('systemMonitor.showWaveView')}
-              aria-pressed={viewMode === 'wave'}
-            >
-              <ChartSpline size={14} />
-            </button>
-          </div>
-        </div>
-      </header>
-
       {error ? <div className="module-error">{t('systemMonitor.failedLoad', { message: error })}</div> : null}
 
       {viewMode === 'wave' ? (

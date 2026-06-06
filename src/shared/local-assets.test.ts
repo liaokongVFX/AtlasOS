@@ -19,6 +19,8 @@ describe('local asset URLs', () => {
 
   it('detects media MIME types from paths', () => {
     expect(mimeTypeForLocalAsset('photo.PNG')).toBe('image/png')
+    expect(mimeTypeForLocalAsset('chime.mp3')).toBe('audio/mpeg')
+    expect(mimeTypeForLocalAsset('chime.ogg')).toBe('audio/ogg')
     expect(mimeTypeForLocalAsset('clip.mp4')).toBe('video/mp4')
     expect(mimeTypeForLocalAsset('archive.bin')).toBe('application/octet-stream')
   })

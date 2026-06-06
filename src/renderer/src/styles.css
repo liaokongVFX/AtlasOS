@@ -591,16 +591,8 @@ svg {
   cursor: grab;
 }
 
-.canvas-board .react-flow__pane.selection {
-  cursor: default;
-}
-
 .canvas-board .react-flow__pane:active {
   cursor: grabbing;
-}
-
-.canvas-board .react-flow__pane.selection:active {
-  cursor: default;
 }
 
 .canvas-board .react-flow__node.dragging {
@@ -1808,36 +1800,6 @@ svg {
 
 .canvas-create-menu {
   min-width: 188px;
-  transform-origin: var(--radix-popover-content-transform-origin);
-  will-change: transform, opacity;
-}
-
-.canvas-create-menu[data-side="top"] {
-  --canvas-create-menu-enter-x: 0;
-  --canvas-create-menu-enter-y: 4px;
-}
-
-.canvas-create-menu[data-side="right"] {
-  --canvas-create-menu-enter-x: -4px;
-  --canvas-create-menu-enter-y: 0;
-}
-
-.canvas-create-menu[data-side="bottom"] {
-  --canvas-create-menu-enter-x: 0;
-  --canvas-create-menu-enter-y: -4px;
-}
-
-.canvas-create-menu[data-side="left"] {
-  --canvas-create-menu-enter-x: 4px;
-  --canvas-create-menu-enter-y: 0;
-}
-
-.canvas-create-menu[data-state="open"] {
-  animation: canvas-create-menu-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.canvas-create-menu[data-state="closed"] {
-  animation: canvas-create-menu-out 90ms ease-in;
 }
 
 .canvas-create-menu__item {
@@ -1850,37 +1812,6 @@ svg {
 
 .canvas-create-menu__item svg {
   color: var(--color-primary-hover);
-}
-
-@keyframes canvas-create-menu-in {
-  from {
-    opacity: 0;
-    transform: translate3d(var(--canvas-create-menu-enter-x, 0), var(--canvas-create-menu-enter-y, -4px), 0) scale(0.98);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-}
-
-@keyframes canvas-create-menu-out {
-  from {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-
-  to {
-    opacity: 0;
-    transform: translate3d(var(--canvas-create-menu-enter-x, 0), var(--canvas-create-menu-enter-y, -4px), 0) scale(0.98);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .canvas-create-menu[data-state="open"],
-  .canvas-create-menu[data-state="closed"] {
-    animation: none;
-  }
 }
 
 .node-finder-overlay {
@@ -2455,6 +2386,17 @@ svg {
   background: var(--browser-content-background);
 }
 
+.browser-webview {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--browser-content-background);
+}
+
+.canvas-board--viewport-interacting .browser-webview {
+  pointer-events: none !important;
+}
+
 .browser-snapshot {
   position: absolute;
   inset: var(--space-2);
@@ -2469,6 +2411,22 @@ svg {
 
 .note-module {
   grid-template-rows: 40px 1fr;
+}
+
+.component-node--selected .note-module {
+  cursor: default;
+}
+
+.component-node--selected .file-tree-module {
+  cursor: default;
+}
+
+.component-node--selected .markdown-editor .cm-scroller {
+  cursor: default;
+}
+
+.component-node--selected .markdown-editor .cm-content {
+  cursor: default;
 }
 
 .sketch-module {
@@ -2501,22 +2459,48 @@ svg {
 }
 
 .sketch-editor .excalidraw {
-  --color-primary-darker: var(--color-primary-focus);
-  --default-border-color: var(--color-hairline);
-  --island-bg-color: var(--color-surface-2);
-  --popup-bg-color: var(--color-surface-2);
-  --button-gray-1: var(--color-surface-1);
-  --button-gray-2: var(--color-surface-2);
-  --button-gray-3: var(--color-surface-3);
   width: 100%;
   height: 100%;
-  background: var(--color-canvas);
-  color-scheme: dark;
+  background: #f8f9fa;
+  color-scheme: light;
 }
 
 .sketch-editor .excalidraw .App {
   width: 100%;
   height: 100%;
+}
+
+.sketch-editor .excalidraw .SVGLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.sketch-editor .excalidraw .SVGLayer svg {
+  transform: translate(var(--sketch-excalidraw-svg-offset-x, 0), var(--sketch-excalidraw-svg-offset-y, 0));
+  transform-origin: top left;
+}
+
+.sketch-editor .excalidraw .App-menu__left {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.sketch-editor .excalidraw .App-menu__left::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sketch-editor .excalidraw .App-menu__left::-webkit-scrollbar-thumb {
+  border: 0;
+  background: var(--scrollbar-thumb);
+}
+
+.sketch-editor .excalidraw .App-menu__left::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+.sketch-editor .excalidraw .main-menu-trigger {
+  display: none;
 }
 
 .segmented {
@@ -3401,119 +3385,12 @@ svg {
 
 .system-monitor-module {
   container-type: inline-size;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   background: var(--color-canvas);
 }
 
 .system-monitor-module:has(.module-error) {
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.system-monitor-module--wave {
   grid-template-rows: auto minmax(0, 1fr);
-}
-
-.system-monitor-header {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  border-bottom: 1px solid var(--color-hairline);
-  padding: var(--space-3);
-  background: var(--color-surface-2);
-  box-shadow: var(--edge-highlight);
-}
-
-.system-monitor-module--wave .system-monitor-header {
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-2);
-  padding: 7px var(--space-2);
-  background: var(--color-surface-1);
-}
-
-.system-monitor-module--wave .system-monitor-header__icon,
-.system-monitor-module--wave .system-monitor-header strong {
-  display: none;
-}
-
-.system-monitor-module--wave .system-monitor-header__title span {
-  font-size: 10px;
-}
-
-.system-monitor-header__icon {
-  display: inline-grid;
-  place-items: center;
-  border: 1px solid rgb(130 143 255 / 30%);
-  border-radius: var(--radius-md);
-  background: var(--color-primary-softer);
-  color: var(--color-primary-hover);
-}
-
-.system-monitor-header__icon {
-  width: 32px;
-  height: 32px;
-}
-
-.system-monitor-header__title {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
-.system-monitor-header strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-ink);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.system-monitor-header__title span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-ink-subtle);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.system-monitor-header__actions {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.system-monitor-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 22px;
-  border: 1px solid var(--color-hairline);
-  border-radius: 9999px;
-  padding: 2px var(--space-2);
-  background: var(--color-surface-1);
-  color: var(--color-ink-muted);
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.system-monitor-live::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 9999px;
-  background: var(--color-primary-hover);
-  box-shadow: 0 0 0 3px rgb(94 106 210 / 16%);
 }
 
 .system-monitor-view-toggle {
@@ -3841,24 +3718,6 @@ svg {
 }
 
 @container (max-width: 500px) {
-  .system-monitor-header {
-    grid-template-columns: 32px minmax(0, 1fr);
-  }
-
-  .system-monitor-header__actions {
-    grid-column: 1 / -1;
-    justify-content: space-between;
-  }
-
-  .system-monitor-module--wave .system-monitor-header {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .system-monitor-module--wave .system-monitor-header__actions {
-    grid-column: auto;
-    justify-content: flex-end;
-  }
-
   .system-monitor-grid {
     grid-template-columns: 1fr;
   }
@@ -3883,7 +3742,7 @@ svg {
 
 .calendar-module {
   container-type: inline-size;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   background: var(--color-canvas);
 }
 
@@ -3893,119 +3752,8 @@ svg {
   padding: var(--space-4);
 }
 
-.calendar-header {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto 30px;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  border-bottom: 1px solid var(--color-hairline);
-  padding: var(--space-3);
-  background: var(--color-surface-2);
-  box-shadow: var(--edge-highlight);
-}
-
-.calendar-header__icon,
 .calendar-panel-label svg {
   color: var(--color-primary-hover);
-}
-
-.calendar-header__icon {
-  display: inline-grid;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  border: 1px solid rgb(130 143 255 / 30%);
-  border-radius: var(--radius-md);
-  background: var(--color-primary-softer);
-}
-
-.calendar-header div {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
-.calendar-header strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-ink);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.calendar-header div span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-ink-subtle);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.calendar-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 22px;
-  border: 1px solid var(--color-hairline);
-  border-radius: 9999px;
-  padding: 2px var(--space-2);
-  background: var(--color-surface-1);
-  color: var(--color-ink-muted);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.calendar-toggle {
-  display: inline-grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-1);
-  color: var(--color-ink-subtle);
-  cursor: pointer;
-  transition:
-    border-color 140ms ease,
-    background-color 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease;
-}
-
-.calendar-toggle:hover {
-  border-color: var(--color-hairline-strong);
-  background: var(--color-surface-3);
-  color: var(--color-ink);
-}
-
-.calendar-toggle:focus-visible {
-  outline: 0;
-  border-color: rgb(130 143 255 / 60%);
-  box-shadow: var(--focus-ring);
-}
-
-.calendar-toggle--compact {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
-  background: var(--color-surface-2);
-}
-
-.calendar-live::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 9999px;
-  background: var(--color-primary-hover);
-  box-shadow: 0 0 0 3px rgb(94 106 210 / 16%);
 }
 
 .calendar-body {
@@ -4083,7 +3831,7 @@ svg {
 }
 
 .calendar-compact-time {
-  max-width: calc(100% - 56px);
+  max-width: 100%;
   overflow: hidden;
   color: var(--color-ink);
   font-family: var(--font-mono);

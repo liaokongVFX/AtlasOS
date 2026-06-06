@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useState, type ReactNode } from 'react'
 import type { CanvasComponent } from '@shared/schema'
 import { I18nProvider, type Locale } from '../../i18n'
 import { CalendarComponent } from './calendar-component'
@@ -37,17 +38,25 @@ function formatShortTime(date: Date): string {
 }
 
 function renderCalendar(component = createComponent(), updateState = vi.fn(), locale: Locale = 'en-US') {
-  render(
-    <I18nProvider locale={locale}>
-      <CalendarComponent
-        canvasId="canvas-1"
-        component={component}
-        updateConfig={vi.fn()}
-        updateState={updateState}
-        setTitle={vi.fn()}
-      />
-    </I18nProvider>
-  )
+  function TestHost(): JSX.Element {
+    const [headerActions, setHeaderActions] = useState<ReactNode | null>(null)
+
+    return (
+      <I18nProvider locale={locale}>
+        <div data-testid="calendar-header-actions">{headerActions}</div>
+        <CalendarComponent
+          canvasId="canvas-1"
+          component={component}
+          updateConfig={vi.fn()}
+          updateState={updateState}
+          setTitle={vi.fn()}
+          setHeaderActions={setHeaderActions}
+        />
+      </I18nProvider>
+    )
+  }
+
+  render(<TestHost />)
 
   return updateState
 }
@@ -108,6 +117,7 @@ describe('CalendarComponent', () => {
 
     renderCalendar(createComponent(), vi.fn(), 'zh-CN')
 
+    expect(screen.queryByText('实时')).not.toBeInTheDocument()
     const dates = getGridDates()
     expect(dates).toHaveLength(35)
     expect(dates[0]).toBe('2026-06-01')
@@ -130,7 +140,10 @@ describe('CalendarComponent', () => {
     vi.setSystemTime(new Date(2026, 4, 27, 8, 9, 10))
     const updateState = renderCalendar()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse calendar' }))
+    const collapseButton = screen.getByRole('button', { name: 'Collapse calendar' })
+    expect(screen.getByTestId('calendar-header-actions')).toContainElement(collapseButton)
+
+    fireEvent.click(collapseButton)
 
     expect(updateState).toHaveBeenCalledWith({ compact: true }, true)
   })
@@ -142,11 +155,12 @@ describe('CalendarComponent', () => {
 
     expect(screen.getByText(formatTime(current))).toBeInTheDocument()
     expect(screen.getByText(formatShortTime(current))).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Expand calendar' })).toBeInTheDocument()
+    const expandButton = screen.getByRole('button', { name: 'Expand calendar' })
+    expect(screen.getByTestId('calendar-header-actions')).toContainElement(expandButton)
     expect(screen.queryByText('Current time')).not.toBeInTheDocument()
     expect(screen.queryByText('May 2026')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand calendar' }))
+    fireEvent.click(expandButton)
     expect(updateState).toHaveBeenCalledWith({ compact: false }, true)
   })
 })

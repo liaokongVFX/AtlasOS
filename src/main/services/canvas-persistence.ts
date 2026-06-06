@@ -8,22 +8,48 @@ import { translateShared } from '@shared/locale-text'
 
 const APP_STATE_FILE = 'app-state.json'
 const CANVASES_DIR = 'canvases'
+const JSON_WRITE_RETRY_DELAYS_MS = [10, 25, 50]
 
 function nowIso(): string {
   return new Date().toISOString()
 }
 
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`
   await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-  try {
-    await rename(tmpPath, filePath)
-  } catch (error) {
-    const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
-    if (code !== 'EEXIST' && code !== 'EPERM') throw error
 
-    await rm(filePath, { force: true })
-    await rename(tmpPath, filePath)
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(tmpPath, filePath)
+      return
+    } catch (error) {
+      const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
+      if (code !== 'EEXIST' && code !== 'EPERM') throw error
+
+      await rm(filePath, { force: true })
+      try {
+        await rename(tmpPath, filePath)
+        return
+      } catch (renameError) {
+        const renameCode = typeof renameError === 'object' && renameError !== null && 'code' in renameError ? renameError.code : undefined
+        const delay = JSON_WRITE_RETRY_DELAYS_MS[attempt]
+        if (delay === undefined || (renameCode !== 'EPERM' && renameCode !== 'ENOENT')) throw renameError
+        await new Promise((resolve) => setTimeout(resolve, delay))
+      }
+    }
+  }
+}
+
+const pendingJsonWrites = new Map<string, Promise<void>>()
+
+async function writeJsonQueued(filePath: string, write: () => Promise<void>): Promise<void> {
+  const previous = pendingJsonWrites.get(filePath) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(write)
+  pendingJsonWrites.set(filePath, next)
+  try {
+    await next
+  } finally {
+    if (pendingJsonWrites.get(filePath) === next) pendingJsonWrites.delete(filePath)
   }
 }
 
@@ -176,10 +202,11 @@ export class CanvasPersistence {
   }
 
   private async writeCanvas(canvas: CanvasDocument): Promise<void> {
-    await writeJsonAtomic(this.canvasPath(canvas.id), canvas)
+    const filePath = this.canvasPath(canvas.id)
+    await writeJsonQueued(filePath, () => writeJsonAtomic(filePath, canvas))
   }
 
   private async writeAppState(appState: AtlasAppState): Promise<void> {
-    await writeJsonAtomic(this.appStatePath, appStateSchema.parse(appState))
+    await writeJsonQueued(this.appStatePath, () => writeJsonAtomic(this.appStatePath, appStateSchema.parse(appState)))
   }
 }

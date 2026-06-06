@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 import { Bell, CheckCircle2, CircleAlert, MonitorDot, Trash2, X } from 'lucide-react'
-import { DEFAULT_PET_WINDOW_STATE, type PetAgentSession, type PetAlert, type PetRuntimeState } from '@shared/pet'
+import { DEFAULT_PET_WINDOW_STATE, petSettingsSchema, type PetAgentSession, type PetAlert, type PetRuntimeState } from '@shared/pet'
 
 const PANEL_CLOSE_DELAY_MS = 140
 
@@ -56,6 +56,21 @@ function isAttentionAlert(alert: PetAlert): boolean {
   return alert.kind === 'kanban_due' || alert.kind === 'agent_waiting' || alert.kind === 'agent_error' || alert.severity !== 'info'
 }
 
+function soundSrcForAlert(alert: PetAlert, alertSound: PetRuntimeState['settings']['alertSound']): string {
+  if (alert.kind === 'agent_completed' || alert.kind === 'agent_error') {
+    return alertSound.completionSrc || alertSound.askingSrc
+  }
+
+  return alertSound.askingSrc || alertSound.completionSrc
+}
+
+function normalizePetRuntimeState(state: PetRuntimeState): PetRuntimeState {
+  return {
+    ...state,
+    settings: petSettingsSchema.parse(state.settings)
+  }
+}
+
 function alertIcon(alert: PetAlert): JSX.Element {
   if (alert.severity === 'danger') return <CircleAlert size={15} />
   if (alert.kind === 'agent_completed') return <CheckCircle2 size={15} />
@@ -93,6 +108,8 @@ export function PetApp(): JSX.Element {
   const pointerInsideRef = useRef(false)
   const latestPositionRef = useRef({ x: 36, y: 120 })
   const positionRequestRef = useRef(0)
+  const seenAlertIdsRef = useRef<Set<string> | null>(null)
+  const alertSoundRef = useRef<HTMLAudioElement | null>(null)
 
   const clearCloseTimer = useCallback(() => {
     if (closeTimerRef.current === null) return
@@ -102,11 +119,13 @@ export function PetApp(): JSX.Element {
 
   useEffect(() => {
     void window.atlas.pet.getState().then((nextState) => {
+      nextState = normalizePetRuntimeState(nextState)
       latestPositionRef.current = nextState.settings.position
       setState(nextState)
     })
 
     return window.atlas.pet.onStateUpdated((nextState) => {
+      nextState = normalizePetRuntimeState(nextState)
       latestPositionRef.current = nextState.settings.position
       setState(nextState)
     })
@@ -115,6 +134,10 @@ export function PetApp(): JSX.Element {
   useEffect(() => {
     return () => clearCloseTimer()
   }, [clearCloseTimer])
+
+  useEffect(() => {
+    return () => alertSoundRef.current?.pause()
+  }, [])
 
   const alerts = useMemo(() => (state?.alerts ?? []).filter(isVisibleAlert), [state?.alerts])
   const agentSessions = useMemo(
@@ -158,6 +181,27 @@ export function PetApp(): JSX.Element {
       : mediaElement(state.settings.assetPack.idleSrc, state.settings.assetPack.idleKind, state.settings.assetPack.idleSprite, state.settings.assetPack.name)
     : null
   const motion = state?.settings.actionMap[presentationState]
+
+  useEffect(() => {
+    if (!state) return
+
+    const visibleAlertIds = new Set(alerts.map((alert) => alert.id))
+    const seenAlertIds = seenAlertIdsRef.current
+    seenAlertIdsRef.current = visibleAlertIds
+    if (!seenAlertIds) return
+    const newAlert = alerts.find((alert) => !seenAlertIds.has(alert.id))
+    if (!newAlert) return
+
+    const alertSound = state?.settings.alertSound
+    if (!alertSound?.enabled) return
+    const src = soundSrcForAlert(newAlert, alertSound)
+    if (!src) return
+
+    alertSoundRef.current?.pause()
+    const audio = new Audio(src)
+    alertSoundRef.current = audio
+    void audio.play().catch(() => undefined)
+  }, [alerts, state])
 
   const setInteractive = useCallback((interactive: boolean) => {
     void window.atlas.pet.setInteractive(interactive).catch(() => undefined)

@@ -18,7 +18,8 @@ const electronMocks = vi.hoisted(() => ({
   ownerContents: {
     send: vi.fn(),
     isDestroyed: vi.fn(() => false),
-    once: vi.fn()
+    once: vi.fn(),
+    removeListener: vi.fn()
   }
 }))
 
@@ -94,6 +95,7 @@ describe('PtyService hook bridge support', () => {
     electronMocks.ownerContents.send.mockReset()
     electronMocks.ownerContents.isDestroyed.mockReturnValue(false)
     electronMocks.ownerContents.once.mockReset()
+    electronMocks.ownerContents.removeListener.mockReset()
     electronMocks.webContentsFromId.mockReset()
     electronMocks.webContentsFromId.mockReturnValue(electronMocks.ownerContents)
     ptyMocks.spawn.mockClear()
@@ -331,6 +333,26 @@ describe('PtyService hook bridge support', () => {
     expect(ptyMocks.instances[0].resize).toHaveBeenCalledWith(100, 30)
 
     service.dispose()
+  })
+
+  it('uses one owner destroyed listener for multiple PTY sessions in the same WebContents', async () => {
+    const service = new PtyService()
+    service.registerIpc()
+
+    const create = ipcHandler('terminal:create')
+    for (let index = 0; index < 11; index += 1) {
+      await create(
+        { sender: { id: 7 } },
+        { componentId: `terminal-${index}`, canvasId: 'canvas-1', title: 'Terminal', cols: 80, rows: 24 }
+      )
+    }
+
+    expect(electronMocks.ownerContents.once).toHaveBeenCalledTimes(1)
+
+    const destroyedListener = electronMocks.ownerContents.once.mock.calls[0][1]
+    service.dispose()
+
+    expect(electronMocks.ownerContents.removeListener).toHaveBeenCalledWith('destroyed', destroyedListener)
   })
 
   it('auto-confirms Claude workspace trust prompts only for restored agent terminals', async () => {

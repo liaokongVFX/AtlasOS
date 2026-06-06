@@ -3,8 +3,9 @@ import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types'
 import type { AppState, BinaryFiles, ExcalidrawInitialDataState } from '@excalidraw/excalidraw/types'
 
 export const SKETCH_SCENE_SCHEMA_VERSION = 1
-export const SKETCH_VIEW_BACKGROUND = '#010102'
-export const SKETCH_THEME = 'dark'
+export const SKETCH_VIEW_BACKGROUND = '#f8f9fa'
+export const SKETCH_THEME = 'light'
+export const SKETCH_DEFAULT_STROKE_COLOR = '#1e1e1e'
 
 const RUNTIME_APP_STATE_KEYS = new Set([
   'activeEmbeddable',
@@ -104,6 +105,9 @@ export function sanitizeSketchAppState(appState: unknown): Partial<AppState> {
 
   nextAppState.theme = SKETCH_THEME
   nextAppState.viewBackgroundColor = SKETCH_VIEW_BACKGROUND
+  if (typeof nextAppState.currentItemStrokeColor !== 'string') {
+    nextAppState.currentItemStrokeColor = SKETCH_DEFAULT_STROKE_COLOR
+  }
 
   return nextAppState as Partial<AppState>
 }
@@ -147,7 +151,8 @@ export function sketchSceneToInitialData(scene: SketchScene): ExcalidrawInitialD
     appState: {
       ...scene.appState,
       theme: SKETCH_THEME,
-      viewBackgroundColor: SKETCH_VIEW_BACKGROUND
+      viewBackgroundColor: SKETCH_VIEW_BACKGROUND,
+      currentItemStrokeColor: typeof scene.appState.currentItemStrokeColor === 'string' ? scene.appState.currentItemStrokeColor : SKETCH_DEFAULT_STROKE_COLOR
     },
     files: scene.files
   }

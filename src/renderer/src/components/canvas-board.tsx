@@ -1081,6 +1081,7 @@ export function CanvasBoard(): JSX.Element {
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
   const [pendingDeleteGroupIds, setPendingDeleteGroupIds] = useState<string[] | null>(null)
   const [isFileDragActive, setIsFileDragActive] = useState(false)
+  const [isViewportInteracting, setIsViewportInteracting] = useState(false)
   const [draggingNodeIds, setDraggingNodeIds] = useState<Set<string>>(() => new Set())
   const createMenuAnchorRef = useRef<Measurable>(createPointAnchor(0, 0))
   const canvasBoardRef = useRef<HTMLElement | null>(null)
@@ -1123,6 +1124,7 @@ export function CanvasBoard(): JSX.Element {
     if (!viewportInteractionActiveRef.current) return
 
     viewportInteractionActiveRef.current = false
+    setIsViewportInteracting(false)
     endCanvasInteraction()
   }, [endCanvasInteraction])
 
@@ -1371,6 +1373,7 @@ export function CanvasBoard(): JSX.Element {
 
   useEffect(() => {
     setIsNodeFinderOpen(false)
+    setIsViewportInteracting(false)
     setDraggingNodeIds((currentIds) => (currentIds.size === 0 ? currentIds : new Set()))
     lastPaneActivationRef.current = null
     dragDuplicateStateRef.current = null
@@ -1647,19 +1650,20 @@ export function CanvasBoard(): JSX.Element {
     closeCreateMenu()
     if (!viewportInteractionActiveRef.current) {
       viewportInteractionActiveRef.current = true
+      setIsViewportInteracting(true)
       beginCanvasInteraction()
     }
-    notifyCanvasViewportSync(viewport)
+    notifyCanvasViewportSync({ ...viewport, phase: 'start' })
   }, [beginCanvasInteraction, closeCreateMenu])
 
   const onMove: OnMove = useCallback((_, viewport) => {
-    notifyCanvasViewportSync(viewport)
+    notifyCanvasViewportSync({ ...viewport, phase: 'move' })
   }, [])
 
   const onMoveEnd: OnMoveEnd = useCallback(
     (_, viewport) => {
       if (!activeCanvasId) {
-        notifyCanvasViewportSync(viewport)
+        notifyCanvasViewportSync({ ...viewport, phase: 'end' })
         finishViewportInteraction()
         return
       }
@@ -1675,7 +1679,7 @@ export function CanvasBoard(): JSX.Element {
         })
       }
 
-      notifyCanvasViewportSync(viewport)
+      notifyCanvasViewportSync({ ...viewport, phase: 'end' })
       finishViewportInteraction()
     },
     [activeCanvasId, canvas, finishViewportInteraction, updateCanvas]
@@ -1837,7 +1841,8 @@ export function CanvasBoard(): JSX.Element {
       ref={canvasBoardRef}
       className={[
         'canvas-board',
-        isFileDragActive ? 'canvas-board--file-drag-active' : ''
+        isFileDragActive ? 'canvas-board--file-drag-active' : '',
+        isViewportInteracting ? 'canvas-board--viewport-interacting' : ''
       ]
         .filter(Boolean)
         .join(' ')}

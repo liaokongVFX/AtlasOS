@@ -94,16 +94,21 @@
   "build": {
     "appId": "dev.atlasos.workbench",
     "productName": "AtlasOS",
+    "icon": "build/icon.png",
     "directories": {
       "output": "release"
     },
     "files": [
       "out/**/*",
+      "build/icon.png",
+      "build/icon-16.png",
+      "build/icon-32.png",
       "package.json"
     ],
     "npmRebuild": true,
     "win": {
       "target": "nsis",
+      "icon": "build/icon.ico",
       "publish": [
         {
           "provider": "github",

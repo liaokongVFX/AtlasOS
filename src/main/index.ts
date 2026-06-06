@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { app, BrowserWindow, Menu, nativeImage, session, shell, Tray, type NativeImage } from 'electron'
 import { DEFAULT_LOCALE, type Locale } from '@shared/constants'
 import { translateShared } from '@shared/locale-text'
@@ -37,17 +37,12 @@ let isQuitting = false
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL)
 const forceSoftwareRendering = process.env.ATLAS_FORCE_SOFTWARE_RENDERING === '1'
-const trayIcon16 =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAABgklEQVR4nGNgYGBg4BUQ9+EREDvFKyj2k1dQ/D9+LPYTolbcmwGmmZegJuyYh18sgIFHUOw0LgWyimpgjNMAAbGTDPic3dHd/7+9qw+fd34w4JJUUNX6/+bdh//vPnz6r6yui9MQBlwSU6bN+v/j1x8wnjx1JmkGaOoa///4+dv/w0dP/D905Pj/T1++/9fWNyXegPkLl4JtDs8s+R+UUgBmz1u4hDgDjEyt/3/9/vP/+4+f/zuuuP7fcfm1/6/evAOLgeQIGrBy7QawjYdf/v7vefgnGIPYILEVa9bjN8Da3vn/958QxdGHP/+fdO7l/4lnX/6POvz5//dff8ByIDU4Ddi6fTdY89xjt/6brHn0n09c4T+/mNx/49UP/s8/cQcst2XbLnQDxMAJycXDF6wAZJP9yhv/5aPK4Irko8v/26++DZYDqfHwCUAkJPSkLKJj/d94+Z3//GKycDEQGyQGksOSlMW9MaJHSBIzyrCJCUp4QXKkoLg3yDQSsvNJmGYAUm6m7l8hypkAAAAASUVORK5CYII='
-const trayIcon32 =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAADX0lEQVR4nMVXbUhTYRTe/92ld7q908zK/EoJM9BphSiEECmBH334URklJa36kTSUqLSi+lEEBUWl9AFBPwytJE3DLNEsnc2K8lucTi3Tbc7NDzzxvtOr1zvZvG72woG795zzPM8573b3HoFg3hIKkVREo0siGqkoV+moiEbgCMNYFI0aRTTKxxwCa4sSy5IpV6R3FOniYpCeEsuSOOQiGk07m3yeTTMihEIkXYnKrXRCR1EyiWDmzOE/WR4W0MQXYNfuRGK8u0CjRgHligx8AWpq66G2vgFWiWV8j0GPO8AreW/KQTBPTBHbs/8A7y4I+CS5uHnAF5WaEaBSfyd7KyYg42gWQz5rh44cXxkBYqkX/Gxp4whoaesAN+TlfAGK09kc8lk7ceqMcwVIZN7Q0d3DEH6oqYPqj7XM564eDUg91zlPgDL3Aqvi1PTDkLwvnbV3Nue8cwTIvHxA09vPELV1dAEtWU3eAU3NP5j9Pu0geHr7Ol5A3uVrrEqzlefA59hVYplZJ1m+/CvXHStgre9G+D00zBD8+TsCG+IyIKLSTGxNbCq0d3Yz/qFhHaz3D3acgBu3brMqbG3vhPjSXkZAXGkfNH2bOwZsOMchAvwCQ2BYZ2CBV/ZPEuKt7yyGn/He/JgRgxECgjYvX8C9B4UsYNPEFKTVWUhz1eOQox4nzyl1ZhgbZ78X7t4vWJ6A4JAw0I+aWKBl2rnqf41MQqtuErbNdKFcy+6CwWiCTaFy/gKePnvOAsQVJlbpCJmiegA+fVYRU1QPkr2E93pOFzAGLwHhkVEwZp5ggd2paSNE8rdGcA+OZGLdguQgLx8lvsJGDVu0eQIit8csXcCLktec6qOKughJQO5jTnxg7hPiiy7WgHFBF4qKXy1NQFRMLJjG2edZ8FVrqb7MAOLAME6O2H8L8eGYR80DnD+q6B07rQugrNyIyyuqONVHl2gIuL/y4aLVBCgLLF14qeV0AWNauxkL8BRk66fiFZ9JgMPf6EHsF7poHPbhGByLc+y6lIpolG8r0DM2DSIqxsBXcdMmKI7BsTjHVqyIRhftHkxcPHzsAbQ7lqLRCEV5uM+OZkkrPpq5SBIWzodJ+EvhbHJS+UJyRgQlk+BxiaKlDcsZWDikrsiAMfGZM22fWf8AlzWh1rEzJ7YAAAAASUVORK5CYII='
+const atlasLogoPath = join(__dirname, '../../build/icon.png')
+const atlasLogo16Path = join(__dirname, '../../build/icon-16.png')
+const atlasLogo32Path = join(__dirname, '../../build/icon-32.png')
 
 function isBrowserNavigableUrl(url: string): boolean {
   return /^https?:\/\//i.test(url)
-}
-
-function isBrowserWebviewAttachUrl(url: string): boolean {
-  return url === 'about:blank' || isBrowserNavigableUrl(url)
 }
 
 function isExternalProtocolUrl(url: string): boolean {
@@ -114,9 +109,13 @@ function configureAppRuntime(): void {
   }
 }
 
+function pngDataUrlFromPath(filePath: string): string {
+  return `data:image/png;base64,${readFileSync(filePath).toString('base64')}`
+}
+
 function createTrayIcon(): NativeImage {
-  const icon = nativeImage.createFromDataURL(trayIcon16)
-  icon.addRepresentation({ scaleFactor: 2, dataURL: trayIcon32 })
+  const icon = nativeImage.createFromPath(atlasLogo16Path)
+  icon.addRepresentation({ scaleFactor: 2, dataURL: pngDataUrlFromPath(atlasLogo32Path) })
   if (process.platform === 'darwin') icon.setTemplateImage(true)
   return icon
 }
@@ -265,6 +264,7 @@ function createUpdateWindow(): BrowserWindow {
     minimizable: false,
     frame: false,
     title: 'AtlasOS Update',
+    icon: atlasLogoPath,
     backgroundColor: '#010102',
     show: false,
     webPreferences: {
@@ -313,6 +313,7 @@ async function createWindow(): Promise<void> {
     minWidth: 1100,
     minHeight: 720,
     title: 'AtlasOS',
+    icon: atlasLogoPath,
     backgroundColor: '#0d1117',
     show: false,
     webPreferences: {
@@ -329,7 +330,7 @@ async function createWindow(): Promise<void> {
     const src = params.src ?? ''
     const partition = params.partition ?? ''
 
-    if (!isBrowserWebviewAttachUrl(src) || !partition.startsWith('persist:atlas-browser-')) {
+    if (!isBrowserNavigableUrl(src) || !partition.startsWith('persist:atlas-browser-')) {
       event.preventDefault()
       return
     }

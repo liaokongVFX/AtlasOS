@@ -11,8 +11,6 @@ import {
   browserTypeInputSchema
 } from '@shared/ipc'
 import {
-  BROWSER_NATIVE_ZOOM_MAX_FACTOR,
-  BROWSER_NATIVE_ZOOM_MIN_FACTOR,
   BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL,
   BROWSER_ZOOM_DEFAULT_FACTOR,
   BROWSER_ZOOM_MAX_FACTOR,
@@ -26,7 +24,6 @@ type BrowserTab = {
   id: string
   componentId: string
   container: View
-  interactive: boolean
   loadSequence: number
   view: WebContentsView
   visible: boolean
@@ -59,16 +56,8 @@ function clampZoomFactor(value: number): number {
   return Math.min(Math.max(value, BROWSER_ZOOM_MIN_FACTOR), BROWSER_ZOOM_MAX_FACTOR)
 }
 
-function clampNativeZoomFactor(value: number): number {
-  return Math.min(Math.max(value, BROWSER_NATIVE_ZOOM_MIN_FACTOR), BROWSER_NATIVE_ZOOM_MAX_FACTOR)
-}
-
 function normalizeCommittedZoomFactor(value: number): number {
   return Math.round(clampZoomFactor(value) * 100) / 100
-}
-
-function normalizeNativeZoomFactor(value: number): number {
-  return Math.round(clampNativeZoomFactor(value) * 1000) / 1000
 }
 
 function nextZoomFactor(current: number, direction: -1 | 1): number {
@@ -128,20 +117,13 @@ export class BrowserService {
       view.webContents.on('did-navigate-in-page', (_, url) => this.emitUpdate(tabId, { url }))
       view.webContents.on('did-finish-load', () => this.emitUpdate(tabId, { isLoading: false }))
       view.webContents.on('did-start-loading', () => this.emitUpdate(tabId, { isLoading: true }))
-      view.webContents.on('before-mouse-event', (event, mouse) => {
-        const tab = this.tabs.get(tabId)
-        if (!tab || tab.interactive) return
-
-        event.preventDefault()
-        if (mouse.type === 'mouseDown') this.emitContentInteractionRequested({ componentId: tab.componentId })
-      })
 
       container.addChildView(view)
       this.window.contentView.addChildView(container)
       container.setVisible(false)
       container.setBounds(HIDDEN_BOUNDS)
       view.setBounds(HIDDEN_BOUNDS)
-      const tab = { id: tabId, componentId: input.componentId, container, interactive: false, loadSequence: 0, view, visible: false }
+      const tab = { id: tabId, componentId: input.componentId, container, loadSequence: 0, view, visible: false }
       this.tabs.set(tabId, tab)
       this.loadTabUrl(tab, input.url)
       return { tabId, partition, url: input.url }
@@ -150,7 +132,7 @@ export class BrowserService {
     handleValidated('browser:set-bounds', browserBoundsInputSchema, (_, input) => {
       const tab = this.tabs.get(input.tabId)
       if (!tab) return { ok: false }
-      this.setTabBounds(tab, input.visible, input.bounds, input.contentBounds ?? input.bounds, input.interactive)
+      this.setTabBounds(tab, input.visible, input.bounds, input.contentBounds ?? input.bounds)
       return { ok: true }
     })
 
@@ -183,7 +165,7 @@ export class BrowserService {
     })
 
     handleValidated('browser:set-zoom', browserSetZoomInputSchema, (_, input) => {
-      this.setTabZoom(this.getTab(input.tabId), input.zoomFactor, input.emitUpdate)
+      this.setTabZoom(this.getTab(input.tabId), input.zoomFactor)
       return { ok: true }
     })
 
@@ -328,7 +310,7 @@ export class BrowserService {
 
     const tab = this.tabForWebContents(webContents)
     if (tab) {
-      this.emitTabZoomRequested({ tabId: tab.id, direction })
+      this.setTabZoom(tab, nextZoomFactor(this.getCurrentZoomFactor(tab.view.webContents), direction))
       return
     }
 
@@ -344,7 +326,7 @@ export class BrowserService {
   }
 
   private setWebContentsZoom(webContents: WebContents, value: number): number | null {
-    const zoomFactor = normalizeNativeZoomFactor(value)
+    const zoomFactor = normalizeCommittedZoomFactor(value)
 
     try {
       webContents.setZoomFactor(zoomFactor)
@@ -355,17 +337,16 @@ export class BrowserService {
     return zoomFactor
   }
 
-  private setTabZoom(tab: BrowserTab, value: number, emitUpdate = true): void {
+  private setTabZoom(tab: BrowserTab, value: number): void {
     const zoomFactor = this.setWebContentsZoom(tab.view.webContents, value)
     if (zoomFactor === null) return
 
-    if (emitUpdate) this.emitUpdate(tab.id, { zoomFactor })
+    this.emitUpdate(tab.id, { zoomFactor })
   }
 
-  private setTabBounds(tab: BrowserTab, visible: boolean, containerBounds: BrowserBounds, contentBounds: BrowserBounds, interactive = true): void {
+  private setTabBounds(tab: BrowserTab, visible: boolean, containerBounds: BrowserBounds, contentBounds: BrowserBounds): void {
     if (!visible) {
       tab.visible = false
-      tab.interactive = false
       tab.view.setVisible(false)
       tab.view.setBounds(HIDDEN_BOUNDS)
       tab.container.setVisible(false)
@@ -374,7 +355,6 @@ export class BrowserService {
     }
 
     tab.visible = true
-    tab.interactive = interactive
     tab.container.setBounds(containerBounds)
     tab.view.setBounds(childBoundsForClippedContainer(containerBounds, contentBounds))
     tab.view.setVisible(true)
@@ -405,24 +385,6 @@ export class BrowserService {
     const webContents = this.window.webContents
     if (!webContents.isDestroyed()) {
       webContents.send('browser:open-tab-requested', payload)
-    }
-  }
-
-  private emitContentInteractionRequested(payload: { componentId: string }): void {
-    if (this.window.isDestroyed()) return
-
-    const webContents = this.window.webContents
-    if (!webContents.isDestroyed()) {
-      webContents.send('browser:content-interaction-requested', payload)
-    }
-  }
-
-  private emitTabZoomRequested(payload: { tabId: string; direction: -1 | 1 }): void {
-    if (this.window.isDestroyed()) return
-
-    const webContents = this.window.webContents
-    if (!webContents.isDestroyed()) {
-      webContents.send('browser:tab-zoom-requested', payload)
     }
   }
 }

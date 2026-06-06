@@ -23,8 +23,20 @@ import { handleValidated } from './ipc-helpers'
 const FILESYSTEM_SCAN_DEPTH = 64
 const FILESYSTEM_WATCH_DEPTH = 0
 
+type WatcherRecord = {
+  watcher: FSWatcher
+  ownerId: number
+}
+
+type OwnerWatcherCleanup = {
+  watchIds: Set<string>
+  webContents: WebContents
+  destroyedListener: () => void
+}
+
 export class FileSystemService {
-  private readonly watchers = new Map<string, FSWatcher>()
+  private readonly watchers = new Map<string, WatcherRecord>()
+  private readonly ownerCleanupById = new Map<number, OwnerWatcherCleanup>()
 
   registerIpc(): void {
     handleValidated('filesystem:choose-directory', chooseDirectoryInputSchema, async (_, input) => {
@@ -118,10 +130,9 @@ export class FileSystemService {
   }
 
   dispose(): void {
-    for (const watcher of this.watchers.values()) {
-      void watcher.close()
+    for (const watchId of [...this.watchers.keys()]) {
+      void this.closeWatch(watchId)
     }
-    this.watchers.clear()
   }
 
   private watch(webContents: WebContents, rootPathInput: string, targetPathInput: string): { watchId: string } {
@@ -139,22 +150,64 @@ export class FileSystemService {
       }
     })
 
-    webContents.once('destroyed', () => {
-      void watcher.close()
-      this.watchers.delete(watchId)
-    })
-
-    this.watchers.set(watchId, watcher)
+    this.watchers.set(watchId, { watcher, ownerId: webContents.id })
+    this.trackOwnerWatch(webContents, watchId)
     return { watchId }
   }
 
   private async unwatch(watchId: string): Promise<{ ok: true }> {
-    const watcher = this.watchers.get(watchId)
-    if (watcher) {
-      await watcher.close()
-      this.watchers.delete(watchId)
-    }
+    await this.closeWatch(watchId)
     return { ok: true }
+  }
+
+  private closeWatch(watchId: string): Promise<void> {
+    const record = this.watchers.get(watchId)
+    if (!record) return Promise.resolve()
+
+    this.watchers.delete(watchId)
+    this.untrackOwnerWatch(record.ownerId, watchId)
+    return record.watcher.close()
+  }
+
+  private trackOwnerWatch(webContents: WebContents, watchId: string): void {
+    const ownerId = webContents.id
+    const existing = this.ownerCleanupById.get(ownerId)
+    if (existing) {
+      existing.watchIds.add(watchId)
+      return
+    }
+
+    const cleanup: OwnerWatcherCleanup = {
+      watchIds: new Set([watchId]),
+      webContents,
+      destroyedListener: () => {
+        void this.closeWatchesByOwner(ownerId)
+      }
+    }
+    this.ownerCleanupById.set(ownerId, cleanup)
+    webContents.once('destroyed', cleanup.destroyedListener)
+  }
+
+  private untrackOwnerWatch(ownerId: number, watchId: string): void {
+    const cleanup = this.ownerCleanupById.get(ownerId)
+    if (!cleanup) return
+
+    cleanup.watchIds.delete(watchId)
+    if (cleanup.watchIds.size > 0) return
+
+    this.ownerCleanupById.delete(ownerId)
+    if (!cleanup.webContents.isDestroyed()) {
+      cleanup.webContents.removeListener('destroyed', cleanup.destroyedListener)
+    }
+  }
+
+  private async closeWatchesByOwner(ownerId: number): Promise<void> {
+    const cleanup = this.ownerCleanupById.get(ownerId)
+    if (!cleanup) return
+
+    for (const watchId of [...cleanup.watchIds]) {
+      await this.closeWatch(watchId)
+    }
   }
 
   private async readTree(rootPath: string, targetPath: string, maxDepth: number): Promise<FileEntry> {

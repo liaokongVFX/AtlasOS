@@ -79,8 +79,10 @@ describe('FileSystemService', () => {
 
     const watchHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'filesystem:watch')?.[1]
     const webContents = {
+      id: 7,
       isDestroyed: vi.fn(() => false),
       once: vi.fn(),
+      removeListener: vi.fn(),
       send: vi.fn()
     }
     const result = await watchHandler({ sender: webContents }, { rootPath: testRoot, targetPath })
@@ -90,5 +92,38 @@ describe('FileSystemService', () => {
       ignoreInitial: true,
       depth: 0
     })
+  })
+
+  it('uses one owner destroyed listener for multiple filesystem watches in the same WebContents', async () => {
+    const targetPath = join(testRoot, 'src')
+    await mkdir(targetPath)
+
+    const service = new FileSystemService()
+    service.registerIpc()
+
+    const watchHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'filesystem:watch')?.[1]
+    const unwatchHandler = electronMocks.ipcHandle.mock.calls.find(([channel]) => channel === 'filesystem:unwatch')?.[1]
+    const webContents = {
+      id: 7,
+      isDestroyed: vi.fn(() => false),
+      once: vi.fn(),
+      removeListener: vi.fn(),
+      send: vi.fn()
+    }
+    const watchIds: string[] = []
+
+    for (let index = 0; index < 11; index += 1) {
+      const result = await watchHandler({ sender: webContents }, { rootPath: testRoot, targetPath })
+      watchIds.push(result.watchId)
+    }
+
+    expect(webContents.once).toHaveBeenCalledTimes(1)
+
+    const destroyedListener = webContents.once.mock.calls[0][1]
+    for (const watchId of watchIds) {
+      await unwatchHandler({}, { watchId })
+    }
+
+    expect(webContents.removeListener).toHaveBeenCalledWith('destroyed', destroyedListener)
   })
 })

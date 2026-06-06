@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useState, type ReactNode } from 'react'
 import type { CanvasComponent } from '@shared/schema'
 import { I18nProvider } from '../../i18n'
 import { SystemMonitorComponent } from './system-monitor-component'
@@ -26,17 +27,25 @@ function createComponent(state: Record<string, unknown> = {}): CanvasComponent {
 }
 
 function renderSystemMonitor(component = createComponent(), updateState = vi.fn()) {
-  render(
-    <I18nProvider locale="en-US">
-      <SystemMonitorComponent
-        canvasId="canvas-1"
-        component={component}
-        updateConfig={vi.fn()}
-        updateState={updateState}
-        setTitle={vi.fn()}
-      />
-    </I18nProvider>
-  )
+  function TestHost(): JSX.Element {
+    const [headerActions, setHeaderActions] = useState<ReactNode | null>(null)
+
+    return (
+      <I18nProvider locale="en-US">
+        <div data-testid="system-monitor-header-actions">{headerActions}</div>
+        <SystemMonitorComponent
+          canvasId="canvas-1"
+          component={component}
+          updateConfig={vi.fn()}
+          updateState={updateState}
+          setTitle={vi.fn()}
+          setHeaderActions={setHeaderActions}
+        />
+      </I18nProvider>
+    )
+  }
+
+  render(<TestHost />)
 
   return updateState
 }
@@ -72,7 +81,10 @@ describe('SystemMonitorComponent', () => {
     expect(await screen.findByText('42%')).toBeInTheDocument()
     expect(screen.getByText('68%')).toBeInTheDocument()
     expect(screen.getByText('8 GB / 16 GB')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Show wave chart' })).toHaveAttribute('aria-pressed', 'false')
+    const waveButton = screen.getByRole('button', { name: 'Show wave chart' })
+    expect(screen.getByTestId('system-monitor-header-actions')).toContainElement(waveButton)
+    expect(waveButton).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByText('Live')).not.toBeInTheDocument()
     expect(systemMetricsApi.get).toHaveBeenCalledTimes(1)
   })
 

@@ -12,11 +12,6 @@ import type { GitBranchSummary, GitCommitSummary, GitDiffResult, GitOperationRes
 
 type Listener<T> = (payload: T) => void
 
-type IpcChannelListenerEntry = {
-  subscriptions: Set<{ listener: Listener<unknown> }>
-  wrapped: (_event: Electron.IpcRendererEvent, payload: unknown) => void
-}
-
 type OpenSettingsRequest = {
   sectionId?: string
 }
@@ -41,37 +36,10 @@ type NativeClipboardFilesResult = {
   formats: string[]
 }
 
-const ipcChannelListeners = new Map<string, IpcChannelListenerEntry>()
-
 function on<T>(channel: string, listener: Listener<T>): () => void {
-  let entry = ipcChannelListeners.get(channel)
-  if (!entry) {
-    const subscriptions: IpcChannelListenerEntry['subscriptions'] = new Set()
-    entry = {
-      subscriptions,
-      wrapped: (_event, payload) => {
-        for (const subscription of [...subscriptions]) {
-          subscription.listener(payload)
-        }
-      }
-    }
-    ipcChannelListeners.set(channel, entry)
-    ipcRenderer.on(channel, entry.wrapped)
-  }
-
-  const subscription = { listener: listener as Listener<unknown> }
-  entry.subscriptions.add(subscription)
-
-  return () => {
-    const current = ipcChannelListeners.get(channel)
-    if (!current) return
-
-    current.subscriptions.delete(subscription)
-    if (current.subscriptions.size > 0) return
-
-    ipcRenderer.removeListener(channel, current.wrapped)
-    ipcChannelListeners.delete(channel)
-  }
+  const wrapped = (_event: Electron.IpcRendererEvent, payload: T) => listener(payload)
+  ipcRenderer.on(channel, wrapped)
+  return () => ipcRenderer.removeListener(channel, wrapped)
 }
 
 const atlasApi = {
@@ -224,7 +192,6 @@ const atlasApi = {
     setBounds: (input: {
       tabId: string
       visible: boolean
-      interactive?: boolean
       bounds: { x: number; y: number; width: number; height: number }
       contentBounds?: { x: number; y: number; width: number; height: number }
     }) => ipcRenderer.invoke('browser:set-bounds', input),
@@ -234,8 +201,7 @@ const atlasApi = {
     reload: (tabId: string) => ipcRenderer.invoke('browser:reload', { tabId }),
     devtools: (tabId: string) => ipcRenderer.invoke('browser:devtools', { tabId }),
     capture: (tabId: string) => ipcRenderer.invoke('browser:capture', { tabId }) as Promise<string>,
-    setZoom: (tabId: string, zoomFactor: number, options: { emitUpdate?: boolean } = {}) =>
-      ipcRenderer.invoke('browser:set-zoom', { ...options, tabId, zoomFactor }),
+    setZoom: (tabId: string, zoomFactor: number) => ipcRenderer.invoke('browser:set-zoom', { tabId, zoomFactor }),
     queryText: (tabId: string, selector: string) => ipcRenderer.invoke('browser:query-text', { tabId, selector }),
     click: (tabId: string, selector: string) => ipcRenderer.invoke('browser:click', { tabId, selector }),
     type: (tabId: string, selector: string, text: string) => ipcRenderer.invoke('browser:type', { tabId, selector, text }),
@@ -243,8 +209,6 @@ const atlasApi = {
     onTabUpdated: (listener: Listener<{ tabId: string; patch: Record<string, unknown> }>) => on('browser:tab-updated', listener),
     onOpenTabRequested: (listener: Listener<{ componentId: string; sourceTabId: string; url: string }>) =>
       on('browser:open-tab-requested', listener),
-    onContentInteractionRequested: (listener: Listener<{ componentId: string }>) => on('browser:content-interaction-requested', listener),
-    onTabZoomRequested: (listener: Listener<{ tabId: string; direction: -1 | 1 }>) => on('browser:tab-zoom-requested', listener),
     onWebviewOpenTabRequested: (listener: Listener<{ sourceWebContentsId: number; url: string }>) =>
       on('browser:webview-open-tab-requested', listener),
     onWebviewZoomUpdated: (listener: Listener<{ sourceWebContentsId: number; zoomFactor: number }>) =>

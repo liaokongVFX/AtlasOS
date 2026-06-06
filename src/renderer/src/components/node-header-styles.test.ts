@@ -20,4 +20,13 @@ describe('node header styles', () => {
     expect(styleRule(css, '.canvas-group-node__header:active')).toContain('cursor: grabbing;')
     expect(styleRule(css, '.canvas-group-node__header span')).toContain('cursor: inherit;')
   })
+
+  it('uses the default cursor for selected document and file tree bodies', () => {
+    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
+
+    expect(styleRule(css, '.component-node--selected .note-module')).toContain('cursor: default;')
+    expect(styleRule(css, '.component-node--selected .file-tree-module')).toContain('cursor: default;')
+    expect(styleRule(css, '.component-node--selected .markdown-editor .cm-scroller')).toContain('cursor: default;')
+    expect(styleRule(css, '.component-node--selected .markdown-editor .cm-content')).toContain('cursor: default;')
+  })
 })

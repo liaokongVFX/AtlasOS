@@ -58,6 +58,11 @@ type AgentProviderSessionContext = {
   cwd?: string
 }
 
+type OwnerSessionCleanup = {
+  sessionIds: Set<string>
+  destroyedListener: () => void
+}
+
 type PtyServiceOptions = {
   getAgentHookEnvironment?: (context: AgentHookEnvironmentContext) => Record<string, string>
   onAgentCommandStarted?: (context: AgentCommandStartedContext) => void | Promise<void>
@@ -183,6 +188,7 @@ function terminalBaseEnvironment(): NodeJS.ProcessEnv {
 export class PtyService {
   private readonly sessionsById = new Map<string, TerminalSession>()
   private readonly sessionsByComponentId = new Map<string, TerminalSession>()
+  private readonly ownerCleanupById = new Map<number, OwnerSessionCleanup>()
   private cleanupStarted = false
 
   constructor(private readonly options: PtyServiceOptions = {}) {}
@@ -281,6 +287,7 @@ export class PtyService {
   ): { sessionId: string; cwd: string; shell: string; didRunInitialCommand?: boolean } {
     const existing = this.sessionsByComponentId.get(componentId)
     if (existing) {
+      const previousOwnerId = existing.ownerId
       try {
         existing.pty.resize(cols, rows)
       } catch (error) {
@@ -288,6 +295,10 @@ export class PtyService {
       }
 
       existing.ownerId = ownerId
+      if (previousOwnerId !== ownerId) {
+        this.untrackOwnerSession(previousOwnerId, existing.id)
+        this.trackOwnerSession(ownerId, existing.id)
+      }
       existing.canvasId = canvasId ?? existing.canvasId
       existing.title = title ?? existing.title
       if (autoConfirmWorkspaceTrust) {
@@ -336,6 +347,7 @@ export class PtyService {
 
     this.sessionsById.set(sessionId, session)
     this.sessionsByComponentId.set(componentId, session)
+    this.trackOwnerSession(ownerId, sessionId)
 
     term.onData((data) => {
       this.updateCwdFromOutput(sessionId, data)
@@ -348,7 +360,6 @@ export class PtyService {
       this.sendToOwner(session.ownerId, 'terminal:exit', { sessionId, ...exit })
     })
 
-    webContents.fromId(ownerId)?.once('destroyed', () => this.closeByOwner(ownerId))
     let didRunInitialCommand = false
     if (initialCommand) {
       try {
@@ -397,6 +408,7 @@ export class PtyService {
 
     this.sessionsById.delete(sessionId)
     this.sessionsByComponentId.delete(session.componentId)
+    this.untrackOwnerSession(session.ownerId, sessionId)
     this.options.onSessionClosed?.(sessionId)
 
     if (!kill) return
@@ -494,6 +506,38 @@ export class PtyService {
       if (session.ownerId === ownerId) {
         this.closeBySessionId(session.id)
       }
+    }
+  }
+
+  private trackOwnerSession(ownerId: number, sessionId: string): void {
+    const existing = this.ownerCleanupById.get(ownerId)
+    if (existing) {
+      existing.sessionIds.add(sessionId)
+      return
+    }
+
+    const contents = webContents.fromId(ownerId)
+    if (!contents || contents.isDestroyed()) return
+
+    const cleanup: OwnerSessionCleanup = {
+      sessionIds: new Set([sessionId]),
+      destroyedListener: () => this.closeByOwner(ownerId)
+    }
+    this.ownerCleanupById.set(ownerId, cleanup)
+    contents.once('destroyed', cleanup.destroyedListener)
+  }
+
+  private untrackOwnerSession(ownerId: number, sessionId: string): void {
+    const cleanup = this.ownerCleanupById.get(ownerId)
+    if (!cleanup) return
+
+    cleanup.sessionIds.delete(sessionId)
+    if (cleanup.sessionIds.size > 0) return
+
+    this.ownerCleanupById.delete(ownerId)
+    const contents = webContents.fromId(ownerId)
+    if (contents && !contents.isDestroyed()) {
+      contents.removeListener('destroyed', cleanup.destroyedListener)
     }
   }
 

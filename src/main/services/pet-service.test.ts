@@ -161,6 +161,7 @@ function createSettings(pet: Partial<AppSettings['pet']> = {}): AppSettings {
       ...pet,
       position: { ...DEFAULT_PET_SETTINGS.position, ...pet.position },
       kanban: { ...DEFAULT_PET_SETTINGS.kanban, ...pet.kanban },
+      alertSound: { ...DEFAULT_PET_SETTINGS.alertSound, ...pet.alertSound },
       agentBridge: { ...DEFAULT_PET_SETTINGS.agentBridge, ...pet.agentBridge },
       assetPack: { ...DEFAULT_PET_SETTINGS.assetPack, ...pet.assetPack },
       actionMap: { ...DEFAULT_PET_SETTINGS.actionMap, ...pet.actionMap }

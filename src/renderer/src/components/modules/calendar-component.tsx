@@ -1,5 +1,5 @@
-import { CalendarDays, Clock3, Globe2, Maximize2, Minimize2 } from 'lucide-react'
-import { useEffect, useId, useMemo, useState } from 'react'
+import { Clock3, Globe2, Maximize2, Minimize2 } from 'lucide-react'
+import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import { useI18n, type Locale } from '../../i18n'
 import { asBoolean } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
@@ -76,7 +76,7 @@ function formatDateTimeAttribute(date: Date): string {
   return `${formatDateAttribute(date)}T${hours}:${minutes}:${seconds}`
 }
 
-export function CalendarComponent({ component, updateState }: AtlasComponentRendererProps): JSX.Element {
+export function CalendarComponent({ component, updateState, setHeaderActions }: AtlasComponentRendererProps): JSX.Element {
   const { locale, t } = useI18n()
   const [now, setNow] = useState(() => new Date())
   const currentTimeId = useId()
@@ -125,7 +125,29 @@ export function CalendarComponent({ component, updateState }: AtlasComponentRend
   const currentMonth = formatters.month.format(now)
   const currentWeekday = formatters.weekday.format(now)
   const timeZone = formatTimeZone(now, locale)
-  const toggleCompact = (): void => updateState({ compact: !compact }, true)
+  const toggleCompact = useCallback((): void => updateState({ compact: !compact }, true), [compact, updateState])
+  const headerActions = useMemo(
+    () => (
+      <button
+        type="button"
+        className="icon-button component-node__header-action-button"
+        onClick={toggleCompact}
+        title={compact ? t('calendar.expand') : t('calendar.collapse')}
+        aria-label={compact ? t('calendar.expand') : t('calendar.collapse')}
+        aria-pressed={compact ? 'true' : 'false'}
+      >
+        {compact ? <Maximize2 size={14} /> : <Minimize2 size={14} />}
+      </button>
+    ),
+    [compact, t, toggleCompact]
+  )
+
+  useEffect(() => {
+    if (!setHeaderActions) return undefined
+
+    setHeaderActions(headerActions)
+    return () => setHeaderActions(null)
+  }, [headerActions, setHeaderActions])
 
   const timeContent = (
     <>
@@ -137,16 +159,6 @@ export function CalendarComponent({ component, updateState }: AtlasComponentRend
   if (compact) {
     return (
       <div className="calendar-module calendar-module--compact" aria-label={t('calendar.aria', { date: currentDate, time: currentTime })}>
-        <button
-          type="button"
-          className="calendar-toggle calendar-toggle--compact"
-          onClick={toggleCompact}
-          title={t('calendar.expand')}
-          aria-label={t('calendar.expand')}
-          aria-pressed="true"
-        >
-          <Maximize2 size={15} />
-        </button>
         <time className="calendar-compact-time" dateTime={formatDateTimeAttribute(now)} aria-live="polite">
           {timeContent}
         </time>
@@ -156,27 +168,6 @@ export function CalendarComponent({ component, updateState }: AtlasComponentRend
 
   return (
     <div className="calendar-module" aria-label={t('calendar.aria', { date: currentDate, time: currentTime })}>
-      <header className="calendar-header">
-        <span className="calendar-header__icon" aria-hidden="true">
-          <CalendarDays size={17} />
-        </span>
-        <div>
-          <strong>{t('component.calendar')}</strong>
-          <span>{currentDate}</span>
-        </div>
-        <span className="calendar-live">{t('calendar.live')}</span>
-        <button
-          type="button"
-          className="calendar-toggle"
-          onClick={toggleCompact}
-          title={t('calendar.collapse')}
-          aria-label={t('calendar.collapse')}
-          aria-pressed="false"
-        >
-          <Minimize2 size={15} />
-        </button>
-      </header>
-
       <div className="calendar-body">
         <section className="calendar-clock-panel" aria-labelledby={currentTimeId}>
           <div className="calendar-panel-label" id={currentTimeId}>

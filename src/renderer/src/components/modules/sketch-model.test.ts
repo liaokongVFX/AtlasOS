@@ -7,13 +7,14 @@ import {
   normalizeSketchScene,
   sketchElementCount,
   sketchSceneToInitialData,
+  SKETCH_DEFAULT_STROKE_COLOR,
   SKETCH_SCENE_SCHEMA_VERSION,
   SKETCH_THEME,
   SKETCH_VIEW_BACKGROUND
 } from './sketch-model'
 
 describe('sketch model', () => {
-  it('creates an empty dark sketch scene from invalid state', () => {
+  it('creates an empty sketch scene with a visible black pen', () => {
     const scene = normalizeSketchScene(null)
 
     expect(scene).toEqual({
@@ -21,7 +22,8 @@ describe('sketch model', () => {
       elements: [],
       appState: {
         theme: SKETCH_THEME,
-        viewBackgroundColor: SKETCH_VIEW_BACKGROUND
+        viewBackgroundColor: SKETCH_VIEW_BACKGROUND,
+        currentItemStrokeColor: SKETCH_DEFAULT_STROKE_COLOR
       },
       files: {}
     })
@@ -61,6 +63,7 @@ describe('sketch model', () => {
     expect(scene.appState).toMatchObject({
       theme: SKETCH_THEME,
       viewBackgroundColor: SKETCH_VIEW_BACKGROUND,
+      currentItemStrokeColor: SKETCH_DEFAULT_STROKE_COLOR,
       scrollX: 12
     })
     expect(scene.appState).not.toHaveProperty('selectedElementIds')
@@ -78,8 +81,17 @@ describe('sketch model', () => {
     expect(initialData.files).toEqual({})
     expect(initialData.appState).toMatchObject({
       theme: SKETCH_THEME,
-      viewBackgroundColor: SKETCH_VIEW_BACKGROUND
+      viewBackgroundColor: SKETCH_VIEW_BACKGROUND,
+      currentItemStrokeColor: SKETCH_DEFAULT_STROKE_COLOR
     })
+  })
+
+  it('keeps the current pen color when a scene already has one', () => {
+    const scene = createSketchScene([], { currentItemStrokeColor: '#fa5252' }, {})
+    const initialData = sketchSceneToInitialData(scene)
+
+    expect(scene.appState.currentItemStrokeColor).toBe('#fa5252')
+    expect(initialData.appState?.currentItemStrokeColor).toBe('#fa5252')
   })
 
   it('builds a stable editable mind-map skeleton', () => {

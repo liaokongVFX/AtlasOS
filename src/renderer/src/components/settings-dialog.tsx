@@ -3,7 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { BellRing, Bot, Check, ChevronDown, Puzzle, RefreshCcw, Settings, SlidersHorizontal, Trash2, Upload, X, type LucideIcon } from 'lucide-react'
 import { DEFAULT_APP_SHORTCUTS } from '@shared/constants'
-import { DEFAULT_PET_SPRITE_ANIMATION, type PetRuntimeState, type PetSettings } from '@shared/pet'
+import { DEFAULT_PET_SPRITE_ANIMATION, petSettingsSchema, type PetRuntimeState, type PetSettings } from '@shared/pet'
 import { localAssetUrl } from '@shared/local-assets'
 import type { AtlasUpdateState } from '@shared/updates'
 import {
@@ -34,8 +34,14 @@ type EmptySettingsPanelProps = {
   messageKey: I18nKey
 }
 
-type PetSettingsPatch = Partial<Omit<PetSettings, 'kanban' | 'agentBridge' | 'assetPack' | 'actionMap'>> & {
+type PetAlertSoundPatch = Partial<PetSettings['alertSound']> & {
+  src?: string
+  name?: string
+}
+
+type PetSettingsPatch = Partial<Omit<PetSettings, 'kanban' | 'alertSound' | 'agentBridge' | 'assetPack' | 'actionMap'>> & {
   kanban?: Partial<PetSettings['kanban']>
+  alertSound?: PetAlertSoundPatch
   agentBridge?: Partial<PetSettings['agentBridge']>
   assetPack?: Partial<PetSettings['assetPack']>
   actionMap?: Partial<PetSettings['actionMap']>
@@ -45,6 +51,7 @@ type PetHookInstallStatus = PetRuntimeState['bridge']['claudeHook']
 type PetHookProvider = 'claude' | 'codex'
 type PetAssetSlot = 'idle' | 'running' | 'attention'
 type PetImportedAssetKind = 'media' | 'sprite'
+type PetAlertSoundSlot = 'asking' | 'completion'
 
 const PET_ACTION_OPTIONS = [
   { value: 'none', labelKey: 'settings.petActionNone' },
@@ -55,6 +62,7 @@ const PET_ACTION_OPTIONS = [
 ] as const satisfies readonly { value: PetSettings['actionMap']['idle']; labelKey: I18nKey }[]
 
 type PetAction = PetSettings['actionMap']['idle']
+const PET_ALERT_SOUND_ACCEPT = 'audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/flac,audio/ogg,.mp3,.wav,.m4a,.aac,.flac,.ogg,.oga'
 
 function petMediaKind(path: string): Exclude<PetSettings['assetPack']['idleKind'], 'sprite'> {
   return /\.webm$/i.test(path) ? 'video' : 'image'
@@ -74,6 +82,23 @@ function petAssetName(src: string, fallback: string): string {
 function petAssetLabel(src: string, kind: PetSettings['assetPack']['idleKind'], fallback: string, spriteLabel: string): string {
   const name = petAssetName(src, fallback)
   return kind === 'sprite' ? `${name} - ${spriteLabel}` : name
+}
+
+function hasPetAlertSound(alertSound: PetSettings['alertSound'] | undefined): boolean {
+  return Boolean(alertSound?.askingSrc || alertSound?.completionSrc)
+}
+
+function withLegacyPetAlertSoundFields(alertSound: PetSettings['alertSound']): PetSettings['alertSound'] & { src: string; name: string } {
+  const src = alertSound.completionSrc || alertSound.askingSrc
+  const name = alertSound.completionSrc ? alertSound.completionName : alertSound.askingName
+  return { ...alertSound, src, name }
+}
+
+function normalizePetRuntimeState(state: PetRuntimeState): PetRuntimeState {
+  return {
+    ...state,
+    settings: petSettingsSchema.parse(state.settings)
+  }
 }
 
 function boundedNumber(value: number, min: number, max: number): number {
@@ -574,11 +599,11 @@ function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
   useEffect(() => {
     if (!active) return undefined
 
-    void window.atlas.pet.getState().then(setRuntimeState).catch((nextError) => {
+    void window.atlas.pet.getState().then((state) => setRuntimeState(normalizePetRuntimeState(state))).catch((nextError) => {
       setError(nextError instanceof Error ? nextError.message : String(nextError))
     })
 
-    return window.atlas.pet.onStateUpdated(setRuntimeState)
+    return window.atlas.pet.onStateUpdated((state) => setRuntimeState(normalizePetRuntimeState(state)))
   }, [active])
 
   const updatePetSettings = async (patch: PetSettingsPatch): Promise<void> => {
@@ -588,14 +613,17 @@ function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
     setError(null)
 
     try {
-      const saved = await window.atlas.pet.updateSettings({
+      const nextAlertSound = { ...runtimeState.settings.alertSound, ...patch.alertSound }
+      const nextSettings = {
         ...runtimeState.settings,
         ...patch,
         kanban: { ...runtimeState.settings.kanban, ...patch.kanban },
+        alertSound: patch.alertSound ? withLegacyPetAlertSoundFields(nextAlertSound) : nextAlertSound,
         agentBridge: { ...runtimeState.settings.agentBridge, ...patch.agentBridge },
         assetPack: { ...runtimeState.settings.assetPack, ...patch.assetPack },
         actionMap: { ...runtimeState.settings.actionMap, ...patch.actionMap }
-      })
+      }
+      const saved = petSettingsSchema.parse(await window.atlas.pet.updateSettings(nextSettings))
       setRuntimeState((current) => (current ? { ...current, settings: saved } : current))
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError))
@@ -656,6 +684,39 @@ function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
     }
 
     await updatePetSettings({ assetPack: patch })
+  }
+
+  const importPetAlertSound = async (slot: PetAlertSoundSlot, files: FileList | null): Promise<void> => {
+    const file = files?.[0]
+    if (!file) return
+
+    const path = window.atlas.filesystem.getPathForFile(file)
+    if (!path) {
+      setError(t('settings.petFilePathError'))
+      return
+    }
+
+    const src = localAssetUrl(path, path)
+    const name = file.name || petAssetName(path, t('settings.petReminderSoundCustomName'))
+    const patch: PetAlertSoundPatch =
+      slot === 'asking'
+        ? { enabled: true, askingSrc: src, askingName: name }
+        : { enabled: true, completionSrc: src, completionName: name }
+
+    await updatePetSettings({ alertSound: patch })
+  }
+
+  const clearPetAlertSound = (slot: PetAlertSoundSlot): void => {
+    if (!runtimeState) return
+
+    const otherSrc = slot === 'asking' ? runtimeState.settings.alertSound.completionSrc : runtimeState.settings.alertSound.askingSrc
+    const otherName = slot === 'asking' ? runtimeState.settings.alertSound.completionName : runtimeState.settings.alertSound.askingName
+    void updatePetSettings({
+      alertSound:
+        slot === 'asking'
+          ? { enabled: otherSrc ? runtimeState.settings.alertSound.enabled : false, askingSrc: '', askingName: '' }
+          : { enabled: otherSrc ? runtimeState.settings.alertSound.enabled : false, completionSrc: '', completionName: '' }
+    })
   }
 
   const clearPetAsset = (slot: PetAssetSlot): void => {
@@ -741,6 +802,89 @@ function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
             onChange={(event) => void updatePetSettings({ showRunningAgents: event.target.checked })}
           />
         </label>
+      </div>
+
+      <div className="general-settings__section">
+        <div className="general-settings__section-header">
+          <h3>{t('settings.petReminderSound')}</h3>
+          <p>{t('settings.petReminderSoundDescription')}</p>
+        </div>
+        <div className="settings-pet-assets">
+          <label className="settings-toggle-row">
+            <span>
+              <strong>{t('settings.petReminderSoundEnabled')}</strong>
+              <small>{t('settings.petReminderSoundEnabledDescription')}</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={runtimeState?.settings.alertSound.enabled ?? false}
+              disabled={!runtimeState || saving || !hasPetAlertSound(runtimeState.settings.alertSound)}
+              onChange={(event) => void updatePetSettings({ alertSound: { enabled: event.target.checked } })}
+            />
+          </label>
+          <div className="settings-pet-action-row">
+            <span>
+              <strong>{t('settings.petReminderSoundAsking')}</strong>
+              <small>
+                {runtimeState?.settings.alertSound.askingName ||
+                  petAssetName(
+                    runtimeState?.settings.alertSound.askingSrc ?? '',
+                    runtimeState?.settings.alertSound.completionSrc ? t('settings.petReminderSoundUsingCompletion') : t('settings.petReminderSoundNone')
+                  )}
+              </small>
+            </span>
+            <div className="settings-pet-import-actions">
+              <PetAssetImportControl
+                label={t('settings.petReminderSoundAsking')}
+                buttonLabel={t('common.browse')}
+                accept={PET_ALERT_SOUND_ACCEPT}
+                disabled={!runtimeState || saving}
+                onImport={(files) => void importPetAlertSound('asking', files)}
+              />
+              <button
+                type="button"
+                className="settings-pet-file-button"
+                disabled={!runtimeState?.settings.alertSound.askingSrc || saving}
+                aria-label={`${t('settings.petReminderSoundAsking')} ${t('settings.petClearAsset')}`}
+                onClick={() => clearPetAlertSound('asking')}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                <span>{t('settings.petClearAsset')}</span>
+              </button>
+            </div>
+          </div>
+          <div className="settings-pet-action-row">
+            <span>
+              <strong>{t('settings.petReminderSoundCompletion')}</strong>
+              <small>
+                {runtimeState?.settings.alertSound.completionName ||
+                  petAssetName(
+                    runtimeState?.settings.alertSound.completionSrc ?? '',
+                    runtimeState?.settings.alertSound.askingSrc ? t('settings.petReminderSoundUsingAsking') : t('settings.petReminderSoundNone')
+                  )}
+              </small>
+            </span>
+            <div className="settings-pet-import-actions">
+              <PetAssetImportControl
+                label={t('settings.petReminderSoundCompletion')}
+                buttonLabel={t('common.browse')}
+                accept={PET_ALERT_SOUND_ACCEPT}
+                disabled={!runtimeState || saving}
+                onImport={(files) => void importPetAlertSound('completion', files)}
+              />
+              <button
+                type="button"
+                className="settings-pet-file-button"
+                disabled={!runtimeState?.settings.alertSound.completionSrc || saving}
+                aria-label={`${t('settings.petReminderSoundCompletion')} ${t('settings.petClearAsset')}`}
+                onClick={() => clearPetAlertSound('completion')}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                <span>{t('settings.petClearAsset')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="general-settings__section">

@@ -349,6 +349,7 @@ describe('SettingsDialog', () => {
 
     expect(await screen.findByText(translate(locale, 'settings.petDescription'))).toBeInTheDocument()
     expect(screen.getByText(translate(locale, 'settings.petEnableWindow'))).toBeInTheDocument()
+    expect(screen.getByText(translate(locale, 'settings.petReminderSound'))).toBeInTheDocument()
     expect(screen.getByText(translate(locale, 'settings.petHookBridge'))).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: translate(locale, 'settings.petClaudeHookInstall') }))
     await waitFor(() => expect(petApi.installClaudeHooks).toHaveBeenCalled())
@@ -425,6 +426,133 @@ describe('SettingsDialog', () => {
           runningSrc: localAssetUrl(spritePath, spritePath),
           runningKind: 'sprite',
           runningSprite: { frameCount: 8, fps: 8 }
+        }
+      })
+    )
+  })
+
+  it('imports a custom pet reminder sound', async () => {
+    const askingPath = 'D:\\AtlasOS\\assets\\asking.mp3'
+    const completionPath = 'D:\\AtlasOS\\assets\\done.mp3'
+    filesystemApi.getPathForFile.mockReturnValue(askingPath)
+
+    renderSettingsDialog()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pet' }))
+
+    await screen.findByText('Reminder sound')
+    const soundInputs = document.querySelectorAll<HTMLInputElement>(
+      'input[accept="audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/flac,audio/ogg,.mp3,.wav,.m4a,.aac,.flac,.ogg,.oga"]'
+    )
+    expect(soundInputs).toHaveLength(2)
+
+    fireEvent.change(soundInputs[0], {
+      target: {
+        files: [new File(['audio'], 'asking.mp3', { type: 'audio/mpeg' })]
+      }
+    })
+
+    await waitFor(() =>
+      expect(petApi.updateSettings).toHaveBeenCalledWith({
+        ...DEFAULT_PET_SETTINGS,
+        alertSound: {
+          enabled: true,
+          askingSrc: localAssetUrl(askingPath, askingPath),
+          askingName: 'asking.mp3',
+          completionSrc: '',
+          completionName: '',
+          src: localAssetUrl(askingPath, askingPath),
+          name: 'asking.mp3'
+        }
+      })
+    )
+
+    filesystemApi.getPathForFile.mockReturnValue(completionPath)
+    fireEvent.change(soundInputs[1], {
+      target: {
+        files: [new File(['audio'], 'done.mp3', { type: 'audio/mpeg' })]
+      }
+    })
+
+    await waitFor(() =>
+      expect(petApi.updateSettings).toHaveBeenLastCalledWith({
+        ...DEFAULT_PET_SETTINGS,
+        alertSound: {
+          enabled: true,
+          askingSrc: localAssetUrl(askingPath, askingPath),
+          askingName: 'asking.mp3',
+          completionSrc: localAssetUrl(completionPath, completionPath),
+          completionName: 'done.mp3',
+          src: localAssetUrl(completionPath, completionPath),
+          name: 'done.mp3'
+        }
+      })
+    )
+  })
+
+  it('normalizes legacy pet reminder sound responses after importing audio', async () => {
+    const askingPath = 'D:\\AtlasOS\\assets\\asking.mp3'
+    filesystemApi.getPathForFile.mockReturnValue(askingPath)
+    petApi.updateSettings.mockImplementation(async (settings) => ({
+      ...settings,
+      alertSound: {
+        enabled: true,
+        src: (settings.alertSound as typeof settings.alertSound & { src?: string }).src ?? '',
+        name: (settings.alertSound as typeof settings.alertSound & { name?: string }).name ?? ''
+      }
+    }))
+
+    renderSettingsDialog()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pet' }))
+
+    await screen.findByText('Reminder sound')
+    const soundInputs = document.querySelectorAll<HTMLInputElement>(
+      'input[accept="audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/flac,audio/ogg,.mp3,.wav,.m4a,.aac,.flac,.ogg,.oga"]'
+    )
+    fireEvent.change(soundInputs[0], {
+      target: {
+        files: [new File(['audio'], 'asking.mp3', { type: 'audio/mpeg' })]
+      }
+    })
+
+    await waitFor(() => expect(petApi.updateSettings).toHaveBeenCalled())
+    expect(await screen.findAllByText('asking.mp3')).toHaveLength(2)
+  })
+
+  it('keeps legacy pet reminder sound fields when toggling playback', async () => {
+    const askingPath = 'D:\\AtlasOS\\assets\\asking.mp3'
+    const askingSrc = localAssetUrl(askingPath, askingPath)
+    filesystemApi.getPathForFile.mockReturnValue(askingPath)
+
+    renderSettingsDialog()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pet' }))
+
+    await screen.findByText('Reminder sound')
+    const soundInputs = document.querySelectorAll<HTMLInputElement>(
+      'input[accept="audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/flac,audio/ogg,.mp3,.wav,.m4a,.aac,.flac,.ogg,.oga"]'
+    )
+    fireEvent.change(soundInputs[0], {
+      target: {
+        files: [new File(['audio'], 'asking.mp3', { type: 'audio/mpeg' })]
+      }
+    })
+
+    await waitFor(() => expect(petApi.updateSettings).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('checkbox', { name: /Play reminder sound/i }))
+
+    await waitFor(() =>
+      expect(petApi.updateSettings).toHaveBeenLastCalledWith({
+        ...DEFAULT_PET_SETTINGS,
+        alertSound: {
+          enabled: false,
+          askingSrc,
+          askingName: 'asking.mp3',
+          completionSrc: '',
+          completionName: '',
+          src: askingSrc,
+          name: 'asking.mp3'
         }
       })
     )

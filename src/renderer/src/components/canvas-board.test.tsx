@@ -294,8 +294,8 @@ describe('CanvasBoard', () => {
     })
 
     expect(listener).toHaveBeenCalledTimes(2)
-    expect(listener).toHaveBeenNthCalledWith(1, { x: 120, y: 80, zoom: 1 })
-    expect(listener).toHaveBeenNthCalledWith(2, { x: 160, y: 95, zoom: 1 })
+    expect(listener).toHaveBeenNthCalledWith(1, { x: 120, y: 80, zoom: 1, phase: 'move' })
+    expect(listener).toHaveBeenNthCalledWith(2, { x: 160, y: 95, zoom: 1, phase: 'move' })
     unsubscribe()
   })
 
@@ -357,7 +357,7 @@ describe('CanvasBoard', () => {
     expect(backgroundImage?.getAttribute('style')).toContain('background-attachment: fixed')
   })
 
-  it('keeps viewport drags out of component node data while notifying native browser overlays', () => {
+  it('keeps viewport drags out of component node data while disabling embedded browser input', () => {
     const canvas = createCanvas()
     canvas.components = [
       createComponent('browser-1', {
@@ -372,7 +372,9 @@ describe('CanvasBoard', () => {
     const listener = vi.fn()
     const unsubscribe = subscribeCanvasViewportSync(listener)
 
-    renderCanvasBoard()
+    const { container } = renderCanvasBoard()
+    const board = container.querySelector('.canvas-board')
+    expect(board).not.toHaveClass('canvas-board--viewport-interacting')
 
     const nodesBeforeMove = reactFlowProps.current?.nodes
     const browserDataBeforeMove = (nodesBeforeMove?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data
@@ -381,7 +383,8 @@ describe('CanvasBoard', () => {
       reactFlowProps.current?.onMoveStart?.(null, { x: 120, y: 80, zoom: 1 })
     })
 
-    expect(listener).toHaveBeenCalledWith({ x: 120, y: 80, zoom: 1 })
+    expect(listener).toHaveBeenCalledWith({ x: 120, y: 80, zoom: 1, phase: 'start' })
+    expect(board).toHaveClass('canvas-board--viewport-interacting')
     expect(reactFlowProps.current?.nodes).toBe(nodesBeforeMove)
     expect((reactFlowProps.current?.nodes?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data).toBe(browserDataBeforeMove)
 
@@ -389,7 +392,8 @@ describe('CanvasBoard', () => {
       reactFlowProps.current?.onMoveEnd?.(null, DEFAULT_VIEWPORT)
     })
 
-    expect(listener).toHaveBeenLastCalledWith(DEFAULT_VIEWPORT)
+    expect(listener).toHaveBeenLastCalledWith({ ...DEFAULT_VIEWPORT, phase: 'end' })
+    expect(board).not.toHaveClass('canvas-board--viewport-interacting')
     expect(reactFlowProps.current?.nodes).toBe(nodesBeforeMove)
     expect((reactFlowProps.current?.nodes?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data).toBe(browserDataBeforeMove)
     unsubscribe()

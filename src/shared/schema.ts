@@ -154,7 +154,6 @@ const browserRectangleSchema = z.object({
 export const browserBoundsSchema = z.object({
   tabId: z.string(),
   visible: z.boolean(),
-  interactive: z.boolean().optional().default(true),
   bounds: browserRectangleSchema,
   contentBounds: browserRectangleSchema.optional()
 })

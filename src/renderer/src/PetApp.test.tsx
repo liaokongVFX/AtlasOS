@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PET_SETTINGS, DEFAULT_PET_WINDOW_STATE, type PetRuntimeState } from '@shared/pet'
 import { PetApp } from './PetApp'
@@ -15,6 +15,14 @@ const petApi = {
   listAgentSessions: vi.fn(),
   onStateUpdated: vi.fn()
 }
+
+type MockAudioElement = {
+  pause: ReturnType<typeof vi.fn>
+  play: ReturnType<typeof vi.fn>
+  src: string
+}
+
+const audioInstances: MockAudioElement[] = []
 
 function createState(): PetRuntimeState {
   return {
@@ -139,6 +147,7 @@ function createRunningState(): PetRuntimeState {
 describe('PetApp', () => {
   beforeEach(() => {
     for (const mock of Object.values(petApi)) mock.mockReset()
+    audioInstances.splice(0, audioInstances.length)
     petApi.getState.mockResolvedValue(createState())
     petApi.ackAlert.mockResolvedValue({ ok: true })
     petApi.clearAlerts.mockResolvedValue({ ok: true })
@@ -150,6 +159,18 @@ describe('PetApp', () => {
       configurable: true,
       value: { pet: petApi }
     })
+
+    const MockAudio = vi.fn((src: string) => {
+      const audio = {
+        pause: vi.fn(),
+        play: vi.fn(() => Promise.resolve()),
+        src
+      }
+      audioInstances.push(audio)
+      return audio
+    })
+    Object.defineProperty(window, 'Audio', { configurable: true, value: MockAudio })
+    Object.defineProperty(globalThis, 'Audio', { configurable: true, value: MockAudio })
   })
 
   afterEach(() => {
@@ -167,6 +188,168 @@ describe('PetApp', () => {
     expect(await screen.findByText('Claude Code is asking')).toBeInTheDocument()
     expect(screen.getByText('asking')).toBeInTheDocument()
     expect(container.querySelector('.pet-row__dot--waiting_for_confirmation')).toBeInTheDocument()
+  })
+
+  it('plays custom reminder sound for newly visible alerts', async () => {
+    let stateListener: ((state: PetRuntimeState) => void) | undefined
+    const soundSettings = {
+      ...DEFAULT_PET_SETTINGS,
+      alertSound: {
+        enabled: true,
+        askingSrc: 'atlas-file://preview?path=asking.mp3',
+        askingName: 'asking.mp3',
+        completionSrc: '',
+        completionName: ''
+      }
+    }
+    petApi.getState.mockResolvedValue({ ...createState(), settings: soundSettings })
+    petApi.onStateUpdated.mockImplementation((listener) => {
+      stateListener = listener
+      return () => undefined
+    })
+
+    render(<PetApp />)
+
+    await screen.findByRole('button', { name: 'AtlasOS pet' })
+    expect(audioInstances).toHaveLength(0)
+
+    const nextState = createState()
+    await act(async () => {
+      stateListener?.({
+        ...nextState,
+        settings: soundSettings,
+        alerts: [
+          {
+            ...nextState.alerts[0],
+            id: 'alert-2',
+            dedupeKey: 'agent:session-1:waiting_for_confirmation:2026-05-29T10:01:00.000Z'
+          }
+        ]
+      })
+    })
+
+    await waitFor(() => expect(audioInstances).toHaveLength(1))
+    expect(audioInstances[0].src).toBe('atlas-file://preview?path=asking.mp3')
+    expect(audioInstances[0].play).toHaveBeenCalled()
+  })
+
+  it('uses the completion sound for completed and error alerts', async () => {
+    let stateListener: ((state: PetRuntimeState) => void) | undefined
+    const soundSettings = {
+      ...DEFAULT_PET_SETTINGS,
+      alertSound: {
+        enabled: true,
+        askingSrc: 'atlas-file://preview?path=asking.mp3',
+        askingName: 'asking.mp3',
+        completionSrc: 'atlas-file://preview?path=done.mp3',
+        completionName: 'done.mp3'
+      }
+    }
+    petApi.getState.mockResolvedValue({ ...createReadyState(), settings: soundSettings })
+    petApi.onStateUpdated.mockImplementation((listener) => {
+      stateListener = listener
+      return () => undefined
+    })
+
+    render(<PetApp />)
+
+    await screen.findByRole('button', { name: 'AtlasOS pet' })
+    const completedState = createCompletedState()
+    await act(async () => {
+      stateListener?.({
+        ...completedState,
+        settings: soundSettings,
+        alerts: [{ ...completedState.alerts[0], id: 'alert-2' }]
+      })
+    })
+    await waitFor(() => expect(audioInstances).toHaveLength(1))
+    expect(audioInstances[0].src).toBe('atlas-file://preview?path=done.mp3')
+
+    const waitingState = createState()
+    await act(async () => {
+      stateListener?.({
+        ...waitingState,
+        settings: soundSettings,
+        alerts: [
+          {
+            ...waitingState.alerts[0],
+            id: 'alert-3',
+            kind: 'agent_error',
+            severity: 'danger',
+            title: 'Claude Code reported an error'
+          }
+        ]
+      })
+    })
+
+    await waitFor(() => expect(audioInstances).toHaveLength(2))
+    expect(audioInstances[1].src).toBe('atlas-file://preview?path=done.mp3')
+  })
+
+  it('falls back to one configured sound for both alert groups', async () => {
+    let stateListener: ((state: PetRuntimeState) => void) | undefined
+    const soundSettings = {
+      ...DEFAULT_PET_SETTINGS,
+      alertSound: {
+        enabled: true,
+        askingSrc: 'atlas-file://preview?path=only.mp3',
+        askingName: 'only.mp3',
+        completionSrc: '',
+        completionName: ''
+      }
+    }
+    petApi.getState.mockResolvedValue({ ...createReadyState(), settings: soundSettings })
+    petApi.onStateUpdated.mockImplementation((listener) => {
+      stateListener = listener
+      return () => undefined
+    })
+
+    render(<PetApp />)
+
+    await screen.findByRole('button', { name: 'AtlasOS pet' })
+    const completedState = createCompletedState()
+    await act(async () => {
+      stateListener?.({
+        ...completedState,
+        settings: soundSettings,
+        alerts: [{ ...completedState.alerts[0], id: 'alert-2' }]
+      })
+    })
+
+    await waitFor(() => expect(audioInstances).toHaveLength(1))
+    expect(audioInstances[0].src).toBe('atlas-file://preview?path=only.mp3')
+  })
+
+  it('normalizes legacy single reminder sound state before playback', async () => {
+    let stateListener: ((state: PetRuntimeState) => void) | undefined
+    const legacySoundSettings = {
+      ...DEFAULT_PET_SETTINGS,
+      alertSound: {
+        enabled: true,
+        src: 'atlas-file://preview?path=legacy.mp3',
+        name: 'legacy.mp3'
+      }
+    } as unknown as PetRuntimeState['settings']
+    petApi.getState.mockResolvedValue({ ...createReadyState(), settings: legacySoundSettings })
+    petApi.onStateUpdated.mockImplementation((listener) => {
+      stateListener = listener
+      return () => undefined
+    })
+
+    render(<PetApp />)
+
+    await screen.findByRole('button', { name: 'AtlasOS pet' })
+    const completedState = createCompletedState()
+    await act(async () => {
+      stateListener?.({
+        ...completedState,
+        settings: legacySoundSettings,
+        alerts: [{ ...completedState.alerts[0], id: 'alert-2' }]
+      })
+    })
+
+    await waitFor(() => expect(audioInstances).toHaveLength(1))
+    expect(audioInstances[0].src).toBe('atlas-file://preview?path=legacy.mp3')
   })
 
   it('shows the linked agent window title in the running agents list', async () => {

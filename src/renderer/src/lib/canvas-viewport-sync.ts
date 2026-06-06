@@ -1,6 +1,7 @@
 export type CanvasViewportSyncSnapshot = {
   x: number
   y: number
+  phase?: 'start' | 'move' | 'end'
   zoom: number
 }
 

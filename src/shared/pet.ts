@@ -22,6 +22,13 @@ export const DEFAULT_PET_SETTINGS = {
   kanban: {
     enabled: true
   },
+  alertSound: {
+    enabled: false,
+    askingSrc: '',
+    askingName: '',
+    completionSrc: '',
+    completionName: ''
+  },
   agentBridge: {
     enabled: true
   },
@@ -90,6 +97,22 @@ export const petSpriteAnimationSchema = z.object({
   fps: z.number().int().min(1).max(30).default(DEFAULT_PET_SPRITE_ANIMATION.fps)
 })
 
+function normalizePetAlertSound(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null) return value
+
+  const record = value as Record<string, unknown>
+  const legacySrc = typeof record.src === 'string' ? record.src : ''
+  const legacyName = typeof record.name === 'string' ? record.name : ''
+
+  return {
+    ...record,
+    askingSrc: typeof record.askingSrc === 'string' ? record.askingSrc : legacySrc,
+    askingName: typeof record.askingName === 'string' ? record.askingName : legacyName,
+    completionSrc: typeof record.completionSrc === 'string' ? record.completionSrc : legacySrc,
+    completionName: typeof record.completionName === 'string' ? record.completionName : legacyName
+  }
+}
+
 export const petSettingsSchema = z
   .object({
     enabled: z.boolean().default(DEFAULT_PET_SETTINGS.enabled),
@@ -107,6 +130,18 @@ export const petSettingsSchema = z
         enabled: z.boolean().default(DEFAULT_PET_SETTINGS.kanban.enabled)
       })
       .default(DEFAULT_PET_SETTINGS.kanban),
+    alertSound: z
+      .preprocess(
+        normalizePetAlertSound,
+        z.object({
+          enabled: z.boolean().default(DEFAULT_PET_SETTINGS.alertSound.enabled),
+          askingSrc: z.string().default(DEFAULT_PET_SETTINGS.alertSound.askingSrc),
+          askingName: z.string().default(DEFAULT_PET_SETTINGS.alertSound.askingName),
+          completionSrc: z.string().default(DEFAULT_PET_SETTINGS.alertSound.completionSrc),
+          completionName: z.string().default(DEFAULT_PET_SETTINGS.alertSound.completionName)
+        })
+      )
+      .default(DEFAULT_PET_SETTINGS.alertSound),
     agentBridge: z
       .object({
         enabled: z.boolean().default(DEFAULT_PET_SETTINGS.agentBridge.enabled)

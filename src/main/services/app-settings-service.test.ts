@@ -53,6 +53,7 @@ describe('AppSettingsService', () => {
         position: { x: 36, y: 120 },
         size: 72,
         kanban: { enabled: true },
+        alertSound: { enabled: false, askingSrc: '', askingName: '', completionSrc: '', completionName: '' },
         agentBridge: { enabled: true },
         assetPack: {
           id: 'atlas-orb',
@@ -92,6 +93,7 @@ describe('AppSettingsService', () => {
         position: { x: 320, y: 240 },
         size: 80,
         kanban: { enabled: true },
+        alertSound: { enabled: false, askingSrc: '', askingName: '', completionSrc: '', completionName: '' },
         agentBridge: { enabled: false },
         assetPack: {
           id: 'atlas-orb',
@@ -133,6 +135,7 @@ describe('AppSettingsService', () => {
         position: { x: 320, y: 240 },
         size: 80,
         kanban: { enabled: true },
+        alertSound: { enabled: false, askingSrc: '', askingName: '', completionSrc: '', completionName: '' },
         agentBridge: { enabled: false },
         assetPack: {
           id: 'atlas-orb',

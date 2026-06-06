@@ -3,8 +3,6 @@ export const BROWSER_ZOOM_DEFAULT_FACTOR = 1
 export const BROWSER_ZOOM_MIN_FACTOR = 0.5
 export const BROWSER_ZOOM_MAX_FACTOR = 3
 export const BROWSER_ZOOM_STEP = 0.1
-export const BROWSER_NATIVE_ZOOM_MIN_FACTOR = 0.05
-export const BROWSER_NATIVE_ZOOM_MAX_FACTOR = 8
 
 export function browserZoomDirectionFromWheel(event: Pick<WheelEvent, 'ctrlKey' | 'deltaX' | 'deltaY'>): -1 | 1 | null {
   if (!event.ctrlKey) return null
