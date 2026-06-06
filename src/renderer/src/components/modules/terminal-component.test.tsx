@@ -37,6 +37,7 @@ type MockTerminal = {
 
 const terminalInstances = vi.hoisted(() => [] as MockTerminal[])
 const terminalOptions = vi.hoisted(() => [] as any[])
+const webLinksAddonHandlers = vi.hoisted(() => [] as Array<((event: MouseEvent, uri: string) => void) | undefined>)
 let consoleInfo: ReturnType<typeof vi.spyOn>
 
 vi.mock('@xterm/addon-fit', () => ({
@@ -50,7 +51,11 @@ vi.mock('@xterm/addon-search', () => ({
 }))
 
 vi.mock('@xterm/addon-web-links', () => ({
-  WebLinksAddon: class {}
+  WebLinksAddon: class {
+    constructor(handler?: (event: MouseEvent, uri: string) => void) {
+      webLinksAddonHandlers.push(handler)
+    }
+  }
 }))
 
 vi.mock('@xterm/xterm', () => ({
@@ -166,6 +171,9 @@ function installAtlasMocks(): void {
     clipboard: {
       readText: vi.fn(() => ''),
       writeText: vi.fn()
+    },
+    launcher: {
+      open: vi.fn().mockResolvedValue({ ok: true })
     }
   }
 
@@ -224,6 +232,7 @@ describe('TerminalComponent', () => {
   beforeEach(() => {
     terminalInstances.splice(0, terminalInstances.length)
     terminalOptions.splice(0, terminalOptions.length)
+    webLinksAddonHandlers.splice(0, webLinksAddonHandlers.length)
     consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     installAtlasMocks()
   })
@@ -260,6 +269,45 @@ describe('TerminalComponent', () => {
       cursorWidth: 1,
       cursorInactiveStyle: 'bar'
     })
+  })
+
+  it('opens terminal web links through the native launcher instead of window.open', async () => {
+    const windowOpen = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const updateState = vi.fn()
+    const updateConfig = vi.fn()
+    const setTitle = vi.fn()
+    const component = createTerminalComponent()
+
+    render(
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={updateConfig}
+        updateState={updateState}
+        setTitle={setTitle}
+        isNodeSelected={false}
+      />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const handler = webLinksAddonHandlers[0]
+    const event = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn()
+    } as unknown as MouseEvent
+
+    expect(handler).toEqual(expect.any(Function))
+    handler?.(event, 'https://example.com/docs')
+
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(event.stopPropagation).toHaveBeenCalled()
+    expect(window.atlas.launcher.open).toHaveBeenCalledWith({ kind: 'url', url: 'https://example.com/docs' })
+    expect(windowOpen).not.toHaveBeenCalled()
+
+    windowOpen.mockRestore()
   })
 
   it('passes an undispatched initial command and marks it dispatched', async () => {

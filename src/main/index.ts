@@ -46,6 +46,10 @@ function isBrowserNavigableUrl(url: string): boolean {
   return /^https?:\/\//i.test(url)
 }
 
+function isBrowserWebviewAttachUrl(url: string): boolean {
+  return url === 'about:blank' || isBrowserNavigableUrl(url)
+}
+
 function isExternalProtocolUrl(url: string): boolean {
   return /^(mailto|tel):/i.test(url)
 }
@@ -325,7 +329,7 @@ async function createWindow(): Promise<void> {
     const src = params.src ?? ''
     const partition = params.partition ?? ''
 
-    if (!isBrowserNavigableUrl(src) || !partition.startsWith('persist:atlas-browser-')) {
+    if (!isBrowserWebviewAttachUrl(src) || !partition.startsWith('persist:atlas-browser-')) {
       event.preventDefault()
       return
     }

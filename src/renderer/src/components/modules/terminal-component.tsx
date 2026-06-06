@@ -311,6 +311,14 @@ function isTerminalPasteShortcut(event: KeyboardEvent): boolean {
   return (hasPrimaryModifier && key === 'v') || (event.shiftKey && key === 'insert')
 }
 
+function openTerminalWebLink(event: MouseEvent, uri: string): void {
+  event.preventDefault()
+  event.stopPropagation()
+  void window.atlas.launcher.open({ kind: 'url', url: uri }).catch((error) => {
+    console.warn('Failed to open terminal link', error)
+  })
+}
+
 export function TerminalComponent({ canvasId, component, updateState, isNodeSelected = false }: AtlasComponentRendererProps): JSX.Element {
   const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -673,7 +681,7 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
 
       instance.loadAddon(fitAddon)
       instance.loadAddon(new SearchAddon())
-      instance.loadAddon(new WebLinksAddon())
+      instance.loadAddon(new WebLinksAddon(openTerminalWebLink))
       instance.open(container)
       transformedCanvasMouseFix = installTransformedCanvasMouseFix(instance)
       installTerminalClipboardShortcuts(instance, {

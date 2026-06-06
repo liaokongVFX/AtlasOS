@@ -7,6 +7,7 @@ import type { ComponentDefinitionMeta } from './component-definitions'
 
 export type AtlasComponentRendererProps = {
   canvasId: string
+  canvasZoom?: number
   component: CanvasComponent
   updateConfig: (patch: Record<string, unknown>, immediate?: boolean) => void
   updateState: (patch: Record<string, unknown>, immediate?: boolean) => void
@@ -15,6 +16,8 @@ export type AtlasComponentRendererProps = {
   setHeaderActions?: (actions: ReactNode | null) => void
   isCanvasInteracting?: boolean
   isNodeSelected?: boolean
+  isViewportInteracting?: boolean
+  onRequestSelect?: (componentId: string) => void
 }
 
 export type ComponentCreatePatch = Omit<Partial<CanvasComponent>, 'frame'> & {

@@ -11,8 +11,9 @@ import { componentDefinitionTitle, getComponentDefinition, type NodeResizeParams
 
 type AtlasNodeData = Record<string, unknown> & {
   canvasId: string
+  canvasZoom?: number
   component: CanvasComponent
-  isViewportInteracting?: boolean
+  isNodeDragging?: boolean
   parentGroupPosition?: { x: number; y: number }
   onRequestSelect?: (componentId: string) => void
 }
@@ -80,7 +81,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
 
   const Icon = definition.icon
   const Renderer = definition.Renderer
-  const isCanvasInteracting = dragging || isResizing || Boolean(data.isViewportInteracting)
+  const isCanvasInteracting = dragging || isResizing || Boolean(data.isNodeDragging)
   const showInteractionShield = !selected
 
   const updateConfig = useCallback((patch: Record<string, unknown>, immediate = false) => {
@@ -274,6 +275,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
         <ComponentErrorBoundary>
           <Renderer
             canvasId={canvasId}
+            canvasZoom={typeof data.canvasZoom === 'number' ? data.canvasZoom : undefined}
             component={component}
             updateConfig={updateConfig}
             updateState={updateState}
@@ -282,6 +284,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
             setHeaderActions={setHeaderActions}
             isCanvasInteracting={isCanvasInteracting}
             isNodeSelected={selected}
+            onRequestSelect={data.onRequestSelect}
           />
         </ComponentErrorBoundary>
         {showInteractionShield ? (

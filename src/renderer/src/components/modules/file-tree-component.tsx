@@ -2,7 +2,7 @@ import { Tree, type NodeRendererProps } from 'react-arborist'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import * as Dialog from '@radix-ui/react-dialog'
 import { ChevronDown, ChevronRight, Copy, ExternalLink, File, FilePlus, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, TerminalSquare, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import type { FileEntry } from '@shared/schema'
 import { useElementSize } from '../../hooks/use-element-size'
 import { useI18n, type TFunction } from '../../i18n'
@@ -203,6 +203,10 @@ function syncSelectedEntry(tree: FileEntry, selected: FileEntry | null): FileEnt
   if (!selected) return null
 
   return findEntry(tree, selected.path)
+}
+
+function isCopyPathShortcut(event: Pick<KeyboardEvent<HTMLElement>, 'altKey' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'>): boolean {
+  return (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'c'
 }
 
 function createRow(rootPath: string, actions: FileTreeRowActions, t: TFunction) {
@@ -597,6 +601,17 @@ export function FileTreeComponent({ component, updateConfig, updateState, setHea
     }
   }, [t])
 
+  const handleTreeKeyDownCapture = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.defaultPrevented || !selected || !isCopyPathShortcut(event)) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      void copyPath(selected)
+    },
+    [copyPath, selected]
+  )
+
   const requestCreateEntry = useCallback((kind: CreateEntryKind, target: FileEntry) => {
     setPendingCreate({ kind, target })
     setNewEntryName('')
@@ -762,7 +777,7 @@ export function FileTreeComponent({ component, updateConfig, updateState, setHea
       <div className="file-tree-module">
         <div className={cn('file-tree-content', error && 'file-tree-content--with-error')}>
           {error ? <div className="module-error">{error}</div> : null}
-          <div className="file-tree-viewport" ref={treeViewportRef}>
+          <div className="file-tree-viewport" ref={treeViewportRef} onKeyDownCapture={handleTreeKeyDownCapture}>
             <Tree
               key={rootPath}
               data={treeData}

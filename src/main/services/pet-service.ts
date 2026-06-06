@@ -362,18 +362,31 @@ function isAgentSource(value: string | undefined): value is PetAgentSource {
   return value === 'codex' || value === 'claude'
 }
 
-function notificationStatus(payload: Record<string, unknown>): AgentHookEventKind | null {
+function arrayHasEntries(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0
+}
+
+function hasClaudeBackgroundWork(payload: Record<string, unknown>): boolean {
+  return (
+    arrayHasEntries(payload.background_tasks) ||
+    arrayHasEntries(payload.backgroundTasks) ||
+    arrayHasEntries(payload.session_crons) ||
+    arrayHasEntries(payload.sessionCrons)
+  )
+}
+
+function notificationStatus(source: PetAgentSource, payload: Record<string, unknown>): AgentHookEventKind | null {
   const notificationType = firstString(payload, ['notification_type', 'notificationType', 'type'])
   const compactType = notificationType?.replace(/[^a-z0-9]/gi, '').toLowerCase()
   if (compactType === 'permissionprompt' || compactType === 'elicitationdialog') return 'waiting_for_confirmation'
   if (compactType === 'idleprompt') return null
-  if (compactType === 'sessionend' || compactType === 'taskcompleted' || compactType === 'completed') return 'completed'
+  if (source !== 'claude' && (compactType === 'sessionend' || compactType === 'taskcompleted' || compactType === 'completed')) return 'completed'
   if (compactType === 'error' || compactType === 'failure' || compactType === 'failed') return 'error'
 
   const message = firstString(payload, ['message', 'notification_message', 'notificationMessage', 'body', 'reason'])
   if (!message) return null
 
-  if (/\b(completed?|done|finished|succeeded|succeeds?|success|ended|stopped)\b/i.test(message)) return 'completed'
+  if (source !== 'claude' && /\b(completed?|done|finished|succeeded|succeeds?|success|ended|stopped)\b/i.test(message)) return 'completed'
   if (/\b(api error|errors?|failed|failure|exception|crashed|rate[-\s]?limit|quota|billing|authentication|unauthorized|timeout|timed out|connection)\b/i.test(message)) {
     return 'error'
   }
@@ -393,8 +406,8 @@ function hookToolInputDetail(toolInput: Record<string, unknown>): string | undef
   return question ? firstString(question, ['question', 'header', 'prompt', 'description']) : undefined
 }
 
-function hookEventStatus(hookName: string, payload: Record<string, unknown>): AgentHookEventKind | null {
-  if (hookName === 'Notification') return notificationStatus(payload)
+function hookEventStatus(source: PetAgentSource, hookName: string, payload: Record<string, unknown>): AgentHookEventKind | null {
+  if (hookName === 'Notification') return notificationStatus(source, payload)
 
   if (hookName === 'PermissionRequest' || hookName === 'Elicitation') {
     return 'waiting_for_confirmation'
@@ -406,7 +419,9 @@ function hookEventStatus(hookName: string, payload: Record<string, unknown>): Ag
   }
 
   if (hookName === 'StopFailure') return 'error'
-  if (hookName === 'Stop' || hookName === 'SessionEnd' || hookName === 'TaskCompleted') return 'completed'
+  if (hookName === 'Stop') return source === 'claude' && hasClaudeBackgroundWork(payload) ? 'running' : 'completed'
+  if (hookName === 'SessionEnd') return 'completed'
+  if (hookName === 'TaskCompleted') return source === 'claude' ? 'running' : 'completed'
   if (hookName === 'SessionStart') return 'idle_unknown'
   if (
     hookName === 'UserPromptSubmit' ||
@@ -467,7 +482,7 @@ function normalizeAgentHookEvent(source: PetAgentSource, payload: unknown, conte
   const hookName = canonicalHookEventName(firstString(payload, ['hook_event_name', 'hookEventName', 'event_name', 'eventName', 'event']) || context.hookName)
   if (!hookName) return null
 
-  const event = hookEventStatus(hookName, payload)
+  const event = hookEventStatus(source, hookName, payload)
   if (!event) return hookName === 'Notification' ? { kind: 'ignored' } : null
 
   const componentId = context.componentId

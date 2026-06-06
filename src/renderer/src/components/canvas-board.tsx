@@ -16,7 +16,7 @@ import { Command } from 'cmdk'
 import { Group as GroupIcon, Maximize2, Pencil, Search, Trash2, Ungroup, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type RefObject } from 'react'
 import type { Measurable } from '@radix-ui/rect'
-import type { CanvasComponent, CanvasGroup, ComponentType, FileEntry, Frame } from '@shared/schema'
+import type { CanvasComponent, CanvasDocument, CanvasGroup, ComponentType, FileEntry, Frame } from '@shared/schema'
 import type { PetAlertTarget } from '@shared/pet'
 import { keyboardEventMatchesShortcut } from '@shared/keyboard-shortcuts'
 import { notifyCanvasViewportSync } from '../lib/canvas-viewport-sync'
@@ -38,8 +38,9 @@ import {
 
 type ComponentNodeCacheEntry = {
   canvasId: string
+  canvasZoom: number
   component: CanvasComponent
-  isViewportInteracting: boolean
+  isNodeDragging: boolean
   parentGroupId?: string
   parentGroupX?: number
   parentGroupY?: number
@@ -55,6 +56,22 @@ const BACKGROUND_IMAGE_BLUR_BLEED_MULTIPLIER = 3
 type ScreenPosition = {
   x: number
   y: number
+}
+
+type PaneActivation = {
+  screenPosition: ScreenPosition
+  timestamp: number
+}
+
+type DuplicateSelectionResult = {
+  componentIds: string[]
+  groupIds: string[]
+}
+
+type DragDuplicateState = {
+  componentIds: string[]
+  groupIds: string[]
+  sourceParentPositionsByComponentId: Map<string, { x: number; y: number }>
 }
 
 const nodeTypes = {
@@ -89,6 +106,10 @@ const CANVAS_DESELECT_SHORTCUT_BLOCKLIST_SELECTOR = [
   '.menu-content',
   '.top-bar'
 ].join(',')
+// Middle and right mouse buttons keep viewport panning; left drag is reserved for marquee selection.
+const CANVAS_PAN_MOUSE_BUTTONS = [1, 2]
+const CANVAS_CREATE_DOUBLE_CLICK_INTERVAL_MS = 500
+const CANVAS_CREATE_DOUBLE_CLICK_DISTANCE_PX = 8
 
 function componentToNode(
   canvasId: string,
@@ -96,7 +117,8 @@ function componentToNode(
   registryVersion = 0,
   onRequestSelect?: (componentId: string) => void,
   parentGroup?: CanvasGroup,
-  isViewportInteracting = false
+  canvasZoom = 1,
+  isNodeDragging = false
 ): AtlasFlowNode {
   const position = parentGroup
     ? {
@@ -118,8 +140,9 @@ function componentToNode(
     zIndex: component.zIndex,
     data: {
       canvasId,
+      canvasZoom,
       component,
-      isViewportInteracting,
+      isNodeDragging,
       parentGroupPosition: parentGroup ? { x: parentGroup.frame.x, y: parentGroup.frame.y } : undefined,
       onRequestSelect,
       registryVersion
@@ -138,13 +161,15 @@ function cachedComponentToNode(
   registryVersion: number,
   onRequestSelect?: (componentId: string) => void,
   parentGroup?: CanvasGroup,
-  isViewportInteracting = false
+  canvasZoom = 1,
+  isNodeDragging = false
 ): AtlasFlowNode {
   const cached = cache.get(component.id)
   if (
     cached?.canvasId === canvasId &&
+    cached.canvasZoom === canvasZoom &&
     cached.component === component &&
-    cached.isViewportInteracting === isViewportInteracting &&
+    cached.isNodeDragging === isNodeDragging &&
     cached.parentGroupId === parentGroup?.id &&
     cached.parentGroupX === parentGroup?.frame.x &&
     cached.parentGroupY === parentGroup?.frame.y &&
@@ -154,11 +179,12 @@ function cachedComponentToNode(
     return cached.node
   }
 
-  const node = componentToNode(canvasId, component, registryVersion, onRequestSelect, parentGroup, isViewportInteracting)
+  const node = componentToNode(canvasId, component, registryVersion, onRequestSelect, parentGroup, canvasZoom, isNodeDragging)
   cache.set(component.id, {
     canvasId,
+    canvasZoom,
     component,
-    isViewportInteracting,
+    isNodeDragging,
     parentGroupId: parentGroup?.id,
     parentGroupX: parentGroup?.frame.x,
     parentGroupY: parentGroup?.frame.y,
@@ -311,6 +337,44 @@ function splitNodeIds(nodeIds: string[], groups: CanvasGroup[]): { componentIds:
   }
 }
 
+function duplicatedNodeIdMap(
+  canvas: CanvasDocument,
+  componentIds: string[],
+  groupIds: string[],
+  duplicated: DuplicateSelectionResult
+): Map<string, string> {
+  const result = new Map<string, string>()
+  const requestedGroupIds = new Set(groupIds)
+  const requestedComponentIds = new Set(componentIds)
+  const componentIdsInCanvas = new Set(canvas.components.map((component) => component.id))
+  const groupsToDuplicate = canvas.groups.filter((group) => requestedGroupIds.has(group.id))
+  const groupedMemberIds = new Set(groupsToDuplicate.flatMap((group) => group.memberIds))
+  let duplicatedComponentIndex = 0
+
+  groupsToDuplicate.forEach((group, index) => {
+    const duplicatedGroupId = duplicated.groupIds[index]
+    if (duplicatedGroupId) result.set(group.id, duplicatedGroupId)
+
+    for (const memberId of group.memberIds) {
+      if (!componentIdsInCanvas.has(memberId)) continue
+
+      const duplicatedComponentId = duplicated.componentIds[duplicatedComponentIndex]
+      duplicatedComponentIndex += 1
+      if (duplicatedComponentId) result.set(memberId, duplicatedComponentId)
+    }
+  })
+
+  for (const component of canvas.components) {
+    if (!requestedComponentIds.has(component.id) || groupedMemberIds.has(component.id)) continue
+
+    const duplicatedComponentId = duplicated.componentIds[duplicatedComponentIndex]
+    duplicatedComponentIndex += 1
+    if (duplicatedComponentId) result.set(component.id, duplicatedComponentId)
+  }
+
+  return result
+}
+
 function groupById(groups: CanvasGroup[]): Map<string, CanvasGroup> {
   return new Map(groups.map((group) => [group.id, group]))
 }
@@ -330,8 +394,25 @@ function groupByMemberId(groups: CanvasGroup[]): Map<string, CanvasGroup> {
   return groupsByMember
 }
 
-function absoluteNodePosition(node: CanvasFlowNode, parentGroup: CanvasGroup | undefined): { x: number; y: number } {
-  if (!parentGroup) {
+function movingComponentIdsForNodes(nodeIds: string[], groups: CanvasGroup[]): Set<string> {
+  const { componentIds, groupIds } = splitNodeIds(nodeIds, groups)
+  const groupsById = groupById(groups)
+  const result = new Set(componentIds)
+
+  for (const groupId of groupIds) {
+    const group = groupsById.get(groupId)
+    if (!group) continue
+
+    for (const memberId of group.memberIds) {
+      result.add(memberId)
+    }
+  }
+
+  return result
+}
+
+function absoluteNodePosition(node: CanvasFlowNode, parentPosition: { x: number; y: number } | undefined): { x: number; y: number } {
+  if (!parentPosition) {
     return {
       x: Math.round(node.position.x),
       y: Math.round(node.position.y)
@@ -339,8 +420,8 @@ function absoluteNodePosition(node: CanvasFlowNode, parentGroup: CanvasGroup | u
   }
 
   return {
-    x: Math.round(parentGroup.frame.x + node.position.x),
-    y: Math.round(parentGroup.frame.y + node.position.y)
+    x: Math.round(parentPosition.x + node.position.x),
+    y: Math.round(parentPosition.y + node.position.y)
   }
 }
 
@@ -522,6 +603,20 @@ function createPointAnchor(x: number, y: number): Measurable {
   }
 }
 
+function isDoubleClickPaneActivation(previous: PaneActivation | null, current: PaneActivation): boolean {
+  if (!previous) return false
+
+  const elapsedMs = current.timestamp - previous.timestamp
+  if (elapsedMs < 0 || elapsedMs > CANVAS_CREATE_DOUBLE_CLICK_INTERVAL_MS) return false
+
+  const distancePx = Math.hypot(
+    current.screenPosition.x - previous.screenPosition.x,
+    current.screenPosition.y - previous.screenPosition.y
+  )
+
+  return distancePx <= CANVAS_CREATE_DOUBLE_CLICK_DISTANCE_PX
+}
+
 function CanvasCreateMenu({
   anchorRef,
   open,
@@ -595,8 +690,10 @@ function CanvasZoomControls({ hasNodes }: { hasNodes: boolean }): JSX.Element {
   const zoomPercent = Math.round(zoom * 100)
 
   const notifyAfterViewportAction = useCallback((action: Promise<boolean>) => {
-    void action.then(() => notifyCanvasViewportSync()).catch(() => undefined)
-  }, [])
+    void action
+      .then(() => notifyCanvasViewportSync(typeof reactFlow.getViewport === 'function' ? reactFlow.getViewport() : undefined))
+      .catch(() => undefined)
+  }, [reactFlow])
 
   const zoomOut = useCallback(() => {
     notifyAfterViewportAction(reactFlow.zoomOut({ duration: 140, interpolate: 'linear' }))
@@ -975,7 +1072,7 @@ export function CanvasBoard(): JSX.Element {
     canvas
       ? [
           ...(canvas.groups ?? []).map((group) => groupToNode(canvas.id, group)),
-          ...canvas.components.map((component) => componentToNode(canvas.id, component, componentRegistryVersion))
+          ...canvas.components.map((component) => componentToNode(canvas.id, component, componentRegistryVersion, undefined, undefined, canvas.viewport.zoom))
         ]
       : []
   )
@@ -984,19 +1081,22 @@ export function CanvasBoard(): JSX.Element {
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
   const [pendingDeleteGroupIds, setPendingDeleteGroupIds] = useState<string[] | null>(null)
   const [isFileDragActive, setIsFileDragActive] = useState(false)
-  const [isViewportInteracting, setIsViewportInteracting] = useState(false)
+  const [draggingNodeIds, setDraggingNodeIds] = useState<Set<string>>(() => new Set())
   const createMenuAnchorRef = useRef<Measurable>(createPointAnchor(0, 0))
   const canvasBoardRef = useRef<HTMLElement | null>(null)
   const lastPointerScreenPositionRef = useRef<ScreenPosition | null>(null)
+  const lastPaneActivationRef = useRef<PaneActivation | null>(null)
   const pendingSelectedNodeIdsRef = useRef<Set<string> | null>(null)
   const pendingPetTargetRef = useRef<PetAlertTarget | null>(null)
   const componentNodeCacheRef = useRef(new Map<string, ComponentNodeCacheEntry>())
   const focusNodeFrameRef = useRef<number | null>(null)
+  const dragDuplicateStateRef = useRef<DragDuplicateState | null>(null)
   const nodeDragInteractionActiveRef = useRef(false)
   const viewportInteractionActiveRef = useRef(false)
 
   useEffect(() => {
     return () => {
+      dragDuplicateStateRef.current = null
       if (focusNodeFrameRef.current !== null) {
         window.cancelAnimationFrame(focusNodeFrameRef.current)
       }
@@ -1012,6 +1112,7 @@ export function CanvasBoard(): JSX.Element {
   }, [endCanvasInteraction])
 
   const finishNodeDragInteraction = useCallback(() => {
+    setDraggingNodeIds((currentIds) => (currentIds.size === 0 ? currentIds : new Set()))
     if (!nodeDragInteractionActiveRef.current) return
 
     nodeDragInteractionActiveRef.current = false
@@ -1046,6 +1147,7 @@ export function CanvasBoard(): JSX.Element {
     const liveComponentIds = new Set<string>()
     const groups = canvas.groups ?? []
     const memberGroups = groupByMemberId(groups)
+    const draggingComponentIds = movingComponentIdsForNodes([...draggingNodeIds], groups)
     const nextComponentNodes = canvas.components.map((component) => {
       liveComponentIds.add(component.id)
       return cachedComponentToNode(
@@ -1055,7 +1157,8 @@ export function CanvasBoard(): JSX.Element {
         componentRegistryVersion,
         selectComponentForContextMenu,
         memberGroups.get(component.id),
-        isViewportInteracting
+        canvas.viewport.zoom,
+        draggingComponentIds.has(component.id)
       )
     })
 
@@ -1065,11 +1168,13 @@ export function CanvasBoard(): JSX.Element {
       }
     }
 
-    return [
+    const nextNodes = [
       ...groups.map((group) => groupToNode(canvas.id, group)),
       ...nextComponentNodes
     ]
-  }, [canvas, componentRegistryVersion, isViewportInteracting, selectComponentForContextMenu])
+
+    return draggingNodeIds.size > 0 ? elevateNodeIds(nextNodes, draggingNodeIds) : nextNodes
+  }, [canvas, componentRegistryVersion, draggingNodeIds, selectComponentForContextMenu])
 
   useLayoutEffect(() => {
     setNodes((currentNodes) => {
@@ -1127,9 +1232,29 @@ export function CanvasBoard(): JSX.Element {
   )
 
   const onNodeDragStart: OnNodeDrag<CanvasFlowNode> = useCallback(
-    (_, node, draggedNodes) => {
+    (event, node, draggedNodes) => {
       closeCreateMenu()
       const movingNodes = draggedNodes.length > 0 ? draggedNodes : [node]
+      const movingNodeIds = movingNodes.map((draggedNode) => draggedNode.id)
+      setDraggingNodeIds(new Set(movingNodeIds))
+      dragDuplicateStateRef.current = null
+      if (event.altKey && activeCanvasId && canvas) {
+        const dragDuplicateState = splitNodeIds(movingNodeIds, canvas.groups ?? [])
+        const memberGroups = groupByMemberId(canvas.groups ?? [])
+        const sourceParentPositionsByComponentId = new Map<string, { x: number; y: number }>()
+
+        for (const componentId of dragDuplicateState.componentIds) {
+          const parentGroup = memberGroups.get(componentId)
+          if (parentGroup) {
+            sourceParentPositionsByComponentId.set(componentId, { x: parentGroup.frame.x, y: parentGroup.frame.y })
+          }
+        }
+
+        dragDuplicateStateRef.current = {
+          ...dragDuplicateState,
+          sourceParentPositionsByComponentId
+        }
+      }
       setNodes((currentNodes) => elevateNodeIds(currentNodes, new Set(movingNodes.map((draggedNode) => draggedNode.id))))
 
       if (nodeDragInteractionActiveRef.current) return
@@ -1137,28 +1262,62 @@ export function CanvasBoard(): JSX.Element {
       nodeDragInteractionActiveRef.current = true
       beginCanvasInteraction()
     },
-    [beginCanvasInteraction, closeCreateMenu]
+    [activeCanvasId, beginCanvasInteraction, canvas, closeCreateMenu]
   )
 
   const onNodeDragStop: OnNodeDrag<CanvasFlowNode> = useCallback(
     (_, node, draggedNodes) => {
+      const dragDuplicateState = dragDuplicateStateRef.current
+      dragDuplicateStateRef.current = null
+
       try {
         const stoppedNodes = draggedNodes.length > 0 ? draggedNodes : [node]
         const stoppedNodeIds = new Set(stoppedNodes.map((draggedNode) => draggedNode.id))
-        setNodes((currentNodes) => unselectNodeIds(restorePersistedZIndexes(currentNodes, persistedNodes, stoppedNodeIds), stoppedNodeIds))
+        const shouldKeepDraggedSelection = stoppedNodeIds.size > 1 && !dragDuplicateState
+        setNodes((currentNodes) => {
+          const restoredNodes = restorePersistedZIndexes(currentNodes, persistedNodes, stoppedNodeIds)
+          return shouldKeepDraggedSelection ? restoredNodes : unselectNodeIds(restoredNodes, stoppedNodeIds)
+        })
 
         if (!activeCanvasId || !canvas) return
 
-        const groups = canvas.groups ?? []
+        let canvasForPersistence = canvas
+        let nodesForPersistence = stoppedNodes
+        const sourceParentPositionsByDuplicateId = new Map<string, { x: number; y: number }>()
+        let didDuplicateOnDrag = false
+
+        if (dragDuplicateState && (dragDuplicateState.componentIds.length > 0 || dragDuplicateState.groupIds.length > 0)) {
+          const duplicated = duplicateSelection(activeCanvasId, dragDuplicateState.componentIds, dragDuplicateState.groupIds)
+          const sourceToDuplicateIds = duplicatedNodeIdMap(canvas, dragDuplicateState.componentIds, dragDuplicateState.groupIds, duplicated)
+          for (const [sourceComponentId, sourceParentPosition] of dragDuplicateState.sourceParentPositionsByComponentId) {
+            const duplicatedComponentId = sourceToDuplicateIds.get(sourceComponentId)
+            if (duplicatedComponentId) sourceParentPositionsByDuplicateId.set(duplicatedComponentId, sourceParentPosition)
+          }
+          const duplicatedStoppedNodes = stoppedNodes
+            .map((draggedNode) => {
+              const duplicatedId = sourceToDuplicateIds.get(draggedNode.id)
+              return duplicatedId ? { ...draggedNode, id: duplicatedId } : null
+            })
+            .filter((draggedNode): draggedNode is CanvasFlowNode => Boolean(draggedNode))
+
+          if (duplicatedStoppedNodes.length === 0) return
+
+          pendingSelectedNodeIdsRef.current = new Set(duplicatedStoppedNodes.map((draggedNode) => draggedNode.id))
+          canvasForPersistence = useCanvasStore.getState().canvases[activeCanvasId] ?? canvas
+          nodesForPersistence = duplicatedStoppedNodes
+          didDuplicateOnDrag = true
+        }
+
+        const groups = canvasForPersistence.groups ?? []
         const groupsById = groupById(groups)
         const memberGroups = groupByMemberId(groups)
-        const stoppedGroupIds = new Set(stoppedNodes.filter((draggedNode) => groupsById.has(draggedNode.id)).map((draggedNode) => draggedNode.id))
+        const stoppedGroupIds = new Set(nodesForPersistence.filter((draggedNode) => groupsById.has(draggedNode.id)).map((draggedNode) => draggedNode.id))
         const movedGroupMemberIds = new Set(groups.filter((group) => stoppedGroupIds.has(group.id)).flatMap((group) => group.memberIds))
-        const componentById = new Map(canvas.components.map((component) => [component.id, component]))
+        const componentById = new Map(canvasForPersistence.components.map((component) => [component.id, component]))
         const updatesById = new Map<string, { componentId: string; frame: { x: number; y: number }; reconcileGroup?: boolean }>()
         let didMoveGroup = false
 
-        for (const draggedNode of stoppedNodes) {
+        for (const draggedNode of nodesForPersistence) {
           const group = groupsById.get(draggedNode.id)
           if (group) {
             const position = {
@@ -1177,7 +1336,8 @@ export function CanvasBoard(): JSX.Element {
           const component = componentById.get(draggedNode.id)
           if (!component) continue
 
-          const position = absoluteNodePosition(draggedNode, memberGroups.get(component.id))
+          const parentPosition = sourceParentPositionsByDuplicateId.get(component.id) ?? memberGroups.get(component.id)?.frame
+          const position = absoluteNodePosition(draggedNode, parentPosition)
           const x = position.x
           const y = position.y
           if (component.frame.x === x && component.frame.y === y) continue
@@ -1191,7 +1351,7 @@ export function CanvasBoard(): JSX.Element {
 
         const updates = [...updatesById.values()]
         if (updates.length === 0) {
-          if (didMoveGroup) notifyCanvasViewportSync()
+          if (didMoveGroup || didDuplicateOnDrag) notifyCanvasViewportSync()
           return
         }
 
@@ -1201,7 +1361,7 @@ export function CanvasBoard(): JSX.Element {
         finishNodeDragInteraction()
       }
     },
-    [activeCanvasId, canvas, finishNodeDragInteraction, moveGroup, persistedNodes, updateComponentFrames]
+    [activeCanvasId, canvas, duplicateSelection, finishNodeDragInteraction, moveGroup, persistedNodes, updateComponentFrames]
   )
 
   const openNodeFinder = useCallback(() => {
@@ -1211,7 +1371,9 @@ export function CanvasBoard(): JSX.Element {
 
   useEffect(() => {
     setIsNodeFinderOpen(false)
-    setIsViewportInteracting(false)
+    setDraggingNodeIds((currentIds) => (currentIds.size === 0 ? currentIds : new Set()))
+    lastPaneActivationRef.current = null
+    dragDuplicateStateRef.current = null
     finishNodeDragInteraction()
     finishViewportInteraction()
   }, [activeCanvasId, finishNodeDragInteraction, finishViewportInteraction])
@@ -1235,8 +1397,8 @@ export function CanvasBoard(): JSX.Element {
 
       void reactFlow
         .setCenter(centerX, centerY, { duration: NODE_FOCUS_DURATION, zoom: targetZoom })
-        .then(() => notifyCanvasViewportSync())
-        .catch(() => notifyCanvasViewportSync())
+        .then(() => notifyCanvasViewportSync(typeof reactFlow.getViewport === 'function' ? reactFlow.getViewport() : undefined))
+        .catch(() => notifyCanvasViewportSync(typeof reactFlow.getViewport === 'function' ? reactFlow.getViewport() : undefined))
 
       if (focusNodeFrameRef.current !== null) {
         window.cancelAnimationFrame(focusNodeFrameRef.current)
@@ -1268,8 +1430,8 @@ export function CanvasBoard(): JSX.Element {
 
       void reactFlow
         .setCenter(center.x, center.y, { duration: NODE_FOCUS_DURATION, zoom: targetZoom })
-        .then(() => notifyCanvasViewportSync())
-        .catch(() => notifyCanvasViewportSync())
+        .then(() => notifyCanvasViewportSync(typeof reactFlow.getViewport === 'function' ? reactFlow.getViewport() : undefined))
+        .catch(() => notifyCanvasViewportSync(typeof reactFlow.getViewport === 'function' ? reactFlow.getViewport() : undefined))
 
       if (focusNodeFrameRef.current !== null) {
         window.cancelAnimationFrame(focusNodeFrameRef.current)
@@ -1334,22 +1496,6 @@ export function CanvasBoard(): JSX.Element {
       setPendingDeleteGroupIds(groupIds)
     },
     [closeCreateMenu]
-  )
-
-  const duplicateSelectedNodes = useCallback(
-    (componentIds: string[], groupIds: string[]) => {
-      if (!activeCanvasId || (componentIds.length === 0 && groupIds.length === 0)) return
-
-      const duplicated = duplicateSelection(activeCanvasId, componentIds, groupIds)
-      const duplicatedNodeIds = [...duplicated.groupIds, ...duplicated.componentIds]
-      if (duplicatedNodeIds.length === 0) return
-
-      closeCreateMenu()
-      pendingSelectedNodeIdsRef.current = new Set(duplicatedNodeIds)
-      setNodes((currentNodes) => currentNodes.map((node) => (node.selected ? { ...node, selected: false } : node)))
-      notifyCanvasViewportSync()
-    },
-    [activeCanvasId, closeCreateMenu, duplicateSelection]
   )
 
   const clearSelectedNodes = useCallback(
@@ -1472,13 +1618,6 @@ export function CanvasBoard(): JSX.Element {
         return
       }
 
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'd') {
-        if (isCanvasShortcutBlocked(event.target, selectedNodeIdSet, 'duplicate')) return
-
-        event.preventDefault()
-        event.stopPropagation()
-        duplicateSelectedNodes(componentIds, groupIds)
-      }
     },
     [
       activeCanvasId,
@@ -1486,7 +1625,6 @@ export function CanvasBoard(): JSX.Element {
       clearSelectedNodes,
       createGroupFromSelection,
       deleteSelectedComponents,
-      duplicateSelectedNodes,
       getSelectedNodeIds,
       openNodeFinder,
       openCreateMenuAtScreenPosition,
@@ -1505,26 +1643,23 @@ export function CanvasBoard(): JSX.Element {
     return () => window.removeEventListener('keydown', handleCanvasKeyDown, true)
   }, [handleCanvasKeyDown])
 
-  const onMoveStart: OnMoveStart = useCallback(() => {
+  const onMoveStart: OnMoveStart = useCallback((_, viewport) => {
     closeCreateMenu()
     if (!viewportInteractionActiveRef.current) {
       viewportInteractionActiveRef.current = true
       beginCanvasInteraction()
     }
-    setIsViewportInteracting((current) => (current ? current : true))
-    notifyCanvasViewportSync()
+    notifyCanvasViewportSync(viewport)
   }, [beginCanvasInteraction, closeCreateMenu])
 
-  const onMove: OnMove = useCallback(() => {
-    notifyCanvasViewportSync()
+  const onMove: OnMove = useCallback((_, viewport) => {
+    notifyCanvasViewportSync(viewport)
   }, [])
 
   const onMoveEnd: OnMoveEnd = useCallback(
     (_, viewport) => {
-      setIsViewportInteracting((current) => (current ? false : current))
-
       if (!activeCanvasId) {
-        notifyCanvasViewportSync()
+        notifyCanvasViewportSync(viewport)
         finishViewportInteraction()
         return
       }
@@ -1540,17 +1675,26 @@ export function CanvasBoard(): JSX.Element {
         })
       }
 
-      notifyCanvasViewportSync()
+      notifyCanvasViewportSync(viewport)
       finishViewportInteraction()
     },
     [activeCanvasId, canvas, finishViewportInteraction, updateCanvas]
   )
 
   const openCreateMenuAtPointer = useCallback((event: MouseEvent) => {
-    if (event.detail !== 2) return
+    const screenPosition = { x: event.clientX, y: event.clientY }
+    const currentActivation = {
+      screenPosition,
+      timestamp: typeof event.timeStamp === 'number' ? event.timeStamp : Date.now()
+    }
+    const isDoubleClick = event.detail === 2 || isDoubleClickPaneActivation(lastPaneActivationRef.current, currentActivation)
+
+    lastPaneActivationRef.current = isDoubleClick ? null : currentActivation
+    if (!isDoubleClick) return
+
     event.preventDefault()
 
-    openCreateMenuAtScreenPosition({ x: event.clientX, y: event.clientY })
+    openCreateMenuAtScreenPosition(screenPosition)
   }, [openCreateMenuAtScreenPosition])
 
   const createComponentFromMenu = useCallback(
@@ -1693,8 +1837,7 @@ export function CanvasBoard(): JSX.Element {
       ref={canvasBoardRef}
       className={[
         'canvas-board',
-        isFileDragActive ? 'canvas-board--file-drag-active' : '',
-        isViewportInteracting ? 'canvas-board--viewport-interacting' : ''
+        isFileDragActive ? 'canvas-board--file-drag-active' : ''
       ]
         .filter(Boolean)
         .join(' ')}
@@ -1727,6 +1870,8 @@ export function CanvasBoard(): JSX.Element {
         maxZoom={2.4}
         deleteKeyCode={null}
         zoomOnDoubleClick={false}
+        panOnDrag={CANVAS_PAN_MOUSE_BUTTONS}
+        selectionOnDrag
         selectNodesOnDrag={false}
         fitView={canvas.components.length === 0 && groups.length === 0}
         style={{ backgroundColor: 'transparent' }}

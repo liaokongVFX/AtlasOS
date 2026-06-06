@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { BROWSER_NATIVE_ZOOM_MAX_FACTOR, BROWSER_NATIVE_ZOOM_MIN_FACTOR } from './browser'
 import { pluginConfigSchema, pluginIdSchema } from './plugins'
 import { petAlertTargetSchema, petSettingsSchema } from './pet'
 import { appSettingsSchema, browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
@@ -254,7 +255,8 @@ export const browserTabInputSchema = z.object({
 })
 
 export const browserSetZoomInputSchema = browserTabInputSchema.extend({
-  zoomFactor: z.number().min(0.5).max(3)
+  zoomFactor: z.number().min(BROWSER_NATIVE_ZOOM_MIN_FACTOR).max(BROWSER_NATIVE_ZOOM_MAX_FACTOR),
+  emitUpdate: z.boolean().optional().default(true)
 })
 
 export const browserSelectorInputSchema = z.object({

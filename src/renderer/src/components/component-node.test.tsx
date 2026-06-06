@@ -13,6 +13,10 @@ const rendererContextMenu = vi.hoisted(() => ({
   current: vi.fn()
 }))
 
+const rendererProps = vi.hoisted(() => ({
+  current: null as Record<string, any> | null
+}))
+
 vi.mock('@xyflow/react', async () => {
   const actual = await vi.importActual<typeof import('@xyflow/react')>('@xyflow/react')
 
@@ -29,7 +33,9 @@ vi.mock('./registry', async () => {
   const React = await vi.importActual<typeof import('react')>('react')
   const mediaFrame = await vi.importActual<typeof import('../lib/media-frame')>('../lib/media-frame')
   const Icon = () => React.createElement('svg', { 'aria-hidden': true })
-  const Renderer = ({ component, setHeaderActions }: { component: CanvasComponent; setHeaderActions?: (actions: any) => void }) => {
+  const Renderer = (props: { component: CanvasComponent; setHeaderActions?: (actions: any) => void }) => {
+    const { component, setHeaderActions } = props
+    rendererProps.current = props
     React.useEffect(() => {
       if (component.type !== 'file-tree') return undefined
 
@@ -127,6 +133,7 @@ describe('ComponentNode', () => {
   afterEach(() => {
     nodeResizerProps.current = null
     rendererContextMenu.current.mockClear()
+    rendererProps.current = null
     cleanup()
     useCanvasStore.setState(initialStore, true)
   })
@@ -169,6 +176,25 @@ describe('ComponentNode', () => {
     expect(body).toHaveClass('nodrag')
     expect(body).toHaveClass('nowheel')
     expect(document.querySelector('.component-node__interaction-shield')).not.toBeInTheDocument()
+  })
+
+  it('treats a selected node moved by a multi-node drag as canvas-interacting', () => {
+    const component = createComponent({ type: 'browser' })
+
+    render(
+      <ComponentNode
+        {...({
+          data: { canvasId: 'canvas-1', component, isNodeDragging: true },
+          selected: true,
+          dragging: false,
+          width: component.frame.width,
+          height: component.frame.height
+        } as unknown as Parameters<typeof ComponentNode>[0])}
+      />
+    )
+
+    expect(rendererProps.current?.isCanvasInteracting).toBe(true)
+    expect(rendererProps.current?.isViewportInteracting).not.toBe(true)
   })
 
   it('renders renderer-provided actions in the node header', async () => {

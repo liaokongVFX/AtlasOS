@@ -27,6 +27,8 @@ type CapturedReactFlowProps = {
   onNodeDragStart?: (event: ReactMouseEvent, node: CanvasFlowNode, nodes: CanvasFlowNode[]) => void
   onNodeDragStop?: (event: ReactMouseEvent, node: CanvasFlowNode, nodes: CanvasFlowNode[]) => void
   onPaneClick?: (event: ReactMouseEvent) => void
+  panOnDrag?: boolean | number[]
+  selectionOnDrag?: boolean
   selectNodesOnDrag?: boolean
   snapGrid?: [number, number]
   snapToGrid?: boolean
@@ -292,6 +294,8 @@ describe('CanvasBoard', () => {
     })
 
     expect(listener).toHaveBeenCalledTimes(2)
+    expect(listener).toHaveBeenNthCalledWith(1, { x: 120, y: 80, zoom: 1 })
+    expect(listener).toHaveBeenNthCalledWith(2, { x: 160, y: 95, zoom: 1 })
     unsubscribe()
   })
 
@@ -300,6 +304,14 @@ describe('CanvasBoard', () => {
 
     expect(reactFlowProps.current?.snapToGrid).toBeUndefined()
     expect(reactFlowProps.current?.snapGrid).toBeUndefined()
+  })
+
+  it('uses left-button pane drags for marquee selection', () => {
+    renderCanvasBoard()
+
+    expect(reactFlowProps.current?.selectionOnDrag).toBe(true)
+    expect(reactFlowProps.current?.panOnDrag).toEqual([1, 2])
+    expect(reactFlowProps.current?.selectNodesOnDrag).toBe(false)
   })
 
   it('renders CSS gradients as the canvas background fill', () => {
@@ -345,7 +357,7 @@ describe('CanvasBoard', () => {
     expect(backgroundImage?.getAttribute('style')).toContain('background-attachment: fixed')
   })
 
-  it('marks component nodes as viewport-interacting while the viewport is being dragged', () => {
+  it('keeps viewport drags out of component node data while notifying native browser overlays', () => {
     const canvas = createCanvas()
     canvas.components = [
       createComponent('browser-1', {
@@ -357,26 +369,30 @@ describe('CanvasBoard', () => {
       })
     ]
     useCanvasStore.setState({ canvases: { 'canvas-1': canvas } })
+    const listener = vi.fn()
+    const unsubscribe = subscribeCanvasViewportSync(listener)
 
-    const { container } = renderCanvasBoard()
+    renderCanvasBoard()
 
-    const board = container.querySelector('.canvas-board')
-    expect(board).not.toHaveClass('canvas-board--viewport-interacting')
-    expect((reactFlowProps.current?.nodes?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data.isViewportInteracting).toBe(false)
+    const nodesBeforeMove = reactFlowProps.current?.nodes
+    const browserDataBeforeMove = (nodesBeforeMove?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data
 
     act(() => {
       reactFlowProps.current?.onMoveStart?.(null, { x: 120, y: 80, zoom: 1 })
     })
 
-    expect(board).toHaveClass('canvas-board--viewport-interacting')
-    expect((reactFlowProps.current?.nodes?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data.isViewportInteracting).toBe(true)
+    expect(listener).toHaveBeenCalledWith({ x: 120, y: 80, zoom: 1 })
+    expect(reactFlowProps.current?.nodes).toBe(nodesBeforeMove)
+    expect((reactFlowProps.current?.nodes?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data).toBe(browserDataBeforeMove)
 
     act(() => {
       reactFlowProps.current?.onMoveEnd?.(null, DEFAULT_VIEWPORT)
     })
 
-    expect(board).not.toHaveClass('canvas-board--viewport-interacting')
-    expect((reactFlowProps.current?.nodes?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data.isViewportInteracting).toBe(false)
+    expect(listener).toHaveBeenLastCalledWith(DEFAULT_VIEWPORT)
+    expect(reactFlowProps.current?.nodes).toBe(nodesBeforeMove)
+    expect((reactFlowProps.current?.nodes?.find((node) => node.id === 'browser-1') as AtlasFlowNode).data).toBe(browserDataBeforeMove)
+    unsubscribe()
   })
 
   it('defers pending autosaves while the viewport is being dragged', async () => {
@@ -435,6 +451,7 @@ describe('CanvasBoard', () => {
 
     expect(reactFlowProps.current?.onNodesChange).toBeTypeOf('function')
     expect(reactFlowProps.current?.selectNodesOnDrag).toBe(false)
+    expect(reactFlowProps.current?.selectionOnDrag).toBe(true)
 
     act(() => {
       reactFlowProps.current?.onNodesChange?.([{ type: 'position', id: 'component-1', position: { x: 80, y: 120 } }])
@@ -520,7 +537,54 @@ describe('CanvasBoard', () => {
     expect(reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1')?.zIndex).toBe(1)
   })
 
-  it('persists all selected node positions together when group dragging stops', () => {
+  it('marks every moving component as node-dragging during multi-node drags', async () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('component-1'),
+            createComponent('browser-1', {
+              type: 'browser',
+              frame: { x: 560, y: 120, width: 420, height: 300 },
+              state: {
+                activeTabId: 'tab-1',
+                tabs: [{ localId: 'tab-1', title: 'Example', url: 'https://example.com' }]
+              }
+            })
+          ]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    const firstNode = reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1')
+    const browserNode = reactFlowProps.current?.nodes?.find((item) => item.id === 'browser-1')
+    expect(firstNode).toBeDefined()
+    expect(browserNode).toBeDefined()
+
+    act(() => {
+      reactFlowProps.current?.onNodeDragStart?.({} as ReactMouseEvent, firstNode!, [firstNode!, browserNode!])
+    })
+
+    await waitFor(() => {
+      expect((reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1') as AtlasFlowNode).data.isNodeDragging).toBe(true)
+      expect((reactFlowProps.current?.nodes?.find((item) => item.id === 'browser-1') as AtlasFlowNode).data.isNodeDragging).toBe(true)
+    })
+
+    act(() => {
+      reactFlowProps.current?.onNodeDragStop?.({} as ReactMouseEvent, firstNode!, [firstNode!, browserNode!])
+    })
+
+    await waitFor(() => {
+      expect((reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1') as AtlasFlowNode).data.isNodeDragging).not.toBe(true)
+      expect((reactFlowProps.current?.nodes?.find((item) => item.id === 'browser-1') as AtlasFlowNode).data.isNodeDragging).not.toBe(true)
+    })
+  })
+
+  it('keeps selected nodes moving together across repeated group drags', () => {
     useCanvasStore.setState((state) => ({
       canvases: {
         ...state.canvases,
@@ -562,17 +626,81 @@ describe('CanvasBoard', () => {
     const components = useCanvasStore.getState().canvases['canvas-1'].components
     expect(components[0].frame).toMatchObject({ x: 140, y: 180 })
     expect(components[1].frame).toMatchObject({ x: 600, y: 200 })
-    expect(reactFlowProps.current?.nodes?.some((item) => item.selected)).toBe(false)
+    expect(reactFlowProps.current?.nodes?.filter((item) => item.selected).map((item) => item.id)).toEqual(['component-1', 'component-2'])
     expect(listener).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      const draggedNodes = [
+        { ...reactFlowProps.current!.nodes!.find((item) => item.id === 'component-1')!, position: { x: 170, y: 210 } },
+        { ...reactFlowProps.current!.nodes!.find((item) => item.id === 'component-2')!, position: { x: 630, y: 230 } }
+      ]
+      reactFlowProps.current?.onNodeDragStop?.({} as ReactMouseEvent, draggedNodes[0], draggedNodes)
+    })
+
+    const movedAgainComponents = useCanvasStore.getState().canvases['canvas-1'].components
+    expect(movedAgainComponents[0].frame).toMatchObject({ x: 170, y: 210 })
+    expect(movedAgainComponents[1].frame).toMatchObject({ x: 630, y: 230 })
+    expect(reactFlowProps.current?.nodes?.filter((item) => item.selected).map((item) => item.id)).toEqual(['component-1', 'component-2'])
+    expect(listener).toHaveBeenCalledTimes(2)
     unsubscribe()
   })
 
-  it('creates a selected component from the double-click menu at the pointer position', async () => {
+  it('creates a selected component from the selection-mode double-click menu at the pointer position', async () => {
     renderCanvasBoard()
 
     expect(reactFlowProps.current?.onPaneClick).toBeTypeOf('function')
     expect(reactFlowProps.current?.zoomOnDoubleClick).toBe(false)
     expect(reactFlowProps.current?.deleteKeyCode).toBeNull()
+
+    act(() => {
+      reactFlowProps.current?.onPaneClick?.({
+        detail: 0,
+        clientX: 320,
+        clientY: 240,
+        timeStamp: 100,
+        preventDefault: vi.fn()
+      } as unknown as ReactMouseEvent)
+    })
+
+    expect(screen.queryByRole('menu', { name: 'Create component' })).not.toBeInTheDocument()
+
+    const preventDefault = vi.fn()
+    act(() => {
+      reactFlowProps.current?.onPaneClick?.({
+        detail: 0,
+        clientX: 322,
+        clientY: 243,
+        timeStamp: 320,
+        preventDefault
+      } as unknown as ReactMouseEvent)
+    })
+
+    expect(preventDefault).toHaveBeenCalled()
+
+    const terminalItem = await screen.findByRole('menuitem', { name: 'Terminal' })
+    const browserItem = await screen.findByRole('menuitem', { name: 'Browser' })
+    const kanbanItem = await screen.findByRole('menuitem', { name: 'Kanban' })
+
+    expect(terminalItem).toHaveClass('menu-item--active')
+    fireEvent.mouseEnter(browserItem)
+    expect(browserItem).toHaveClass('menu-item--active')
+    expect(terminalItem).not.toHaveClass('menu-item--active')
+
+    fireEvent.click(kanbanItem)
+
+    const components = useCanvasStore.getState().canvases['canvas-1'].components
+    expect(components).toHaveLength(1)
+    expect(components[0]).toMatchObject({
+      type: 'kanban',
+      frame: {
+        x: 322,
+        y: 243
+      }
+    })
+  })
+
+  it('still accepts a native click-detail double-click for the create menu', async () => {
+    renderCanvasBoard()
 
     act(() => {
       reactFlowProps.current?.onPaneClick?.({
@@ -747,7 +875,7 @@ describe('CanvasBoard', () => {
     expect(useCanvasStore.getState().canvases['canvas-1'].components).toHaveLength(0)
   })
 
-  it('duplicates the selected component with Ctrl+D', () => {
+  it('duplicates a dragged component with Alt+drag without moving the source', async () => {
     useCanvasStore.setState((state) => ({
       canvases: {
         ...state.canvases,
@@ -760,51 +888,115 @@ describe('CanvasBoard', () => {
 
     renderCanvasBoard()
 
+    const node = reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1')
+    expect(node).toBeDefined()
+
     act(() => {
-      reactFlowProps.current?.onNodesChange?.([{ id: 'component-1', type: 'select', selected: true }])
+      reactFlowProps.current?.onNodeDragStart?.({ altKey: true } as ReactMouseEvent, node!, [node!])
     })
 
     act(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', ctrlKey: true, bubbles: true, cancelable: true }))
+      const draggedNode = { ...node!, position: { x: 220, y: 240 } }
+      reactFlowProps.current?.onNodeDragStop?.({} as ReactMouseEvent, draggedNode, [draggedNode])
     })
 
     const components = useCanvasStore.getState().canvases['canvas-1'].components
     expect(components).toHaveLength(2)
-    expect(components[1]).toMatchObject({
+    expect(components.find((component) => component.id === 'component-1')).toMatchObject({
+      frame: { x: 100, y: 120, width: 420, height: 300 }
+    })
+    const duplicatedComponent = components.find((component) => component.id !== 'component-1')
+    expect(duplicatedComponent).toMatchObject({
       type: 'markdown-note',
       title: 'Note',
-      frame: { x: 132, y: 152, width: 420, height: 300 },
+      frame: { x: 220, y: 240, width: 420, height: 300 },
       zIndex: 2,
       state: { content: 'hello' }
     })
-    expect(components[1].id).not.toBe('component-1')
+    expect(duplicatedComponent?.id).toBeDefined()
+    await waitFor(() => expect(reactFlowProps.current?.nodes?.find((item) => item.id === duplicatedComponent?.id)?.selected).toBe(true))
+    expect(reactFlowProps.current?.nodes?.find((item) => item.id === 'component-1')?.selected).not.toBe(true)
   })
 
-  it('duplicates from React Flow live selection when controlled nodes have not caught up yet', () => {
+  it('duplicates a grouped component with Alt+drag using the source group coordinates', async () => {
     useCanvasStore.setState((state) => ({
       canvases: {
         ...state.canvases,
         'canvas-1': {
           ...state.canvases['canvas-1'],
-          components: [createComponent('component-1')]
+          components: [createComponent('component-1')],
+          groups: [createGroup('group-1', { memberIds: ['component-1'] })]
         }
       }
     }))
 
     renderCanvasBoard()
 
-    const visualSelectedNode = reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')
-    expect(visualSelectedNode?.selected).not.toBe(true)
-
-    reactFlowMock.getNodes.mockReturnValue(visualSelectedNode ? [{ ...visualSelectedNode, selected: true }] : [])
-
-    act(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', ctrlKey: true, bubbles: true, cancelable: true }))
+    const componentNode = reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')
+    expect(componentNode).toMatchObject({
+      parentId: 'group-1',
+      position: { x: 20, y: 40 }
     })
 
-    const components = useCanvasStore.getState().canvases['canvas-1'].components
-    expect(components).toHaveLength(2)
-    expect(components[1].id).not.toBe('component-1')
+    act(() => {
+      reactFlowProps.current?.onNodeDragStart?.({ altKey: true } as ReactMouseEvent, componentNode!, [componentNode!])
+    })
+
+    act(() => {
+      const draggedNode = { ...componentNode!, position: { x: 60, y: 80 } }
+      reactFlowProps.current?.onNodeDragStop?.({} as ReactMouseEvent, draggedNode, [draggedNode])
+    })
+
+    const canvas = useCanvasStore.getState().canvases['canvas-1']
+    const duplicatedComponent = canvas.components.find((component) => component.id !== 'component-1')
+
+    expect(canvas.components).toHaveLength(2)
+    expect(canvas.components.find((component) => component.id === 'component-1')?.frame).toMatchObject({ x: 100, y: 120 })
+    expect(duplicatedComponent?.frame).toMatchObject({ x: 140, y: 160 })
+    expect(canvas.groups.find((group) => group.id === 'group-1')?.memberIds).toEqual(['component-1', duplicatedComponent?.id])
+    await waitFor(() => expect(reactFlowProps.current?.nodes?.find((item) => item.id === duplicatedComponent?.id)?.selected).toBe(true))
+  })
+
+  it('duplicates a dragged group and its members with Alt+drag without moving the source group', async () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [createComponent('component-1')],
+          groups: [createGroup('group-1', { memberIds: ['component-1'] })]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    const groupNode = reactFlowProps.current?.nodes?.find((node) => node.id === 'group-1')
+    expect(groupNode).toBeDefined()
+
+    act(() => {
+      reactFlowProps.current?.onNodeDragStart?.({ altKey: true } as ReactMouseEvent, groupNode!, [groupNode!])
+    })
+
+    act(() => {
+      const draggedGroupNode = { ...groupNode!, position: { x: 120, y: 100 } }
+      reactFlowProps.current?.onNodeDragStop?.({} as ReactMouseEvent, draggedGroupNode, [draggedGroupNode])
+    })
+
+    const canvas = useCanvasStore.getState().canvases['canvas-1']
+    const originalGroup = canvas.groups.find((group) => group.id === 'group-1')
+    const duplicatedGroup = canvas.groups.find((group) => group.id !== 'group-1')
+    const duplicatedComponent = canvas.components.find((component) => duplicatedGroup?.memberIds.includes(component.id))
+
+    expect(canvas.groups).toHaveLength(2)
+    expect(canvas.components).toHaveLength(2)
+    expect(originalGroup?.frame).toMatchObject({ x: 80, y: 80 })
+    expect(canvas.components.find((component) => component.id === 'component-1')?.frame).toMatchObject({ x: 100, y: 120 })
+    expect(duplicatedGroup?.frame).toMatchObject({ x: 120, y: 100 })
+    expect(duplicatedGroup?.memberIds).toEqual(duplicatedComponent ? [duplicatedComponent.id] : [])
+    expect(duplicatedComponent?.frame).toMatchObject({ x: 140, y: 140 })
+    await waitFor(() => expect(reactFlowProps.current?.nodes?.find((item) => item.id === duplicatedGroup?.id)?.selected).toBe(true))
+    expect(reactFlowProps.current?.nodes?.find((item) => item.id === 'group-1')?.selected).not.toBe(true)
   })
 
   it('hides group selection actions and ignores Ctrl+G for one selected component', () => {

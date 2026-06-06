@@ -157,4 +157,89 @@ describe('preload atlas API', () => {
       command: 'claude --resume alpha-session'
     })
   })
+
+  it('shares one IPC listener for repeated terminal cwd subscriptions', async () => {
+    await import('./index')
+    const atlasApi = electronMocks.exposeInMainWorld.mock.calls[0][1]
+    const listenerA = vi.fn()
+    const listenerB = vi.fn()
+
+    const disposeA = atlasApi.terminal.onCwd('session-1', listenerA)
+    const disposeB = atlasApi.terminal.onCwd('session-2', listenerB)
+    const terminalCwdListeners = electronMocks.on.mock.calls.filter(([channel]) => channel === 'terminal:cwd')
+    const wrapped = terminalCwdListeners[0]?.[1]
+
+    expect(terminalCwdListeners).toHaveLength(1)
+    expect(wrapped).toBeDefined()
+
+    wrapped({}, { sessionId: 'session-2', cwd: 'D:\\projects\\AtlasOS' })
+
+    expect(listenerA).not.toHaveBeenCalled()
+    expect(listenerB).toHaveBeenCalledWith('D:\\projects\\AtlasOS')
+
+    disposeA()
+    expect(electronMocks.removeListener).not.toHaveBeenCalled()
+
+    wrapped({}, { sessionId: 'session-1', cwd: 'D:\\projects\\Other' })
+    expect(listenerA).not.toHaveBeenCalled()
+
+    disposeB()
+    expect(electronMocks.removeListener).toHaveBeenCalledWith('terminal:cwd', wrapped)
+  })
+
+  it('passes browser native interactivity through IPC', async () => {
+    await import('./index')
+    const atlasApi = electronMocks.exposeInMainWorld.mock.calls[0][1]
+
+    electronMocks.invoke.mockResolvedValueOnce({ ok: true })
+    await atlasApi.browser.setBounds({
+      tabId: 'tab-1',
+      visible: true,
+      interactive: false,
+      bounds: { x: 20, y: 48, width: 420, height: 260 },
+      contentBounds: { x: 20, y: 48, width: 420, height: 260 }
+    })
+
+    expect(electronMocks.invoke).toHaveBeenCalledWith('browser:set-bounds', {
+      tabId: 'tab-1',
+      visible: true,
+      interactive: false,
+      bounds: { x: 20, y: 48, width: 420, height: 260 },
+      contentBounds: { x: 20, y: 48, width: 420, height: 260 }
+    })
+  })
+
+  it('exposes browser native content interaction events', async () => {
+    await import('./index')
+    const atlasApi = electronMocks.exposeInMainWorld.mock.calls[0][1]
+    const listener = vi.fn()
+
+    const dispose = atlasApi.browser.onContentInteractionRequested(listener)
+    const wrapped = electronMocks.on.mock.calls.find(([channel]) => channel === 'browser:content-interaction-requested')?.[1]
+    expect(wrapped).toBeDefined()
+
+    wrapped({}, { componentId: 'browser-1' })
+
+    expect(listener).toHaveBeenCalledWith({ componentId: 'browser-1' })
+
+    dispose()
+    expect(electronMocks.removeListener).toHaveBeenCalledWith('browser:content-interaction-requested', wrapped)
+  })
+
+  it('exposes browser native tab zoom request events', async () => {
+    await import('./index')
+    const atlasApi = electronMocks.exposeInMainWorld.mock.calls[0][1]
+    const listener = vi.fn()
+
+    const dispose = atlasApi.browser.onTabZoomRequested(listener)
+    const wrapped = electronMocks.on.mock.calls.find(([channel]) => channel === 'browser:tab-zoom-requested')?.[1]
+    expect(wrapped).toBeDefined()
+
+    wrapped({}, { tabId: 'tab-1', direction: -1 })
+
+    expect(listener).toHaveBeenCalledWith({ tabId: 'tab-1', direction: -1 })
+
+    dispose()
+    expect(electronMocks.removeListener).toHaveBeenCalledWith('browser:tab-zoom-requested', wrapped)
+  })
 })

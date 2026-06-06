@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  browserBoundsInputSchema,
+  browserSetZoomInputSchema,
   listTreeInputSchema,
   claudeHistoryListInputSchema,
   claudeHistorySessionInputSchema,
@@ -86,6 +88,52 @@ describe('terminalReadClipboardFilesInputSchema', () => {
 describe('systemMetricsGetInputSchema', () => {
   it('accepts the empty system metrics request', () => {
     expect(systemMetricsGetInputSchema.parse({})).toEqual({})
+  })
+})
+
+describe('browserSetZoomInputSchema', () => {
+  it('defaults native zoom changes to emitting tab updates', () => {
+    expect(browserSetZoomInputSchema.parse({ tabId: 'tab-1', zoomFactor: 0.75 })).toEqual({
+      tabId: 'tab-1',
+      zoomFactor: 0.75,
+      emitUpdate: true
+    })
+  })
+
+  it('accepts render-only native zoom changes', () => {
+    expect(browserSetZoomInputSchema.parse({ tabId: 'tab-1', zoomFactor: 0.75, emitUpdate: false })).toEqual({
+      tabId: 'tab-1',
+      zoomFactor: 0.75,
+      emitUpdate: false
+    })
+  })
+})
+
+describe('browserBoundsInputSchema', () => {
+  it('defaults native browser bounds to interactive for older callers', () => {
+    expect(
+      browserBoundsInputSchema.parse({
+        tabId: 'tab-1',
+        visible: true,
+        bounds: { x: 20, y: 48, width: 420, height: 260 }
+      })
+    ).toEqual({
+      tabId: 'tab-1',
+      visible: true,
+      interactive: true,
+      bounds: { x: 20, y: 48, width: 420, height: 260 }
+    })
+  })
+
+  it('accepts non-interactive native browser bounds', () => {
+    expect(
+      browserBoundsInputSchema.parse({
+        tabId: 'tab-1',
+        visible: true,
+        interactive: false,
+        bounds: { x: 20, y: 48, width: 420, height: 260 }
+      }).interactive
+    ).toBe(false)
   })
 })
 

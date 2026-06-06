@@ -668,6 +668,78 @@ describe('PetService', () => {
     service.dispose()
   })
 
+  it('keeps Claude running while task and background stop hooks are still active', async () => {
+    const { service } = createService({
+      settings: createSettings({
+        showNativeNotifications: false,
+        agentBridge: { enabled: true }
+      })
+    })
+
+    await service.start()
+    const getState = ipcHandler('pet:get-state')
+    const state = (await getState({}, {})) as PetRuntimeState
+    const path = '/agent-hook/claude?sessionId=session-1&componentId=terminal-1&canvasId=canvas-1&title=Claude%20Code'
+    const agentId = providerAgentSessionId('session-1', 'claude', 'claude-provider-session')
+
+    const submitted = await postAgentEvent(
+      state.bridge.port,
+      state.bridge.token,
+      { hook_event_name: 'UserPromptSubmit', session_id: 'claude-provider-session', cwd: 'D:\\projects\\AtlasOS' },
+      path
+    )
+    expect(submitted.statusCode).toBe(200)
+
+    const taskCompleted = await postAgentEvent(
+      state.bridge.port,
+      state.bridge.token,
+      { hook_event_name: 'TaskCompleted', session_id: 'claude-provider-session', cwd: 'D:\\projects\\AtlasOS' },
+      path
+    )
+    expect(taskCompleted.statusCode).toBe(200)
+
+    const backgroundStop = await postAgentEvent(
+      state.bridge.port,
+      state.bridge.token,
+      {
+        hook_event_name: 'Stop',
+        session_id: 'claude-provider-session',
+        background_tasks: [{ id: 'task-1', prompt: 'Continue checking the repo' }],
+        cwd: 'D:\\projects\\AtlasOS'
+      },
+      path
+    )
+    expect(backgroundStop.statusCode).toBe(200)
+
+    let updatedState = (await getState({}, {})) as PetRuntimeState
+    expect(updatedState.agentSessions.find((session) => session.id === agentId)).toMatchObject({
+      id: agentId,
+      status: 'running',
+      title: 'Claude Code'
+    })
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === agentId && alert.kind === 'agent_completed')).toBeUndefined()
+
+    const finalStop = await postAgentEvent(
+      state.bridge.port,
+      state.bridge.token,
+      { hook_event_name: 'Stop', session_id: 'claude-provider-session', cwd: 'D:\\projects\\AtlasOS' },
+      path
+    )
+    expect(finalStop.statusCode).toBe(200)
+
+    updatedState = (await getState({}, {})) as PetRuntimeState
+    expect(updatedState.agentSessions.find((session) => session.id === agentId)).toMatchObject({
+      id: agentId,
+      status: 'completed',
+      title: 'Claude Code'
+    })
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === agentId && alert.kind === 'agent_completed')).toMatchObject({
+      title: 'Claude Code completed'
+    })
+
+    service.dispose()
+  })
+
   it('tracks concurrent Claude provider sessions in the same terminal cwd independently', async () => {
     const { service } = createService({
       settings: createSettings({
@@ -1220,10 +1292,22 @@ describe('PetService', () => {
       kind: 'agent_waiting'
     })
 
-    const claudeCompleted = await postAgentEvent(
+    const completionLikeNotification = await postAgentEvent(
       state.bridge.port,
       state.bridge.token,
       { hook_event_name: 'Notification', session_id: 'claude-completed-session', message: 'Claude completed the run', cwd: 'D:\\projects\\AtlasOS' },
+      '/agent-hook/claude?sessionId=session-3&componentId=terminal-3&canvasId=canvas-1&title=Claude%20Code'
+    )
+    expect(completionLikeNotification.statusCode).toBe(200)
+
+    updatedState = (await getState({}, {})) as PetRuntimeState
+    expect(updatedState.agentSessions.find((session) => session.id === claudeCompletedAgentId)).toBeUndefined()
+    expect(updatedState.alerts.find((alert) => alert.target.sessionId === claudeCompletedAgentId && alert.kind === 'agent_completed')).toBeUndefined()
+
+    const claudeCompleted = await postAgentEvent(
+      state.bridge.port,
+      state.bridge.token,
+      { hook_event_name: 'Stop', session_id: 'claude-completed-session', cwd: 'D:\\projects\\AtlasOS' },
       '/agent-hook/claude?sessionId=session-3&componentId=terminal-3&canvasId=canvas-1&title=Claude%20Code'
     )
     expect(claudeCompleted.statusCode).toBe(200)
@@ -1238,7 +1322,6 @@ describe('PetService', () => {
     })
     expect(updatedState.alerts.find((alert) => alert.target.sessionId === claudeCompletedAgentId)).toMatchObject({
       title: 'Claude Code completed',
-      body: 'Claude completed the run',
       kind: 'agent_completed'
     })
     expect(updatedState.alerts.find((alert) => alert.target.sessionId === claudeCompletedAgentId && alert.kind === 'agent_waiting')).toBeUndefined()
@@ -1591,6 +1674,26 @@ describe('PetService', () => {
 
     let state = (await getState({}, {})) as PetRuntimeState
     expect(state.agentSessions).toHaveLength(1)
+
+    service.upsertAgentSession({
+      id: providerAgentSessionId('session-1', 'claude', 'claude-provider-session'),
+      terminalSessionId: 'session-1',
+      providerSessionId: 'claude-provider-session',
+      source: 'claude',
+      status: 'completed',
+      canvasId: 'canvas-1',
+      componentId: 'terminal-1',
+      title: 'Claude Code',
+      cwd: 'D:\\projects\\AtlasOS',
+      lastActivityAt: '2026-05-29T10:00:01.000Z'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    state = (await getState({}, {})) as PetRuntimeState
+    expect(state.agentSessions.map((session) => session.id).sort()).toEqual([
+      'session-1',
+      providerAgentSessionId('session-1', 'claude', 'claude-provider-session')
+    ])
 
     service.removeAgentSession('session-1')
     state = (await getState({}, {})) as PetRuntimeState

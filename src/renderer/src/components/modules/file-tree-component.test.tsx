@@ -187,6 +187,10 @@ describe('FileTreeComponent', () => {
           trash: vi.fn(async () => undefined),
           unwatch: vi.fn(),
           watch: vi.fn(async (rootPath: string, targetPath = rootPath) => ({ watchId: `watch:${targetPath}` }))
+        },
+        clipboard: {
+          readText: vi.fn(),
+          writeText: vi.fn()
         }
       }
     })
@@ -213,6 +217,26 @@ describe('FileTreeComponent', () => {
     expect(await screen.findByRole('menuitem', { name: '打开到桌面' })).toBeVisible()
     expect(await screen.findByRole('menuitem', { name: '复制文件路径' })).toBeVisible()
     expect(fileName.closest('.file-tree-row')).toHaveClass('file-tree-row--selected')
+  })
+
+  it('copies the selected file path with Ctrl+C from the file tree', async () => {
+    renderFileTree()
+    await expandSrcDirectory()
+
+    const fileName = await screen.findByText('index.ts')
+    await act(async () => {
+      fireEvent.click(fileName)
+    })
+
+    expect(fileName.closest('.file-tree-row')).toHaveClass('file-tree-row--selected')
+
+    await act(async () => {
+      fireEvent.keyDown(fileName, { key: 'c', ctrlKey: true })
+    })
+
+    await waitFor(() => {
+      expect(window.atlas.clipboard.writeText).toHaveBeenCalledWith('D:\\repo\\src\\index.ts')
+    })
   })
 
   it('renders root actions in the node header slot without file creation controls', async () => {
