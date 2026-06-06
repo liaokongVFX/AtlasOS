@@ -2,6 +2,10 @@
 
 AtlasOS is a local-first infinite canvas workbench for developer workflows. Each top-level tab is a canvas document, and components such as terminals, file trees, browsers, and Markdown notes bind to their own resources instead of forcing the whole canvas to map to one folder.
 
+## Preview
+
+![AtlasOS workspace showing files, terminals, browser, Git, calendar, agent history, and notes on one local canvas](docs/assets/readme/atlasos-workspace.png)
+
 ## Stack
 
 - Electron 42.1.0, React 19, TypeScript, electron-vite
