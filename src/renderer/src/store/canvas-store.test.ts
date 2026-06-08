@@ -180,6 +180,56 @@ describe('canvas group store operations', () => {
     expect(useCanvasStore.getState().canvases['canvas-1'].groups[0].memberIds).toEqual([])
   })
 
+  it('does not remove locked terminal components through bulk removal', () => {
+    const canvas = createCanvas({
+      components: [
+        createComponent('terminal-1', { type: 'terminal', state: { locked: true } }),
+        createComponent('component-1')
+      ]
+    })
+    useCanvasStore.setState({ canvases: { 'canvas-1': canvas } })
+
+    useCanvasStore.getState().removeComponents('canvas-1', ['terminal-1', 'component-1'])
+
+    expect(useCanvasStore.getState().canvases['canvas-1'].components.map((component) => component.id)).toEqual(['terminal-1'])
+  })
+
+  it('keeps locked terminal members fixed when moving a group', () => {
+    const canvas = createCanvas({
+      components: [
+        createComponent('terminal-1', { type: 'terminal', state: { locked: true } }),
+        createComponent('component-1', { frame: { x: 180, y: 180, width: 220, height: 160 } })
+      ],
+      groups: [createGroup('group-1', { memberIds: ['terminal-1', 'component-1'] })]
+    })
+    useCanvasStore.setState({ canvases: { 'canvas-1': canvas } })
+
+    useCanvasStore.getState().moveGroup('canvas-1', 'group-1', { x: 120, y: 100 }, true)
+
+    const nextCanvas = useCanvasStore.getState().canvases['canvas-1']
+    expect(nextCanvas.groups[0].frame).toMatchObject({ x: 120, y: 100 })
+    expect(nextCanvas.components.find((component) => component.id === 'terminal-1')?.frame).toMatchObject({ x: 100, y: 120 })
+    expect(nextCanvas.components.find((component) => component.id === 'component-1')?.frame).toMatchObject({ x: 220, y: 218 })
+  })
+
+  it('does not delete locked terminal members when deleting a group with members', () => {
+    const canvas = createCanvas({
+      components: [
+        createComponent('terminal-1', { type: 'terminal', state: { locked: true } }),
+        createComponent('component-1')
+      ],
+      groups: [createGroup('group-1', { memberIds: ['terminal-1', 'component-1'] })]
+    })
+    useCanvasStore.setState({ canvases: { 'canvas-1': canvas } })
+
+    const removedMemberIds = useCanvasStore.getState().deleteGroupsWithMembers('canvas-1', ['group-1'])
+    const nextCanvas = useCanvasStore.getState().canvases['canvas-1']
+
+    expect(removedMemberIds).toEqual(['component-1'])
+    expect(nextCanvas.groups).toHaveLength(0)
+    expect(nextCanvas.components.map((component) => component.id)).toEqual(['terminal-1'])
+  })
+
   it('duplicates selected groups with their members and skips duplicate loose members', () => {
     const canvas = createCanvas({
       components: [

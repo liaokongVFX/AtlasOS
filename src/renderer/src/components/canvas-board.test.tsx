@@ -468,6 +468,57 @@ describe('CanvasBoard', () => {
     unsubscribe()
   })
 
+  it('keeps locked terminals fixed through React Flow move and remove changes', () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('terminal-1', {
+              type: 'terminal',
+              title: 'Terminal',
+              state: { locked: true }
+            })
+          ]
+        }
+      }
+    }))
+    const listener = vi.fn()
+    const unsubscribe = subscribeCanvasViewportSync(listener)
+
+    renderCanvasBoard()
+
+    expect(reactFlowProps.current?.nodes?.find((node) => node.id === 'terminal-1')).toMatchObject({
+      draggable: false,
+      position: { x: 100, y: 120 }
+    })
+    expect((reactFlowProps.current?.nodes?.find((node) => node.id === 'terminal-1') as AtlasFlowNode).data.isFrameLocked).toBe(true)
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([
+        { type: 'position', id: 'terminal-1', position: { x: 20, y: 40 } },
+        { type: 'remove', id: 'terminal-1' }
+      ])
+    })
+
+    expect(useCanvasStore.getState().canvases['canvas-1'].components).toHaveLength(1)
+    expect(useCanvasStore.getState().canvases['canvas-1'].components[0].frame).toMatchObject({ x: 100, y: 120 })
+    expect(reactFlowProps.current?.nodes?.find((node) => node.id === 'terminal-1')).toMatchObject({
+      position: { x: 100, y: 120 }
+    })
+
+    act(() => {
+      const draggedNode = { ...reactFlowProps.current!.nodes!.find((node) => node.id === 'terminal-1')!, position: { x: 260, y: 280 } }
+      reactFlowProps.current?.onNodeDragStart?.({} as ReactMouseEvent, draggedNode, [draggedNode])
+      reactFlowProps.current?.onNodeDragStop?.({} as ReactMouseEvent, draggedNode, [draggedNode])
+    })
+
+    expect(useCanvasStore.getState().canvases['canvas-1'].components[0].frame).toMatchObject({ x: 100, y: 120 })
+    expect(listener).not.toHaveBeenCalled()
+    unsubscribe()
+  })
+
   it('persists final node position, clears selection, and notifies native browser overlays when node dragging stops', () => {
     useCanvasStore.setState((state) => ({
       canvases: {
@@ -877,6 +928,40 @@ describe('CanvasBoard', () => {
     }
 
     expect(useCanvasStore.getState().canvases['canvas-1'].components).toHaveLength(0)
+  })
+
+  it('does not delete a locked terminal when Delete starts inside xterm focus', () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('component-1', {
+              type: 'terminal',
+              title: 'Terminal',
+              config: {},
+              state: { locked: true }
+            })
+          ]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    const selectedTerminalNode = reactFlowProps.current?.nodes?.find((node) => node.id === 'component-1')
+    reactFlowMock.getNodes.mockReturnValue(selectedTerminalNode ? [{ ...selectedTerminalNode, selected: true }] : [])
+
+    const textarea = createXtermKeyboardTarget('component-1')
+
+    try {
+      fireEvent.keyDown(textarea, { key: 'Delete' })
+    } finally {
+      textarea.closest('.react-flow__node')?.remove()
+    }
+
+    expect(useCanvasStore.getState().canvases['canvas-1'].components).toHaveLength(1)
   })
 
   it('duplicates a dragged component with Alt+drag without moving the source', async () => {

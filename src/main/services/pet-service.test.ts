@@ -579,6 +579,49 @@ describe('PetService', () => {
     service.dispose()
   })
 
+  it('adds the current terminal title to agent alerts and native notifications', async () => {
+    const { service } = createService({
+      settings: createSettings({
+        showNativeNotifications: true,
+        kanban: { enabled: false },
+        agentBridge: { enabled: true }
+      }),
+      canvases: [createCanvasWithTerminal('Review agent window')]
+    })
+
+    await service.start()
+    const getState = ipcHandler('pet:get-state')
+    const state = (await getState({}, {})) as PetRuntimeState
+
+    const accepted = await postAgentEvent(
+      state.bridge.port,
+      state.bridge.token,
+      {
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Shell',
+        tool_input: { command: 'npm test' },
+        cwd: 'D:\\projects\\AtlasOS'
+      },
+      '/agent-hook/codex?sessionId=session-1&canvasId=canvas-1&componentId=terminal-1&title=Codex'
+    )
+    expect(accepted.statusCode).toBe(200)
+
+    const updatedState = (await getState({}, {})) as PetRuntimeState
+    expect(updatedState.alerts[0]).toMatchObject({
+      kind: 'agent_waiting',
+      title: 'Codex is asking',
+      body: 'Shell: npm test',
+      componentTitle: 'Review agent window',
+      target: { sessionId: 'session-1' }
+    })
+    expect(electronMocks.notifications[0].options).toEqual({
+      title: 'Codex is asking',
+      body: 'Review agent window - Shell: npm test'
+    })
+
+    service.dispose()
+  })
+
   it('accepts only token-authorized provider hook bridge events', async () => {
     const { service } = createService({
       settings: createSettings({

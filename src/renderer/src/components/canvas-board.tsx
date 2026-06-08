@@ -23,6 +23,7 @@ import { notifyCanvasViewportSync } from '../lib/canvas-viewport-sync'
 import { stackedFileComponentPosition, type CanvasFileSource } from '../lib/file-component-factory'
 import { fileName, getFilePreviewKind } from '../lib/file-types'
 import type { MediaDimensions } from '../lib/media-frame'
+import { isTerminalComponentLocked } from '../lib/terminal-lock'
 import { useAppSettingsStore } from '../store/app-settings-store'
 import { useCanvasStore } from '../store/canvas-store'
 import { useI18n } from '../i18n'
@@ -120,6 +121,7 @@ function componentToNode(
   canvasZoom = 1,
   isNodeDragging = false
 ): AtlasFlowNode {
+  const isLockedTerminal = isTerminalComponentLocked(component)
   const position = parentGroup
     ? {
         x: component.frame.x - parentGroup.frame.x,
@@ -137,11 +139,13 @@ function componentToNode(
     width: component.frame.width,
     height: component.frame.height,
     measured: { width: component.frame.width, height: component.frame.height },
+    draggable: !isLockedTerminal,
     zIndex: component.zIndex,
     data: {
       canvasId,
       canvasZoom,
       component,
+      isFrameLocked: isLockedTerminal,
       isNodeDragging,
       parentGroupPosition: parentGroup ? { x: parentGroup.frame.x, y: parentGroup.frame.y } : undefined,
       onRequestSelect,
@@ -335,6 +339,15 @@ function splitNodeIds(nodeIds: string[], groups: CanvasGroup[]): { componentIds:
     componentIds: nodeIds.filter((nodeId) => !groupIds.has(nodeId)),
     groupIds: nodeIds.filter((nodeId) => groupIds.has(nodeId))
   }
+}
+
+function lockedTerminalComponentIds(components: CanvasComponent[]): Set<string> {
+  return new Set(components.filter(isTerminalComponentLocked).map((component) => component.id))
+}
+
+function unlockedComponentIds(componentIds: string[], components: CanvasComponent[]): string[] {
+  const lockedIds = lockedTerminalComponentIds(components)
+  return componentIds.filter((componentId) => !lockedIds.has(componentId))
 }
 
 function duplicatedNodeIdMap(
@@ -1150,6 +1163,9 @@ export function CanvasBoard(): JSX.Element {
     const groups = canvas.groups ?? []
     const memberGroups = groupByMemberId(groups)
     const draggingComponentIds = movingComponentIdsForNodes([...draggingNodeIds], groups)
+    for (const componentId of lockedTerminalComponentIds(canvas.components)) {
+      draggingComponentIds.delete(componentId)
+    }
     const nextComponentNodes = canvas.components.map((component) => {
       liveComponentIds.add(component.id)
       return cachedComponentToNode(
@@ -1219,10 +1235,16 @@ export function CanvasBoard(): JSX.Element {
 
   const onNodesChange = useCallback(
     (changes: NodeChange<CanvasFlowNode>[]) => {
-      setNodes((currentNodes) => applyNodeChanges(changes, currentNodes))
+      const lockedIds = lockedTerminalComponentIds(canvas?.components ?? [])
+      const allowedChanges = changes.filter((change) => {
+        if (change.type !== 'position' && change.type !== 'remove') return true
+        return !lockedIds.has(change.id)
+      })
+
+      setNodes((currentNodes) => applyNodeChanges(allowedChanges, currentNodes))
       if (!activeCanvasId) return
 
-      const removedNodeIds = changes.filter((change) => change.type === 'remove').map((change) => change.id)
+      const removedNodeIds = allowedChanges.filter((change) => change.type === 'remove').map((change) => change.id)
       if (removedNodeIds.length > 0) {
         const removed = splitNodeIds(removedNodeIds, canvas?.groups ?? [])
         removeComponents(activeCanvasId, removed.componentIds)
@@ -1237,9 +1259,11 @@ export function CanvasBoard(): JSX.Element {
     (event, node, draggedNodes) => {
       closeCreateMenu()
       const movingNodes = draggedNodes.length > 0 ? draggedNodes : [node]
-      const movingNodeIds = movingNodes.map((draggedNode) => draggedNode.id)
-      setDraggingNodeIds(new Set(movingNodeIds))
+      const lockedIds = lockedTerminalComponentIds(canvas?.components ?? [])
+      const movingNodeIds = movingNodes.map((draggedNode) => draggedNode.id).filter((nodeId) => !lockedIds.has(nodeId))
       dragDuplicateStateRef.current = null
+      if (movingNodeIds.length === 0) return
+      setDraggingNodeIds(new Set(movingNodeIds))
       if (event.altKey && activeCanvasId && canvas) {
         const dragDuplicateState = splitNodeIds(movingNodeIds, canvas.groups ?? [])
         const memberGroups = groupByMemberId(canvas.groups ?? [])
@@ -1283,8 +1307,10 @@ export function CanvasBoard(): JSX.Element {
 
         if (!activeCanvasId || !canvas) return
 
+        const lockedIds = lockedTerminalComponentIds(canvas.components)
+        const movableStoppedNodes = stoppedNodes.filter((draggedNode) => !lockedIds.has(draggedNode.id))
         let canvasForPersistence = canvas
-        let nodesForPersistence = stoppedNodes
+        let nodesForPersistence = movableStoppedNodes
         const sourceParentPositionsByDuplicateId = new Map<string, { x: number; y: number }>()
         let didDuplicateOnDrag = false
 
@@ -1481,15 +1507,16 @@ export function CanvasBoard(): JSX.Element {
 
   const deleteSelectedComponents = useCallback(
     (componentIds: string[]) => {
-      if (!activeCanvasId || componentIds.length === 0) return
+      const removableComponentIds = unlockedComponentIds(componentIds, canvas?.components ?? [])
+      if (!activeCanvasId || removableComponentIds.length === 0) return
 
       closeCreateMenu()
-      removeComponents(activeCanvasId, componentIds)
-      const removedIds = new Set(componentIds)
+      removeComponents(activeCanvasId, removableComponentIds)
+      const removedIds = new Set(removableComponentIds)
       setNodes((currentNodes) => currentNodes.filter((node) => !removedIds.has(node.id)))
       notifyCanvasViewportSync()
     },
-    [activeCanvasId, closeCreateMenu, removeComponents]
+    [activeCanvasId, canvas?.components, closeCreateMenu, removeComponents]
   )
 
   const requestDeleteGroups = useCallback(

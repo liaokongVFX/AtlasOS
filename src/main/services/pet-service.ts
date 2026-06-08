@@ -805,18 +805,42 @@ function componentTitleKey(canvasId: string, componentId: string): string {
   return `${canvasId}:${componentId}`
 }
 
-function agentSessionsWithComponentTitles(sessions: PetAgentSession[], canvases: CanvasDocument[]): PetAgentSession[] {
+function componentTitlesByKey(canvases: CanvasDocument[]): Map<string, string> {
   const titles = new Map<string, string>()
   for (const canvas of canvases) {
     for (const component of canvas.components) {
       titles.set(componentTitleKey(canvas.id, component.id), component.title)
     }
   }
+  return titles
+}
+
+function agentSessionsWithComponentTitles(sessions: PetAgentSession[], canvases: CanvasDocument[]): PetAgentSession[] {
+  const titles = componentTitlesByKey(canvases)
 
   return sessions.map((session) => {
     const componentTitle = titles.get(componentTitleKey(session.canvasId, session.componentId)) ?? session.componentTitle
     return componentTitle ? { ...session, componentTitle } : session
   })
+}
+
+function isAgentAlert(alert: PetAlert): boolean {
+  return alert.kind === 'agent_waiting' || alert.kind === 'agent_completed' || alert.kind === 'agent_error'
+}
+
+function alertsWithComponentTitles(alerts: PetAlert[], canvases: CanvasDocument[]): PetAlert[] {
+  const titles = componentTitlesByKey(canvases)
+
+  return alerts.map((alert) => {
+    if (!isAgentAlert(alert) || !alert.target.canvasId || !alert.target.componentId) return alert
+
+    const componentTitle = titles.get(componentTitleKey(alert.target.canvasId, alert.target.componentId)) ?? alert.componentTitle
+    return componentTitle ? { ...alert, componentTitle } : alert
+  })
+}
+
+function componentTitleFromCanvases(canvases: CanvasDocument[], canvasId: string, componentId: string): string | undefined {
+  return componentTitlesByKey(canvases).get(componentTitleKey(canvasId, componentId))
 }
 
 function agentSessionId(source: PetAgentSource, terminalSessionId: string, providerSessionId: string | undefined): string {
@@ -840,13 +864,14 @@ function agentEventLabel(event: AgentHookEventInput['event']): string {
   return 'is running'
 }
 
-function alertForAgentEvent(event: AgentHookEventInput, session: PetAgentSession): PetAlert | null {
+function alertForAgentEvent(event: AgentHookEventInput, session: PetAgentSession, componentTitle?: string): PetAlert | null {
   if (event.event === 'running' || event.event === 'idle_unknown') return null
 
   const createdAt = nowIso()
   const severity = event.event === 'error' ? 'danger' : event.event === 'waiting_for_confirmation' ? 'warning' : 'info'
   const kind = event.event === 'error' ? 'agent_error' : event.event === 'completed' ? 'agent_completed' : 'agent_waiting'
   const title = event.title || `${event.source === 'codex' ? 'Codex' : 'Claude Code'} ${agentEventLabel(event.event)}`
+  const alertComponentTitle = componentTitle || session.componentTitle || session.title
 
   return {
     id: randomUUID(),
@@ -859,6 +884,7 @@ function alertForAgentEvent(event: AgentHookEventInput, session: PetAgentSession
       componentId: session.componentId,
       sessionId: session.id
     },
+    componentTitle: alertComponentTitle,
     createdAt,
     dedupeKey: `agent:${session.id}:${event.event}:${session.lastActivityAt}`
   }
@@ -1093,7 +1119,7 @@ export class PetService {
     handleValidated('pet:install-claude-hooks', z.object({}), () => this.installClaudeHooks())
     handleValidated('pet:install-codex-hooks', z.object({}), () => this.installCodexHooks())
 
-    handleValidated('pet:list-agent-sessions', z.object({}), () => this.getAgentSessionsForRuntime())
+    handleValidated('pet:list-agent-sessions', z.object({}), async () => this.getAgentSessionsForRuntime(await this.listCanvasesForRuntime()))
   }
 
   private async ensurePetWindow(): Promise<void> {
@@ -1232,6 +1258,7 @@ export class PetService {
           : session.status === 'error'
             ? 'reported an error'
             : 'updated'
+    const componentTitle = session.componentTitle || session.title
 
     return {
       id: randomUUID(),
@@ -1244,6 +1271,7 @@ export class PetService {
         componentId: session.componentId,
         sessionId: session.id
       },
+      componentTitle,
       createdAt: nowIso(),
       dedupeKey: `agent:${session.id}:${session.status}:${session.lastActivityAt}`
     }
@@ -1253,13 +1281,19 @@ export class PetService {
     const settings = await this.options.appSettingsService.getSettings()
     if (!settings.pet.showNativeNotifications || !Notification.isSupported()) return
 
-    const notification = new Notification({ title: alert.title, body: alert.body })
+    const notification = new Notification({ title: alert.title, body: this.notificationBody(alert) })
     notification.on('click', () => {
       this.markAlertRead(alert.id)
       void this.options.openTarget(alert.target)
       this.persistAndBroadcastInBackground()
     })
     notification.show()
+  }
+
+  private notificationBody(alert: PetAlert): string {
+    if (!alert.componentTitle) return alert.body
+    if (!alert.body || alert.body === alert.componentTitle) return alert.componentTitle
+    return `${alert.componentTitle} - ${alert.body}`
   }
 
   private async applyAgentEvent(event: AgentHookEventInput): Promise<void> {
@@ -1301,7 +1335,11 @@ export class PetService {
       const statusChanged = previous?.status !== parsed.data.status
       if (statusChanged) {
         this.markAgentAttentionAlertsRead(parsed.data.id)
-        const alert = alertForAgentEvent(event, parsed.data)
+        const componentTitle =
+          event.event === 'waiting_for_confirmation' || event.event === 'completed' || event.event === 'error'
+            ? await this.resolveComponentTitle(parsed.data.canvasId, parsed.data.componentId)
+            : undefined
+        const alert = alertForAgentEvent(event, parsed.data, componentTitle)
         if (alert) this.addAlert(alert)
       }
       await this.persistAndBroadcast()
@@ -1494,11 +1532,11 @@ export class PetService {
   private async getRuntimeState(): Promise<PetRuntimeState> {
     const settings = await this.options.appSettingsService.getSettings()
     const layout = petWindowLayout(settings)
-    const [claudeHook, codexHook, agentSessions] = await Promise.all([this.getClaudeHookStatus(), this.getCodexHookStatus(), this.getAgentSessionsForRuntime()])
+    const [claudeHook, codexHook, canvases] = await Promise.all([this.getClaudeHookStatus(), this.getCodexHookStatus(), this.listCanvasesForRuntime()])
     return petRuntimeStateSchema.parse({
       settings: settings.pet,
-      alerts: this.storedState.alerts,
-      agentSessions,
+      alerts: alertsWithComponentTitles(this.storedState.alerts, canvases),
+      agentSessions: this.getAgentSessionsForRuntime(canvases),
       window: {
         panelSide: layout.panelSide,
         orbOffset: layout.orbOffset
@@ -1513,16 +1551,24 @@ export class PetService {
     })
   }
 
-  private async getAgentSessionsForRuntime(): Promise<PetAgentSession[]> {
+  private getAgentSessionsForRuntime(canvases: CanvasDocument[]): PetAgentSession[] {
     const sessions = visibleAgentSessions(this.agentSessions)
     if (sessions.length === 0) return sessions
 
+    return agentSessionsWithComponentTitles(sessions, canvases)
+  }
+
+  private async listCanvasesForRuntime(): Promise<CanvasDocument[]> {
     try {
-      return agentSessionsWithComponentTitles(sessions, await this.options.persistence.listCanvases())
+      return await this.options.persistence.listCanvases()
     } catch (error) {
-      console.warn('Failed to read pet agent window titles:', error)
-      return sessions
+      console.warn('Failed to read pet component titles:', error)
+      return []
     }
+  }
+
+  private async resolveComponentTitle(canvasId: string, componentId: string): Promise<string | undefined> {
+    return componentTitleFromCanvases(await this.listCanvasesForRuntime(), canvasId, componentId)
   }
 
   private async broadcastState(): Promise<void> {

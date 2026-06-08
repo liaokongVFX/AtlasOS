@@ -13,6 +13,7 @@ type AtlasNodeData = Record<string, unknown> & {
   canvasId: string
   canvasZoom?: number
   component: CanvasComponent
+  isFrameLocked?: boolean
   isNodeDragging?: boolean
   parentGroupPosition?: { x: number; y: number }
   onRequestSelect?: (componentId: string) => void
@@ -77,6 +78,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
   const resizeBehavior = definition.getResizeBehavior?.(component) ?? null
   const nodeChromeVariant = definition.chrome?.variant
   const isTerminalChrome = nodeChromeVariant === 'terminal'
+  const isFrameLocked = data.isFrameLocked === true
   const subtitle = definition.getSubtitle?.(component) ?? null
 
   const Icon = definition.icon
@@ -107,6 +109,8 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
   }, [canvasId, component.id, updateComponent])
 
   const updateFrame = useCallback((patch: Partial<CanvasComponent['frame']>, immediate = false) => {
+    if (isFrameLocked) return
+
     updateComponent(
       canvasId,
       component.id,
@@ -115,7 +119,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
       },
       immediate
     )
-  }, [canvasId, component.id, updateComponent])
+  }, [canvasId, component.id, isFrameLocked, updateComponent])
 
   const setTitle = useCallback((title: string) => {
     updateComponent(canvasId, component.id, (draft) => {
@@ -183,6 +187,11 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
 
   const persistResize = useCallback<OnResizeEnd>((_, params) => {
     setIsResizing(false)
+    if (isFrameLocked) {
+      resizeDirectionRef.current = null
+      return
+    }
+
     const resizeParams: NodeResizeParams = {
       x: params.x + (parentGroupPosition?.x ?? 0),
       y: params.y + (parentGroupPosition?.y ?? 0),
@@ -203,7 +212,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
       draft.frame = normalizedFrame
     })
     notifyCanvasViewportSync()
-  }, [canvasId, component, parentGroupPosition?.x, parentGroupPosition?.y, resizeBehavior, updateComponent])
+  }, [canvasId, component, isFrameLocked, parentGroupPosition?.x, parentGroupPosition?.y, resizeBehavior, updateComponent])
 
   const markResizing = useCallback(() => {
     setIsResizing(true)
@@ -230,7 +239,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
     >
       <NodeResizer
         handleClassName="component-node__resize-handle"
-        isVisible={selected}
+        isVisible={selected && !isFrameLocked}
         lineClassName="component-node__resize-line"
         minWidth={resizeBehavior?.minWidth ?? MEDIA_NODE_MIN_WIDTH}
         minHeight={resizeBehavior?.minHeight ?? DEFAULT_NODE_MIN_HEIGHT}

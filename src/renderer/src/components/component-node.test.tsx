@@ -115,11 +115,11 @@ function createComponent(patch: Partial<CanvasComponent> = {}): CanvasComponent 
   }
 }
 
-function renderNode(component = createComponent(), selected = true, parentGroupPosition?: { x: number; y: number }): void {
+function renderNode(component = createComponent(), selected = true, parentGroupPosition?: { x: number; y: number }, isFrameLocked = false): void {
   render(
     <ComponentNode
       {...({
-        data: { canvasId: 'canvas-1', component, parentGroupPosition },
+        data: { canvasId: 'canvas-1', component, isFrameLocked, parentGroupPosition },
         selected,
         dragging: false,
         width: component.frame.width,
@@ -221,6 +221,38 @@ describe('ComponentNode', () => {
       lineClassName: 'component-node__resize-line'
     })
     expect(nodeResizerProps.current?.color).toBeUndefined()
+  })
+
+  it('hides resize affordances and ignores resize commits for frame-locked nodes', () => {
+    const component = createComponent({
+      type: 'terminal',
+      title: 'Terminal',
+      state: { locked: true }
+    })
+    const updateComponent = vi.fn()
+    const listener = vi.fn()
+    const unsubscribe = subscribeCanvasViewportSync(listener)
+    useCanvasStore.setState({ updateComponent } as Partial<CanvasStoreState>)
+
+    try {
+      renderNode(component, true, undefined, true)
+
+      expect(nodeResizerProps.current?.isVisible).toBe(false)
+
+      act(() => {
+        nodeResizerProps.current?.onResizeEnd?.({} as never, {
+          x: 20,
+          y: 40,
+          width: 460,
+          height: 320
+        })
+      })
+
+      expect(updateComponent).not.toHaveBeenCalled()
+      expect(listener).not.toHaveBeenCalled()
+    } finally {
+      unsubscribe()
+    }
   })
 
   it('renders a missing plugin placeholder for unknown component types', () => {

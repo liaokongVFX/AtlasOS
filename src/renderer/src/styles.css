@@ -744,6 +744,10 @@ svg {
   transform: translate(-50%, 0);
 }
 
+.canvas-board .component-node--terminal .react-flow__resize-control.component-node__resize-line.right {
+  transform: translate(0, 0);
+}
+
 .canvas-board .react-flow__resize-control.component-node__resize-line.top,
 .canvas-board .react-flow__resize-control.component-node__resize-line.bottom {
   left: 0;
@@ -759,6 +763,11 @@ svg {
   left: 50%;
   width: 1px;
   transform: translateX(-50%);
+}
+
+.canvas-board .component-node--terminal .react-flow__resize-control.component-node__resize-line.right::after {
+  left: 0;
+  transform: none;
 }
 
 .canvas-board .react-flow__resize-control.component-node__resize-line.top::after,
@@ -834,6 +843,12 @@ svg {
   border-color: var(--color-hairline-tertiary);
   background: var(--color-surface-3);
   color: var(--color-ink);
+}
+
+.component-node__header-action-button--active {
+  border-color: rgb(130 143 255 / 46%);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
 }
 
 .component-node__title {

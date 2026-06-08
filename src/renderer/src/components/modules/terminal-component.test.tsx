@@ -1,6 +1,8 @@
-import { render, act, fireEvent } from '@testing-library/react'
+import { render, act, fireEvent, screen } from '@testing-library/react'
+import { useState, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanvasComponent } from '@shared/schema'
+import { I18nContext, translate } from '../../i18n'
 import { TerminalComponent } from './terminal-component'
 
 type MockTerminal = {
@@ -39,6 +41,12 @@ const terminalInstances = vi.hoisted(() => [] as MockTerminal[])
 const terminalOptions = vi.hoisted(() => [] as any[])
 const webLinksAddonHandlers = vi.hoisted(() => [] as Array<((event: MouseEvent, uri: string) => void) | undefined>)
 let consoleInfo: ReturnType<typeof vi.spyOn>
+
+const enI18nContextValue = {
+  locale: 'en-US' as const,
+  setLocale: () => undefined,
+  t: (key: Parameters<typeof translate>[1], values?: Parameters<typeof translate>[2]) => translate('en-US', key, values)
+}
 
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class {
@@ -134,6 +142,31 @@ function createTerminalComponent(): CanvasComponent {
     createdAt: timestamp,
     updatedAt: timestamp
   }
+}
+
+function TerminalWithHeaderActions({
+  component,
+  updateState
+}: {
+  component: CanvasComponent
+  updateState: ReturnType<typeof vi.fn>
+}): JSX.Element {
+  const [headerActions, setHeaderActions] = useState<ReactNode | null>(null)
+
+  return (
+    <I18nContext.Provider value={enI18nContextValue}>
+      <div data-testid="terminal-header-actions">{headerActions}</div>
+      <TerminalComponent
+        canvasId="canvas-1"
+        component={component}
+        updateConfig={vi.fn()}
+        updateState={updateState}
+        setTitle={vi.fn()}
+        setHeaderActions={setHeaderActions}
+        isNodeSelected={false}
+      />
+    </I18nContext.Provider>
+  )
 }
 
 function installAtlasMocks(): void {
@@ -308,6 +341,30 @@ describe('TerminalComponent', () => {
     expect(windowOpen).not.toHaveBeenCalled()
 
     windowOpen.mockRestore()
+  })
+
+  it('renders a header lock toggle that persists terminal lock state', async () => {
+    const updateState = vi.fn()
+    const component = createTerminalComponent()
+    const { unmount } = render(<TerminalWithHeaderActions component={component} updateState={updateState} />)
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const lockButton = await screen.findByRole('button', { name: 'Lock terminal node' })
+    expect(lockButton).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(lockButton)
+    expect(updateState).toHaveBeenCalledWith({ locked: true }, true)
+
+    unmount()
+
+    const lockedComponent = createTerminalComponent()
+    lockedComponent.state.locked = true
+    render(<TerminalWithHeaderActions component={lockedComponent} updateState={vi.fn()} />)
+
+    expect(await screen.findByRole('button', { name: 'Unlock terminal node' })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('passes an undispatched initial command and marks it dispatched', async () => {

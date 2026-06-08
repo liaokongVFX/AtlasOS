@@ -64,6 +64,10 @@ function soundSrcForAlert(alert: PetAlert, alertSound: PetRuntimeState['settings
   return alertSound.askingSrc || alertSound.completionSrc
 }
 
+function alertBody(alert: PetAlert): string {
+  return alert.componentTitle && alert.body === alert.componentTitle ? '' : alert.body
+}
+
 function normalizePetRuntimeState(state: PetRuntimeState): PetRuntimeState {
   return {
     ...state,
@@ -360,26 +364,30 @@ export function PetApp(): JSX.Element {
                 ) : null}
               </div>
               {alerts.length > 0 ? (
-                alerts.map((alert) => (
-                  <div key={alert.id} className="pet-alert-row">
-                    <button type="button" className="pet-row" onClick={() => void openAlert(alert)}>
-                      <span className={`pet-row__icon pet-row__icon--${alert.severity}`}>{alertIcon(alert)}</span>
-                      <span className="pet-row__main">
-                        <strong>{alert.title}</strong>
-                        {alert.body ? <span>{alert.body}</span> : null}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="pet-alert-row__dismiss"
-                      onClick={() => void dismissAlert(alert.id)}
-                      aria-label={`Dismiss ${alert.title}`}
-                      title="Dismiss alert"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                ))
+                alerts.map((alert) => {
+                  const body = alertBody(alert)
+                  return (
+                    <div key={alert.id} className="pet-alert-row">
+                      <button type="button" className="pet-row" onClick={() => void openAlert(alert)}>
+                        <span className={`pet-row__icon pet-row__icon--${alert.severity}`}>{alertIcon(alert)}</span>
+                        <span className="pet-row__main">
+                          <strong>{alert.title}</strong>
+                          {alert.componentTitle ? <small>{alert.componentTitle}</small> : null}
+                          {body ? <span>{body}</span> : null}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="pet-alert-row__dismiss"
+                        onClick={() => void dismissAlert(alert.id)}
+                        aria-label={`Dismiss ${alert.title}`}
+                        title="Dismiss alert"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  )
+                })
               ) : (
                 <p className="pet-empty">Nothing needs attention.</p>
               )}

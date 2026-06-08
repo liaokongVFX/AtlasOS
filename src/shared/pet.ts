@@ -71,6 +71,7 @@ export const petAlertSchema = z.object({
   title: z.string().min(1),
   body: z.string().default(''),
   target: petAlertTargetSchema.default({}),
+  componentTitle: z.string().min(1).optional(),
   createdAt: z.string(),
   readAt: z.string().optional(),
   snoozedUntil: z.string().optional(),

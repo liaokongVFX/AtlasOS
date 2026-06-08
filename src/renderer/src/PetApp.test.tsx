@@ -374,6 +374,29 @@ describe('PetApp', () => {
     expect(screen.getByText('Claude review prompt')).toBeInTheDocument()
   })
 
+  it('shows the linked terminal window title and message in alert rows', async () => {
+    const state = createState()
+    petApi.getState.mockResolvedValue({
+      ...state,
+      alerts: [
+        {
+          ...state.alerts[0],
+          componentTitle: 'Review agent window',
+          body: 'Shell: npm test'
+        }
+      ]
+    })
+
+    render(<PetApp />)
+
+    const orb = await screen.findByRole('button', { name: 'AtlasOS pet' })
+    fireEvent.pointerEnter(orb.parentElement as Element)
+
+    expect(await screen.findByText('Claude Code is asking')).toBeInTheDocument()
+    expect(screen.getByText('Review agent window')).toBeInTheDocument()
+    expect(screen.getByText('Shell: npm test')).toBeInTheDocument()
+  })
+
   it('labels newly started agents as ready instead of running', async () => {
     petApi.getState.mockResolvedValue(createReadyState())
 

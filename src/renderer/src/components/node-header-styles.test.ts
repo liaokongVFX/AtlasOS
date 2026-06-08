@@ -29,4 +29,18 @@ describe('node header styles', () => {
     expect(styleRule(css, '.component-node--selected .markdown-editor .cm-scroller')).toContain('cursor: default;')
     expect(styleRule(css, '.component-node--selected .markdown-editor .cm-content')).toContain('cursor: default;')
   })
+
+  it('keeps the terminal right resize hit area off the xterm scrollbar', () => {
+    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
+
+    expect(
+      styleRule(css, '.canvas-board .component-node--terminal .react-flow__resize-control.component-node__resize-line.right')
+    ).toContain('transform: translate(0, 0);')
+    expect(
+      styleRule(css, '.canvas-board .component-node--terminal .react-flow__resize-control.component-node__resize-line.right::after')
+    ).toContain('left: 0;')
+    expect(
+      styleRule(css, '.canvas-board .component-node--terminal .react-flow__resize-control.component-node__resize-line.right::after')
+    ).toContain('transform: none;')
+  })
 })

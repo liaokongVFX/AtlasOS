@@ -435,13 +435,15 @@ const zhCN = {
   'terminal.insertedAttachmentPaths': '已插入 {count} 个附件路径',
   'terminal.insertedCopiedFilePath': '已插入复制的文件路径',
   'terminal.insertedCopiedFilePaths': '已插入 {count} 个复制的文件路径',
+  'terminal.lockNode': '锁定终端节点',
   'terminal.onlyImagesTempPath': '只有粘贴的图片可以保存到临时终端路径',
   'terminal.processExited': '进程退出，代码 {code}',
   'terminal.savedScreenshotInserted': '已保存截图并插入路径',
   'terminal.savedScreenshotsInserted': '已保存 {count} 张截图并插入路径',
   'terminal.startFailed': '启动终端失败：{message}',
   'terminal.unableInsertPastedAttachment': '无法插入粘贴的附件',
-  'terminal.unableInsertPastedScreenshot': '无法插入粘贴的截图'
+  'terminal.unableInsertPastedScreenshot': '无法插入粘贴的截图',
+  'terminal.unlockNode': '解锁终端节点'
 } as const
 
 const enUS: Record<keyof typeof zhCN, string> = {
@@ -875,13 +877,15 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'terminal.insertedAttachmentPaths': 'Inserted {count} attachment paths',
   'terminal.insertedCopiedFilePath': 'Inserted copied file path',
   'terminal.insertedCopiedFilePaths': 'Inserted {count} copied file paths',
+  'terminal.lockNode': 'Lock terminal node',
   'terminal.onlyImagesTempPath': 'Only pasted images can be saved to a temporary terminal path',
   'terminal.processExited': 'Process exited with code {code}',
   'terminal.savedScreenshotInserted': 'Saved screenshot and inserted its path',
   'terminal.savedScreenshotsInserted': 'Saved {count} screenshots and inserted their paths',
   'terminal.startFailed': 'Failed to start terminal: {message}',
   'terminal.unableInsertPastedAttachment': 'Unable to insert the pasted attachment',
-  'terminal.unableInsertPastedScreenshot': 'Unable to insert the pasted screenshot'
+  'terminal.unableInsertPastedScreenshot': 'Unable to insert the pasted screenshot',
+  'terminal.unlockNode': 'Unlock terminal node'
 }
 
 export const LOCALE_STORAGE_KEY = 'atlasos:locale'

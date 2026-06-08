@@ -22,4 +22,20 @@ describe('pty cwd markers', () => {
     expect(script).toContain('CurrentDir=')
     expect(script).toContain('ScriptBlock')
   })
+
+  it('binds PowerShell arrows to move within multiline input before history', () => {
+    const script = buildPowerShellBootstrapScript()
+    const previousLineIndex = script.indexOf('[Microsoft.PowerShell.PSConsoleReadLine]::PreviousLine($key, $arg)')
+    const previousHistoryIndex = script.indexOf('[Microsoft.PowerShell.PSConsoleReadLine]::PreviousHistory($key, $arg)')
+    const nextLineIndex = script.indexOf('[Microsoft.PowerShell.PSConsoleReadLine]::NextLine($key, $arg)')
+    const nextHistoryIndex = script.indexOf('[Microsoft.PowerShell.PSConsoleReadLine]::NextHistory($key, $arg)')
+
+    expect(script).toContain('Set-PSReadLineKeyHandler -Key UpArrow -ScriptBlock')
+    expect(script).toContain('Set-PSReadLineKeyHandler -Key DownArrow -ScriptBlock')
+    expect(script).toContain('Import-Module PSReadLine -ErrorAction Stop')
+    expect(previousLineIndex).toBeGreaterThan(-1)
+    expect(previousHistoryIndex).toBeGreaterThan(previousLineIndex)
+    expect(nextLineIndex).toBeGreaterThan(-1)
+    expect(nextHistoryIndex).toBeGreaterThan(nextLineIndex)
+  })
 })

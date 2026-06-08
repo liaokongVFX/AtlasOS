@@ -2,12 +2,14 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Lock, Unlock } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createTerminalAgentRestore, terminalAgentRestoreSchema, type TerminalAgentRestore } from '@shared/terminal-agent'
 import { fileExtension, fileName } from '../../lib/file-types'
 import { useI18n, type TFunction } from '../../i18n'
 import { writeClipboardText } from '../../lib/clipboard'
-import { asBoolean, asString } from '../../lib/utils'
+import { TERMINAL_LOCKED_STATE_KEY, isTerminalComponentLocked } from '../../lib/terminal-lock'
+import { asBoolean, asString, cn } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
 
 type Disposable = {
@@ -319,7 +321,7 @@ function openTerminalWebLink(event: MouseEvent, uri: string): void {
   })
 }
 
-export function TerminalComponent({ canvasId, component, updateState, isNodeSelected = false }: AtlasComponentRendererProps): JSX.Element {
+export function TerminalComponent({ canvasId, component, updateState, setHeaderActions, isNodeSelected = false }: AtlasComponentRendererProps): JSX.Element {
   const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const sessionIdRef = useRef<string | null>(null)
@@ -335,6 +337,7 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
   const feedbackTimerRef = useRef<number | null>(null)
   const isNodeSelectedRef = useRef(isNodeSelected)
   const tRef = useRef(t)
+  const isLocked = isTerminalComponentLocked(component)
   const [isDropActive, setIsDropActive] = useState(false)
   const [pasteFeedback, setPasteFeedback] = useState<TerminalPasteFeedback | null>(null)
 
@@ -373,6 +376,33 @@ export function TerminalComponent({ canvasId, component, updateState, isNodeSele
     },
     [clearPasteFeedback]
   )
+
+  const toggleLocked = useCallback(() => {
+    updateState({ [TERMINAL_LOCKED_STATE_KEY]: !isLocked }, true)
+  }, [isLocked, updateState])
+
+  const headerActions = useMemo(
+    () => (
+      <button
+        type="button"
+        className={cn('icon-button component-node__header-action-button', isLocked && 'component-node__header-action-button--active')}
+        onClick={toggleLocked}
+        title={isLocked ? t('terminal.unlockNode') : t('terminal.lockNode')}
+        aria-label={isLocked ? t('terminal.unlockNode') : t('terminal.lockNode')}
+        aria-pressed={isLocked ? 'true' : 'false'}
+      >
+        {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
+      </button>
+    ),
+    [isLocked, t, toggleLocked]
+  )
+
+  useEffect(() => {
+    if (!setHeaderActions) return undefined
+
+    setHeaderActions(headerActions)
+    return () => setHeaderActions(null)
+  }, [headerActions, setHeaderActions])
 
   const requestFocus = useCallback(() => {
     if (!isNodeSelectedRef.current) {

@@ -10,6 +10,7 @@ import {
   type ComponentCreatePatch
 } from '../components/registry'
 import { translateCurrent } from '../i18n'
+import { isTerminalComponentLocked } from '../lib/terminal-lock'
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
 
@@ -688,7 +689,15 @@ export const useCanvasStore = create<CanvasStore>()(
       const currentCanvas = get().canvases[canvasId]
       if (!currentCanvas) return
 
-      const updatesById = new Map(updates.map((update) => [update.componentId, update.frame]))
+      const updatesById = new Map(
+        updates
+          .filter((update) => {
+            const component = currentCanvas.components.find((item) => item.id === update.componentId)
+            return component && !isTerminalComponentLocked(component)
+          })
+          .map((update) => [update.componentId, update.frame])
+      )
+      if (updatesById.size === 0) return
       if (!currentCanvas.components.some((component) => updatesById.has(component.id))) return
 
       get().updateCanvas(
@@ -722,7 +731,11 @@ export const useCanvasStore = create<CanvasStore>()(
       if (componentIds.length === 0 || components.length === 0) return
 
       const requestedIds = new Set(componentIds)
-      const removableIds = new Set(components.filter((component) => requestedIds.has(component.id)).map((component) => component.id))
+      const removableIds = new Set(
+        components
+          .filter((component) => requestedIds.has(component.id) && !isTerminalComponentLocked(component))
+          .map((component) => component.id)
+      )
       if (removableIds.size === 0) return
 
       for (const component of components) {
@@ -830,7 +843,7 @@ export const useCanvasStore = create<CanvasStore>()(
           draftGroup.frame = { ...draftGroup.frame, x, y }
 
           for (const component of draft.components) {
-            if (!memberIds.has(component.id)) continue
+            if (!memberIds.has(component.id) || isTerminalComponentLocked(component)) continue
 
             component.frame = {
               ...component.frame,
@@ -888,7 +901,8 @@ export const useCanvasStore = create<CanvasStore>()(
       const groupsToRemove = canvas.groups.filter((group) => removableGroupIds.has(group.id))
       if (groupsToRemove.length === 0) return []
 
-      const removableComponentIds = new Set(groupsToRemove.flatMap((group) => group.memberIds))
+      const lockedComponentIds = new Set(canvas.components.filter(isTerminalComponentLocked).map((component) => component.id))
+      const removableComponentIds = new Set(groupsToRemove.flatMap((group) => group.memberIds).filter((componentId) => !lockedComponentIds.has(componentId)))
       for (const component of canvas.components) {
         if (removableComponentIds.has(component.id)) void getComponentDefinition(component.type).dispose?.(component)
       }
