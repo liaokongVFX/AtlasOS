@@ -151,7 +151,7 @@ jobs:
               release/*.yml
           - label: macOS DMG/ZIP
             platform: macos
-            os: macos-15-large
+            os: macos-15
             npm: npm
             artifact-name: atlasos-macos
             artifact-path: |
