@@ -8,6 +8,11 @@ const WINDOWS_UTF16_FILENAME_FORMATS = new Set(['filenamew'])
 const WINDOWS_TEXT_FILENAME_FORMATS = new Set(['filename'])
 const URI_LIST_FORMATS = new Set(['text/uri-list'])
 
+function shouldParseFileUrlAsWindowsPath(url: URL): boolean {
+  const hostname = url.hostname.toLowerCase()
+  return (hostname !== '' && hostname !== 'localhost') || /^\/[a-z](?::|%3a)(?:\/|$)/i.test(url.pathname)
+}
+
 function uniquePaths(paths: string[]): string[] {
   const seen = new Set<string>()
   const result: string[] = []
@@ -28,7 +33,8 @@ function normalizeClipboardPath(path: string): string {
 
   if (/^file:\/\//i.test(trimmed)) {
     try {
-      return fileURLToPath(trimmed)
+      const fileUrl = new URL(trimmed)
+      return fileURLToPath(fileUrl, shouldParseFileUrlAsWindowsPath(fileUrl) ? { windows: true } : undefined)
     } catch {
       return ''
     }
