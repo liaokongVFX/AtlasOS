@@ -622,6 +622,12 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
     [clampFileRailWidth, clampSidebarWidth, fileRailWidth, sidebarWidth, updateState]
   )
 
+  const clearDetailSelection = useCallback(() => {
+    setSelectedCommit(null)
+    setSelectedDiff(null)
+    setDiff(null)
+  }, [])
+
   const refreshStatus = useCallback(
     async (path = repoPath) => {
       if (!path) return null
@@ -635,11 +641,13 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
 
   const loadDiff = useCallback(
     async (selection: SelectedDiff | null, path = repoPath) => {
-      setSelectedDiff(selection)
       if (!selection || !path) {
-        setDiff(null)
+        clearDetailSelection()
         return
       }
+
+      setSelectedDiff(selection)
+      if (selection.target.kind !== 'commit') setSelectedCommit(null)
 
       try {
         const nextDiff = await window.atlas.git.diff(path, selection.target)
@@ -650,7 +658,7 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
         setError(nextError instanceof Error ? nextError.message : String(nextError))
       }
     },
-    [repoPath]
+    [clearDetailSelection, repoPath]
   )
 
   const loadSummary = useCallback(
@@ -689,8 +697,7 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
             nextSummary.repoPath
           )
         } else {
-          setSelectedDiff(null)
-          setDiff(null)
+          clearDetailSelection()
         }
       } catch (nextError) {
         if (loadSeqRef.current !== seq) return
@@ -699,7 +706,7 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
         if (loadSeqRef.current === seq) setLoading(false)
       }
     },
-    [loadDiff, persistedBranch, repoPath, selectedBranch, updateConfig]
+    [clearDetailSelection, loadDiff, persistedBranch, repoPath, selectedBranch, updateConfig]
   )
 
   const loadLog = useCallback(
@@ -836,6 +843,9 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
             oldPath: firstFile.oldPath
           }
         })
+      } else {
+        setSelectedDiff(null)
+        setDiff(null)
       }
       setError(null)
     } catch (nextError) {
@@ -854,6 +864,7 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
       setLoading(true)
       try {
         await applyOperation(window.atlas.git.commit(repoPath, commitMessage.trim(), commitScope.kind === 'selected' ? commitScope.filePaths : undefined))
+        clearDetailSelection()
         setCommitMessage('')
         setSelectedChangeIds([])
         setCommitScope({ kind: 'staged' })
@@ -864,7 +875,7 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
         setLoading(false)
       }
     },
-    [applyOperation, commitMessage, commitScope, loadLog, repoPath, selectedLogRef]
+    [applyOperation, clearDetailSelection, commitMessage, commitScope, loadLog, repoPath, selectedLogRef]
   )
 
   const submitBranch = useCallback(

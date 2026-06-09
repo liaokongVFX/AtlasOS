@@ -129,13 +129,13 @@ function renderGitManager(component = createComponent()) {
     setTitle: vi.fn()
   }
 
-  render(
+  const view = render(
     <I18nProvider locale="en-US">
       <GitManagerComponent canvasId="canvas-1" component={component} {...props} />
     </I18nProvider>
   )
 
-  return props
+  return { ...props, ...view }
 }
 
 function testRect(left: number, width: number): DOMRect {
@@ -269,6 +269,38 @@ describe('GitManagerComponent', () => {
 
     await waitFor(() => {
       expect(gitApi.commit).toHaveBeenCalledWith('D:\\repo', 'selected commit', ['README.md', 'notes.txt'])
+    })
+  })
+
+  it('clears the selected change detail after committing selected files', async () => {
+    const summary = createSummary()
+    const cleanStatus = { ...summary.status, files: [], isClean: true, ahead: 2 }
+    gitApi.commit.mockResolvedValue({ ok: true, message: 'committed', status: cleanStatus })
+    const view = renderGitManager()
+
+    expect(await screen.findByRole('button', { name: /README\.md/ })).toBeVisible()
+    const detail = view.container.querySelector('.git-manager-detail')
+    expect(detail).not.toBeNull()
+    expect(within(detail as HTMLElement).getAllByText('README.md').length).toBeGreaterThan(0)
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('README.md'))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Commit selected' }))
+    })
+
+    const dialog = screen.getByRole('dialog')
+    await act(async () => {
+      fireEvent.change(within(dialog).getByLabelText('Commit message'), { target: { value: 'selected commit' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Commit selected' }))
+    })
+
+    await waitFor(() => {
+      expect(gitApi.commit).toHaveBeenCalledWith('D:\\repo', 'selected commit', ['README.md'])
+      expect(screen.getByText('No file changes')).toBeVisible()
+      expect(within(detail as HTMLElement).queryByText('README.md')).toBeNull()
+      expect(within(detail as HTMLElement).getAllByText('No diff to display').length).toBeGreaterThan(0)
     })
   })
 

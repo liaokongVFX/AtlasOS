@@ -15,6 +15,8 @@
     "release:guard": "node scripts/verify-release-tag.cjs",
     "package:win": "npm run ensure:electron && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --win nsis --publish never",
     "package:win:publish": "npm run ensure:electron && npm run release:guard && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --win nsis --publish always",
+    "package:mac": "npm run ensure:electron && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --mac dmg zip --x64 --arm64 --publish never",
+    "package:mac:publish": "npm run ensure:electron && npm run release:guard && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --mac dmg zip --x64 --arm64 --publish always",
     "rebuild": "cross-env npm_config_devdir=.electron-gyp electron-rebuild -f -w node-pty,sharp"
   },
   "dependencies": {
@@ -109,6 +111,20 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico",
+      "publish": [
+        {
+          "provider": "github",
+          "releaseType": "release"
+        }
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
       "publish": [
         {
           "provider": "github",

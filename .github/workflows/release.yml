@@ -8,9 +8,13 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: atlasos-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  windows:
-    name: Windows NSIS release
+  verify:
+    name: Verify release
     runs-on: windows-2022
 
     steps:
@@ -32,11 +36,101 @@ jobs:
       - name: Run tests
         run: npm.cmd test
 
-      - name: Build app
-        run: npm.cmd run build
+  package:
+    name: Package ${{ matrix.label }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
 
-      - name: Publish Windows installer
-        run: npx electron-builder --win nsis --publish always
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows NSIS
+            platform: windows
+            os: windows-2022
+            npm: npm.cmd
+            artifact-name: atlasos-windows
+            artifact-path: |
+              release/*.exe
+              release/*.blockmap
+              release/*.yml
+          - label: macOS DMG/ZIP
+            platform: macos
+            os: macos-15-large
+            npm: npm
+            artifact-name: atlasos-macos
+            artifact-path: |
+              release/*.dmg
+              release/*.zip
+              release/*.blockmap
+              release/*.yml
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build app
+        run: ${{ matrix.npm }} run build
+
+      - name: Package Windows installer
+        if: matrix.platform == 'windows'
+        run: npx electron-builder --win nsis --publish never
+        env:
+          npm_config_devdir: .electron-gyp
+
+      - name: Package macOS app
+        if: matrix.platform == 'macos'
+        run: npx electron-builder --mac dmg zip --x64 --arm64 --publish never
+        env:
+          npm_config_devdir: .electron-gyp
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.MAC_CSC_LINK != '' }}
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-path }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Publish release assets
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          npm_config_devdir: .electron-gyp
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No release assets were downloaded."
+            exit 1
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "AtlasOS $RELEASE_TAG" --notes ""
+          fi

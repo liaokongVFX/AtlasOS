@@ -18,9 +18,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  windows:
-    name: Version, tag, and publish Windows NSIS release
+  prepare:
+    name: Version, tag, and verify release
     runs-on: windows-2022
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      tag_pushed: ${{ steps.tag.outputs.pushed }}
 
     steps:
       - name: Check out repository
@@ -128,20 +131,128 @@ jobs:
           git push origin $env:RELEASE_TAG
           "pushed=true" >> $env:GITHUB_OUTPUT
 
-      - name: Publish Windows installer
-        run: npx electron-builder --win nsis --publish always
+  package:
+    name: Package ${{ matrix.label }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows NSIS
+            platform: windows
+            os: windows-2022
+            npm: npm.cmd
+            artifact-name: atlasos-windows
+            artifact-path: |
+              release/*.exe
+              release/*.blockmap
+              release/*.yml
+          - label: macOS DMG/ZIP
+            platform: macos
+            os: macos-15-large
+            npm: npm
+            artifact-name: atlasos-macos
+            artifact-path: |
+              release/*.dmg
+              release/*.zip
+              release/*.blockmap
+              release/*.yml
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build app
+        run: ${{ matrix.npm }} run build
+
+      - name: Package Windows installer
+        if: matrix.platform == 'windows'
+        run: npx electron-builder --win nsis --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           npm_config_devdir: .electron-gyp
 
-      - name: Clean up failed release tag
-        if: failure() && steps.tag.outputs.pushed == 'true'
-        shell: pwsh
+      - name: Package macOS app
+        if: matrix.platform == 'macos'
+        run: npx electron-builder --mac dmg zip --x64 --arm64 --publish never
+        env:
+          npm_config_devdir: .electron-gyp
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.MAC_CSC_LINK != '' }}
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-path }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs:
+      - prepare
+      - package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Publish release assets
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          gh release delete $env:RELEASE_TAG --cleanup-tag --yes
-          if ($LASTEXITCODE -ne 0) {
-            git push origin ":refs/tags/$env:RELEASE_TAG"
-          }
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No release assets were downloaded."
+            exit 1
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "AtlasOS $RELEASE_TAG" --notes ""
+          fi
+
+  cleanup:
+    name: Clean up failed release tag
+    if: ${{ always() && needs.prepare.outputs.tag_pushed == 'true' && (needs.prepare.result == 'failure' || needs.package.result == 'failure' || needs.publish.result == 'failure') }}
+    needs:
+      - prepare
+      - package
+      - publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Delete failed release tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          if ! gh release delete "$RELEASE_TAG" --cleanup-tag --yes; then
+            git push origin ":refs/tags/$RELEASE_TAG"
+          fi
