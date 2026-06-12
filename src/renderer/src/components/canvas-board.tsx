@@ -1759,16 +1759,20 @@ export function CanvasBoard(): JSX.Element {
     setIsFileDragActive(true)
   }, [])
 
+  const clearFileDragActive = useCallback(() => {
+    setIsFileDragActive(false)
+  }, [])
+
   const handleDragLeave = useCallback((event: DragEvent) => {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      setIsFileDragActive(false)
+      clearFileDragActive()
     }
-  }, [])
+  }, [clearFileDragActive])
 
   const dropFile = useCallback(
     async (event: DragEvent) => {
       event.preventDefault()
-      setIsFileDragActive(false)
+      clearFileDragActive()
       closeCreateMenu()
 
       const droppedFiles = await droppedFilesFromDataTransfer(event.dataTransfer)
@@ -1792,7 +1796,7 @@ export function CanvasBoard(): JSX.Element {
       addComponents(plannedComponents)
       notifyCanvasViewportSync()
     },
-    [addComponents, closeCreateMenu, reactFlow]
+    [addComponents, clearFileDragActive, closeCreateMenu, reactFlow]
   )
 
   const groups = canvas?.groups ?? []
@@ -1877,6 +1881,7 @@ export function CanvasBoard(): JSX.Element {
       onPointerEnter={trackPointerPosition}
       onPointerMove={trackPointerPosition}
       onPointerLeave={clearTrackedPointerPosition}
+      onDropCapture={clearFileDragActive}
       tabIndex={-1}
     >
       {backgroundImageStyle ? <div className="canvas-background-image" style={backgroundImageStyle} /> : null}

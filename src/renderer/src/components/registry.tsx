@@ -60,6 +60,7 @@ export type AtlasComponentDefinition = ComponentDefinitionMeta & {
   getDetail?: (component: CanvasComponent) => string | null
   getSubtitle?: (component: CanvasComponent) => string | null
   getResizeBehavior?: (component: CanvasComponent) => NodeResizeBehavior | null
+  canDragFromSelectedBody?: (component: CanvasComponent) => boolean
   acceptsFile?: (file: CanvasFileSource) => boolean
   createFromFile?: (file: CanvasFileSource) => Promise<FileComponentPatch>
 }

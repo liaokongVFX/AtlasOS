@@ -947,6 +947,14 @@ svg {
   border-bottom-left-radius: calc(var(--radius-lg) - 1px);
 }
 
+.component-node__body--drag-surface {
+  cursor: grab;
+}
+
+.component-node__body--drag-surface:active {
+  cursor: grabbing;
+}
+
 .component-node__interaction-shield {
   position: absolute;
   inset: 0;

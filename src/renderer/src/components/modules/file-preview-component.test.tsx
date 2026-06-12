@@ -44,6 +44,7 @@ describe('FilePreviewComponent media previews', () => {
     const image = screen.getByRole('img')
     expect(image).toHaveAttribute('src', localAssetUrl(rootPath, path))
     expect(image.getAttribute('src')).not.toContain('file:///')
+    expect(image).toHaveAttribute('draggable', 'false')
 
     fireEvent.load(image)
     expect(updateState).toHaveBeenCalledWith({ status: 'live' }, false)

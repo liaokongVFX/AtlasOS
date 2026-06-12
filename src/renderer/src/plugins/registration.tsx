@@ -26,7 +26,12 @@ export type RendererPluginRegistrationTarget = {
 }
 
 export type HostRendererPluginNodeDefinition = AtlasRendererPluginNodeDefinition &
-  Partial<Pick<AtlasComponentDefinition, 'acceptsFile' | 'chrome' | 'createFromFile' | 'dispose' | 'getResizeBehavior' | 'titleKey'>>
+  Partial<
+    Pick<
+      AtlasComponentDefinition,
+      'acceptsFile' | 'canDragFromSelectedBody' | 'chrome' | 'createFromFile' | 'dispose' | 'getResizeBehavior' | 'titleKey'
+    >
+  >
 
 type RendererPluginRegistrationOptions = {
   componentTypeForNode?: (nodeId: string) => string
@@ -100,6 +105,7 @@ export function createRendererPluginApi(
       if (options.includeHostHooks) {
         componentDefinition.acceptsFile = hostDefinition.acceptsFile
         componentDefinition.chrome = hostDefinition.chrome
+        componentDefinition.canDragFromSelectedBody = hostDefinition.canDragFromSelectedBody
         componentDefinition.createFromFile = hostDefinition.createFromFile
         componentDefinition.dispose = hostDefinition.dispose
         componentDefinition.getResizeBehavior = hostDefinition.getResizeBehavior

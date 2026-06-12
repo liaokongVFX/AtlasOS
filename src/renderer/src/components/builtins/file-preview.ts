@@ -29,6 +29,10 @@ function filePreviewResizeBehavior(component: CanvasComponent): NodeResizeBehavi
   }
 }
 
+function canDragFromSelectedFilePreviewBody(component: CanvasComponent): boolean {
+  return getFilePreviewKind(optionalString(component.bindings.path) ?? '', optionalString(component.config.mimeType)) === 'image'
+}
+
 export function createFilePreviewDefinition(): HostRendererPluginNodeDefinition {
   return {
     ...builtInNodeMeta('file-preview'),
@@ -38,6 +42,7 @@ export function createFilePreviewDefinition(): HostRendererPluginNodeDefinition 
     acceptsFile: fileSourceMatches('file-preview'),
     createFromFile: createFileComponentFromSource('file-preview'),
     getDetail: (component) => optionalString(component.bindings.path) ?? optionalString(component.bindings.rootPath) ?? null,
-    getResizeBehavior: filePreviewResizeBehavior
+    getResizeBehavior: filePreviewResizeBehavior,
+    canDragFromSelectedBody: canDragFromSelectedFilePreviewBody
   }
 }

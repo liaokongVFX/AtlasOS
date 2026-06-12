@@ -66,6 +66,8 @@ vi.mock('./registry', async () => {
         ...definition,
         type: 'file-preview',
         title: 'File Preview',
+        canDragFromSelectedBody: (component: CanvasComponent) =>
+          String(component.config.mimeType ?? '').startsWith('image/') || String(component.bindings.path ?? '').toLowerCase().endsWith('.png'),
         getResizeBehavior: (component: CanvasComponent) => {
           const mediaAspectRatio = Number(component.config.mediaAspectRatio)
           return {
@@ -176,6 +178,42 @@ describe('ComponentNode', () => {
     expect(body).toHaveClass('nodrag')
     expect(body).toHaveClass('nowheel')
     expect(document.querySelector('.component-node__interaction-shield')).not.toBeInTheDocument()
+  })
+
+  it('keeps selected image preview bodies available for node dragging', () => {
+    renderNode(
+      createComponent({
+        type: 'file-preview',
+        title: 'photo.png',
+        config: { mimeType: 'image/png' },
+        bindings: { path: 'D:\\media\\photo.png' }
+      }),
+      true
+    )
+
+    const body = document.querySelector('.component-node__body')
+
+    expect(body).not.toHaveClass('nodrag')
+    expect(body).not.toHaveClass('nowheel')
+    expect(body).toHaveClass('component-node__body--drag-surface')
+  })
+
+  it('keeps selected video preview bodies interactive for media controls', () => {
+    renderNode(
+      createComponent({
+        type: 'file-preview',
+        title: 'clip.mp4',
+        config: { mimeType: 'video/mp4' },
+        bindings: { path: 'D:\\media\\clip.mp4' }
+      }),
+      true
+    )
+
+    const body = document.querySelector('.component-node__body')
+
+    expect(body).toHaveClass('nodrag')
+    expect(body).toHaveClass('nowheel')
+    expect(body).not.toHaveClass('component-node__body--drag-surface')
   })
 
   it('treats a selected node moved by a multi-node drag as canvas-interacting', () => {

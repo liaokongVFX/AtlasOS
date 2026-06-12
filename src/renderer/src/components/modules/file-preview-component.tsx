@@ -127,6 +127,7 @@ export function FilePreviewComponent({
           <img
             src={mediaSrc}
             alt={path}
+            draggable={false}
             onLoad={(event) => {
               rememberMediaDimensions({
                 width: event.currentTarget.naturalWidth,

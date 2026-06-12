@@ -76,6 +76,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
   const shouldCommitTitleEditRef = useRef(true)
   const resizeDirectionRef = useRef<readonly number[] | null>(null)
   const resizeBehavior = definition.getResizeBehavior?.(component) ?? null
+  const canDragFromSelectedBody = definition.canDragFromSelectedBody?.(component) ?? false
   const nodeChromeVariant = definition.chrome?.variant
   const isTerminalChrome = nodeChromeVariant === 'terminal'
   const isFrameLocked = data.isFrameLocked === true
@@ -280,7 +281,13 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
         </div>
         {headerActions ? <div className="component-node__header-actions nodrag nowheel">{headerActions}</div> : null}
       </header>
-      <div className={cn('component-node__body', selected && 'nodrag nowheel')}>
+      <div
+        className={cn(
+          'component-node__body',
+          selected && !canDragFromSelectedBody && 'nodrag nowheel',
+          selected && canDragFromSelectedBody && 'component-node__body--drag-surface'
+        )}
+      >
         <ComponentErrorBoundary>
           <Renderer
             canvasId={canvasId}

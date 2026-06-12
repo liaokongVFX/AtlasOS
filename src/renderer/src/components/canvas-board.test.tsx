@@ -19,6 +19,7 @@ type CapturedReactFlowProps = {
   deleteKeyCode?: string | string[] | null
   nodes?: CanvasFlowNode[]
   onNodesChange?: (changes: Array<Record<string, unknown>>) => void
+  onDragLeave?: (event: ReactDragEvent) => void
   onDragOver?: (event: ReactDragEvent) => void
   onDrop?: (event: ReactDragEvent) => void | Promise<void>
   onMove?: (event: MouseEvent | TouchEvent | null, viewport: { x: number; y: number; zoom: number }) => void
@@ -82,7 +83,18 @@ vi.mock('@xyflow/react', async () => {
     Panel: ({ children }: { children?: React.ReactNode }) => React.createElement('div', null, children),
     ReactFlow: (props: CapturedReactFlowProps & { children?: React.ReactNode }) => {
       reactFlowProps.current = props
-      return React.createElement('div', { 'data-testid': 'canvas-flow' }, props.children)
+      return React.createElement(
+        'div',
+        {
+          'data-testid': 'canvas-flow',
+          onDragLeave: (event: ReactDragEvent) => props.onDragLeave?.(event),
+          onDragOver: (event: ReactDragEvent) => props.onDragOver?.(event),
+          onDrop: (event: ReactDragEvent) => {
+            void props.onDrop?.(event)
+          }
+        },
+        props.children
+      )
     },
     useReactFlow: () => reactFlowMock,
     useStore: (selector: (state: typeof reactFlowStoreState.current) => unknown) => selector(reactFlowStoreState.current)
@@ -1942,6 +1954,26 @@ describe('CanvasBoard', () => {
       frame: { x: 480, y: 360 },
       bindings: { rootPath: 'D:\\repo', path: 'D:\\repo\\src\\app.ts' }
     })
+  })
+
+  it('clears the canvas file drag indicator when a child drop target consumes the file drop', () => {
+    const imageFile = new File(['image'], 'photo.png', { type: 'image/png' })
+    const { container } = renderCanvasBoard()
+    const board = container.querySelector('.canvas-board') as HTMLElement
+    const flow = screen.getByTestId('canvas-flow')
+    const childDropTarget = document.createElement('div')
+
+    childDropTarget.addEventListener('drop', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    })
+    flow.appendChild(childDropTarget)
+
+    fireEvent.dragOver(flow, { dataTransfer: createFileDropDataTransfer([imageFile]) })
+    expect(board).toHaveClass('canvas-board--file-drag-active')
+
+    fireEvent.drop(childDropTarget, { dataTransfer: createFileDropDataTransfer([imageFile]) })
+    expect(board).not.toHaveClass('canvas-board--file-drag-active')
   })
 
   it('does not delete selected components while an editable target has focus', () => {
