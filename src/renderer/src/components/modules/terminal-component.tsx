@@ -2,7 +2,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
-import { Lock, Unlock } from 'lucide-react'
+import { Lock, PanelBottomClose, PanelBottomOpen, Unlock } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createTerminalAgentRestore, terminalAgentRestoreSchema, type TerminalAgentRestore } from '@shared/terminal-agent'
 import { fileExtension, fileName } from '../../lib/file-types'
@@ -10,6 +10,7 @@ import { useI18n, type TFunction } from '../../i18n'
 import { writeClipboardText } from '../../lib/clipboard'
 import { TERMINAL_LOCKED_STATE_KEY, isTerminalComponentLocked } from '../../lib/terminal-lock'
 import { asBoolean, asString, cn } from '../../lib/utils'
+import { TerminalCommandLibraryManager } from '../terminal-command-library-manager'
 import type { AtlasComponentRendererProps } from '../registry'
 
 type Disposable = {
@@ -338,8 +339,10 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
   const isNodeSelectedRef = useRef(isNodeSelected)
   const tRef = useRef(t)
   const isLocked = isTerminalComponentLocked(component)
+  const commandPanelExpanded = asBoolean(component.state.commandPanelExpanded)
   const [isDropActive, setIsDropActive] = useState(false)
   const [pasteFeedback, setPasteFeedback] = useState<TerminalPasteFeedback | null>(null)
+  const [sessionReady, setSessionReady] = useState(false)
 
   isNodeSelectedRef.current = isNodeSelected
   cwdRef.current = asString(component.state.cwd, asString(component.config.cwd))
@@ -381,20 +384,36 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
     updateState({ [TERMINAL_LOCKED_STATE_KEY]: !isLocked }, true)
   }, [isLocked, updateState])
 
+  const toggleCommandPanel = useCallback(() => {
+    updateState({ commandPanelExpanded: !commandPanelExpanded }, true)
+  }, [commandPanelExpanded, updateState])
+
   const headerActions = useMemo(
     () => (
-      <button
-        type="button"
-        className={cn('icon-button component-node__header-action-button', isLocked && 'component-node__header-action-button--active')}
-        onClick={toggleLocked}
-        title={isLocked ? t('terminal.unlockNode') : t('terminal.lockNode')}
-        aria-label={isLocked ? t('terminal.unlockNode') : t('terminal.lockNode')}
-        aria-pressed={isLocked ? 'true' : 'false'}
-      >
-        {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
-      </button>
+      <>
+        <button
+          type="button"
+          className={cn('icon-button component-node__header-action-button', commandPanelExpanded && 'component-node__header-action-button--active')}
+          onClick={toggleCommandPanel}
+          title={commandPanelExpanded ? t('terminal.hideCommandPanel') : t('terminal.showCommandPanel')}
+          aria-label={commandPanelExpanded ? t('terminal.hideCommandPanel') : t('terminal.showCommandPanel')}
+          aria-pressed={commandPanelExpanded ? 'true' : 'false'}
+        >
+          {commandPanelExpanded ? <PanelBottomClose size={14} /> : <PanelBottomOpen size={14} />}
+        </button>
+        <button
+          type="button"
+          className={cn('icon-button component-node__header-action-button', isLocked && 'component-node__header-action-button--active')}
+          onClick={toggleLocked}
+          title={isLocked ? t('terminal.unlockNode') : t('terminal.lockNode')}
+          aria-label={isLocked ? t('terminal.unlockNode') : t('terminal.lockNode')}
+          aria-pressed={isLocked ? 'true' : 'false'}
+        >
+          {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
+        </button>
+      </>
     ),
-    [isLocked, t, toggleLocked]
+    [commandPanelExpanded, isLocked, t, toggleCommandPanel, toggleLocked]
   )
 
   useEffect(() => {
@@ -430,6 +449,31 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
       pendingFocusRef.current = false
     })
   }, [clearScheduledFocus])
+
+  const writeTerminalCommand = useCallback(
+    (command: string, execute: boolean) => {
+      const sessionId = sessionIdRef.current
+      if (!sessionId) return
+
+      void window.atlas.terminal.write(sessionId, execute ? `${command}\r` : command)
+      requestFocus()
+    },
+    [requestFocus]
+  )
+
+  const insertTerminalCommand = useCallback(
+    (command: string) => {
+      writeTerminalCommand(command, false)
+    },
+    [writeTerminalCommand]
+  )
+
+  const executeTerminalCommand = useCallback(
+    (command: string) => {
+      writeTerminalCommand(command, true)
+    },
+    [writeTerminalCommand]
+  )
 
   const pasteFilesIntoTerminal = useCallback(
     async (files: File[]) => {
@@ -811,6 +855,7 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
           }
 
           sessionIdRef.current = session.sessionId
+          setSessionReady(true)
           const startupStatePatch: Record<string, unknown> = {}
           if (session.cwd !== cwdRef.current) {
             cwdRef.current = session.cwd
@@ -842,6 +887,8 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
           })
           disposeExit = window.atlas.terminal.onExit(session.sessionId, ({ exitCode }) => {
             if (disposed) return
+            sessionIdRef.current = null
+            setSessionReady(false)
             instance.writeln(`\r\n${tRef.current('terminal.processExited', { code: exitCode })}`)
           })
           const previousDisposeExit = disposeExit
@@ -853,6 +900,7 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
         })
         .catch((error) => {
           if (disposed) return
+          setSessionReady(false)
           instance.writeln(tRef.current('terminal.startFailed', { message: error instanceof Error ? error.message : String(error) }))
         })
 
@@ -874,6 +922,7 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
       resizeObserver?.disconnect()
       sessionIdRef.current = null
       terminalRef.current = null
+      setSessionReady(false)
 
       const instance = terminal
       if (instance) {
@@ -897,8 +946,17 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
   ])
 
   return (
-    <div className="terminal-module">
+    <div className={cn('terminal-module', commandPanelExpanded && 'terminal-module--commands-open')}>
       <div ref={containerRef} className="terminal-module__screen" />
+      {commandPanelExpanded ? (
+        <div className="terminal-module__commands">
+          <TerminalCommandLibraryManager
+            commandActionsDisabled={!sessionReady}
+            onInsertCommand={insertTerminalCommand}
+            onExecuteCommand={executeTerminalCommand}
+          />
+        </div>
+      ) : null}
       {isDropActive ? (
         <div className="terminal-module__drop-overlay" aria-hidden="true">
           {t('terminal.dropFiles')}

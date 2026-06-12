@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
 import { DEFAULT_PET_SETTINGS, type PetAgentSession, type PetRuntimeState } from '@shared/pet'
 import type { AppSettings, CanvasDocument } from '@shared/schema'
+import { createDefaultTerminalCommandLibrary } from '@shared/terminal-commands'
 import { DEFAULT_UPDATE_SETTINGS } from '@shared/updates'
 import { PetService } from './pet-service'
 
@@ -166,6 +167,7 @@ function createSettings(pet: Partial<AppSettings['pet']> = {}): AppSettings {
       assetPack: { ...DEFAULT_PET_SETTINGS.assetPack, ...pet.assetPack },
       actionMap: { ...DEFAULT_PET_SETTINGS.actionMap, ...pet.actionMap }
     },
+    terminalCommands: createDefaultTerminalCommandLibrary(),
     updates: { ...DEFAULT_UPDATE_SETTINGS }
   }
 }

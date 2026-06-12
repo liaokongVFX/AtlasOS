@@ -1336,6 +1336,17 @@ svg {
   align-content: start;
 }
 
+.terminal-commands-settings {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-4);
+  overflow: hidden;
+}
+
+.terminal-command-library--settings {
+  min-height: 0;
+}
+
 .settings-panel__header {
   align-items: flex-start;
 }
@@ -2116,13 +2127,31 @@ svg {
 
 .terminal-module {
   position: relative;
-  grid-template-rows: 1fr;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.terminal-module--commands-open {
+  grid-template-rows: minmax(0, 1fr) clamp(128px, 34%, 220px);
 }
 
 .terminal-module__screen {
   min-height: 0;
   overflow: hidden;
   background: var(--color-canvas);
+}
+
+.terminal-module__commands {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--color-hairline);
+  background: var(--color-surface-1);
+}
+
+.terminal-module__commands .terminal-command-library {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
 }
 
 .terminal-module__drop-overlay,
@@ -2198,6 +2227,418 @@ svg {
 
 .terminal-module__screen .xterm * {
   box-sizing: content-box;
+}
+
+.terminal-command-library {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  background: var(--color-canvas);
+  color: var(--color-ink-muted);
+}
+
+.terminal-command-library:has(.terminal-command-library__error) {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.terminal-command-library__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  border-bottom: 1px solid var(--color-hairline);
+  padding: 6px var(--space-2);
+  background: var(--color-surface-2);
+  box-shadow: var(--edge-highlight);
+}
+
+.terminal-command-library__categories {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.terminal-command-library__categories::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal-command-category-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 172px;
+  height: 28px;
+  min-width: 0;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  padding: 0 10px;
+  overflow: hidden;
+  background: var(--color-surface-1);
+  color: var(--color-ink-subtle);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: grab;
+  box-shadow: var(--edge-highlight);
+  touch-action: none;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.terminal-command-category-tab span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-command-category-tab:hover {
+  border-color: var(--color-hairline-strong);
+  background: var(--color-surface-3);
+  color: var(--color-ink);
+}
+
+.terminal-command-category-tab--active {
+  border-color: rgb(130 143 255 / 62%);
+  background: var(--color-surface-3);
+  color: var(--color-ink);
+  box-shadow:
+    inset 2px 0 0 var(--color-primary),
+    var(--edge-highlight);
+}
+
+.terminal-command-category-tab--overlay {
+  opacity: 0.96;
+  pointer-events: none;
+  box-shadow:
+    var(--edge-highlight),
+    0 12px 36px rgb(0 0 0 / 30%);
+}
+
+.terminal-command-category-tab--dragging {
+  opacity: 0;
+}
+
+.terminal-command-library__toolbar-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+}
+
+.terminal-command-toolbar-button,
+.terminal-command-icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+}
+
+.terminal-command-library__body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-canvas);
+}
+
+.terminal-command-list {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden auto;
+  padding: var(--space-2);
+}
+
+.terminal-command-list--empty {
+  align-content: stretch;
+}
+
+.terminal-command-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-surface-1);
+  color: var(--color-ink-muted);
+  box-shadow: var(--edge-highlight);
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.terminal-command-row:hover,
+.terminal-command-row:focus-within {
+  border-color: var(--color-hairline-strong);
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+}
+
+.terminal-command-row--overlay {
+  width: min(440px, calc(100vw - 32px));
+  opacity: 0.96;
+  pointer-events: none;
+  box-shadow:
+    var(--edge-highlight),
+    0 14px 44px rgb(0 0 0 / 34%);
+}
+
+.terminal-command-row__drag {
+  display: inline-flex;
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-ink-tertiary);
+  cursor: grab;
+  touch-action: none;
+}
+
+.terminal-command-row__drag:active {
+  cursor: grabbing;
+}
+
+.terminal-command-row__main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 0;
+  padding: 6px var(--space-2);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.terminal-command-row__main strong,
+.terminal-command-row__main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-command-row__main strong {
+  color: var(--color-ink);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.terminal-command-row__main small {
+  color: var(--color-ink-subtle);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.terminal-command-row__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 5px;
+}
+
+.terminal-command-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-ink-tertiary);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.terminal-command-icon-button:hover {
+  border-color: var(--color-hairline);
+  background: var(--color-surface-3);
+  color: var(--color-ink);
+}
+
+.terminal-command-icon-button--primary {
+  border-color: rgb(130 143 255 / 34%);
+  background: var(--color-primary-softer);
+  color: var(--color-primary-hover);
+}
+
+.terminal-command-icon-button--primary:hover {
+  border-color: rgb(130 143 255 / 62%);
+  background: var(--color-primary-soft);
+  color: #fff;
+}
+
+.terminal-command-empty {
+  display: grid;
+  width: 100%;
+  min-height: 88px;
+  place-items: center;
+  border: 1px dashed var(--color-hairline-tertiary);
+  border-radius: var(--radius-lg);
+  color: var(--color-ink-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.terminal-command-empty--library {
+  gap: var(--space-3);
+  min-height: 100%;
+  padding: var(--space-3);
+}
+
+.terminal-command-empty--library .tool-button {
+  height: 30px;
+  font-size: 12px;
+}
+
+.terminal-command-library__error,
+.terminal-command-dialog__error {
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-md);
+}
+
+.terminal-command-library__error {
+  margin: var(--space-2) var(--space-2) 0;
+}
+
+.terminal-command-dialog {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.terminal-command-form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.terminal-command-form-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--color-ink-subtle);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.terminal-command-form input,
+.terminal-command-form textarea,
+.terminal-command-category-trigger {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  outline: 0;
+  background: var(--color-surface-1);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: 14px;
+}
+
+.terminal-command-form input,
+.terminal-command-category-trigger {
+  height: 34px;
+}
+
+.terminal-command-form input {
+  padding: 0 var(--space-3);
+}
+
+.terminal-command-form textarea {
+  min-height: 104px;
+  resize: vertical;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  line-height: 1.5;
+}
+
+.terminal-command-category-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.terminal-command-category-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-command-form input:hover,
+.terminal-command-form textarea:hover,
+.terminal-command-category-trigger:hover,
+.terminal-command-category-trigger[data-state="open"] {
+  border-color: var(--color-hairline-strong);
+  background: var(--color-surface-2);
+}
+
+.terminal-command-form input:focus-visible,
+.terminal-command-form textarea:focus-visible,
+.terminal-command-category-trigger:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.terminal-command-category-menu {
+  width: var(--radix-dropdown-menu-trigger-width);
+  min-width: 220px;
+  z-index: 110;
+}
+
+.terminal-command-category-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  justify-content: stretch;
+}
+
+.terminal-command-category-option--selected {
+  border-color: rgb(130 143 255 / 62%);
+  background: var(--color-primary-softer);
+  color: var(--color-ink);
+}
+
+.terminal-command-category-option__check {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  color: var(--color-primary-hover);
+}
+
+.terminal-command-drag-overlay {
+  pointer-events: none;
 }
 
 .file-tree-module {

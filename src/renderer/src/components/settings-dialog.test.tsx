@@ -4,6 +4,7 @@ import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS } from '@shared/constants'
 import { DEFAULT_PET_SETTINGS } from '@shared/pet'
 import { localAssetUrl } from '@shared/local-assets'
 import { ATLAS_PLUGIN_API_VERSION, type PluginInfo } from '@shared/plugins'
+import { createDefaultTerminalCommandLibrary } from '@shared/terminal-commands'
 import { DEFAULT_UPDATE_SETTINGS } from '@shared/updates'
 import { I18nContext, setCurrentLocale, translate, type Locale } from '../i18n'
 import { useAppSettingsStore } from '../store/app-settings-store'
@@ -127,6 +128,7 @@ describe('SettingsDialog', () => {
         schemaVersion: ATLAS_SCHEMA_VERSION,
         locale: 'en-US',
         shortcuts: { ...DEFAULT_APP_SHORTCUTS },
+        terminalCommands: createDefaultTerminalCommandLibrary(),
         pet: { ...DEFAULT_PET_SETTINGS },
         updates: { ...DEFAULT_UPDATE_SETTINGS }
       }
@@ -136,6 +138,7 @@ describe('SettingsDialog', () => {
       schemaVersion: ATLAS_SCHEMA_VERSION,
       locale: 'en-US',
       shortcuts: { ...DEFAULT_APP_SHORTCUTS },
+      terminalCommands: createDefaultTerminalCommandLibrary(),
       pet: { ...DEFAULT_PET_SETTINGS },
       updates: { ...DEFAULT_UPDATE_SETTINGS }
     })
@@ -232,6 +235,7 @@ describe('SettingsDialog', () => {
     expect(screen.getByRole('navigation', { name: 'Settings sections' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'General' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('button', { name: 'AI' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Terminal commands' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Plugins' })).toBeInTheDocument()
     expect(screen.getByLabelText('Deselect nodes')).toHaveValue('Ctrl+Q')
     expect(screen.getByLabelText('Find nodes')).toHaveValue('Ctrl+F')
@@ -280,6 +284,7 @@ describe('SettingsDialog', () => {
           canvasGroupSelection: 'Ctrl+G',
           canvasUngroupSelection: 'Ctrl+Shift+G'
         },
+        terminalCommands: createDefaultTerminalCommandLibrary(),
         pet: { ...DEFAULT_PET_SETTINGS },
         updates: { ...DEFAULT_UPDATE_SETTINGS }
       })
@@ -299,6 +304,7 @@ describe('SettingsDialog', () => {
         schemaVersion: ATLAS_SCHEMA_VERSION,
         locale: 'en-US',
         shortcuts: { ...DEFAULT_APP_SHORTCUTS },
+        terminalCommands: createDefaultTerminalCommandLibrary(),
         pet: { ...DEFAULT_PET_SETTINGS },
         updates: { autoCheck: false }
       })
@@ -308,6 +314,55 @@ describe('SettingsDialog', () => {
 
     await waitFor(() => expect(updatesApi.check).toHaveBeenCalled())
     expect(await screen.findByText('You are up to date')).toBeInTheDocument()
+  })
+
+  it('adds terminal command categories and commands through the shared settings library', async () => {
+    renderSettingsDialog()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal commands' }))
+
+    expect(screen.getByText('Manage shortcut commands and categories shared by every terminal node.')).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add category' })[0])
+    fireEvent.change(screen.getByLabelText('Category name'), { target: { value: 'Work' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() =>
+      expect(appSettingsApi.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          terminalCommands: expect.objectContaining({
+            categories: [
+              expect.objectContaining({
+                id: expect.any(String),
+                name: 'Work',
+                commandIds: []
+              })
+            ],
+            commands: {}
+          })
+        })
+      )
+    )
+    expect(await screen.findByText('Work')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add command' }))
+    fireEvent.change(screen.getByLabelText('Command name'), { target: { value: 'Dev server' } })
+    fireEvent.change(screen.getByLabelText('Command'), { target: { value: 'npm run dev' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    expect(await screen.findByText('Dev server')).toBeInTheDocument()
+    const savedSettings = appSettingsApi.update.mock.calls.at(-1)?.[0]
+    if (!savedSettings) throw new Error('Expected terminal command settings to be saved')
+    const savedCommands = Object.values(savedSettings.terminalCommands.commands)
+    expect(savedSettings.terminalCommands.categories[0]).toEqual(expect.objectContaining({
+      name: 'Work',
+      commandIds: [expect.any(String)]
+    }))
+    expect(savedCommands).toEqual([
+      expect.objectContaining({
+        name: 'Dev server',
+        command: 'npm run dev'
+      })
+    ])
   })
 
   it('captures bare Tab and validates duplicate general shortcuts before saving', async () => {

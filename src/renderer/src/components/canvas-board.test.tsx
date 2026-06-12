@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_VIEWPORT } from '@shared/constants'
 import { DEFAULT_PET_SETTINGS } from '@shared/pet'
 import type { CanvasComponent, CanvasDocument, CanvasGroup } from '@shared/schema'
+import { createDefaultTerminalCommandLibrary } from '@shared/terminal-commands'
 import { DEFAULT_UPDATE_SETTINGS } from '@shared/updates'
 import { I18nContext, setCurrentLocale, translate } from '../i18n'
 import { subscribeCanvasViewportSync } from '../lib/canvas-viewport-sync'
@@ -274,6 +275,7 @@ describe('CanvasBoard', () => {
         schemaVersion: ATLAS_SCHEMA_VERSION,
         locale: 'en-US',
         shortcuts: { ...DEFAULT_APP_SHORTCUTS },
+        terminalCommands: createDefaultTerminalCommandLibrary(),
         pet: { ...DEFAULT_PET_SETTINGS },
         updates: { ...DEFAULT_UPDATE_SETTINGS }
       }
@@ -838,6 +840,7 @@ describe('CanvasBoard', () => {
           canvasFind: 'Ctrl+F',
           canvasCreateComponent: 'Ctrl+Alt+K'
         },
+        terminalCommands: createDefaultTerminalCommandLibrary(),
         pet: { ...DEFAULT_PET_SETTINGS },
         updates: { ...DEFAULT_UPDATE_SETTINGS }
       }
@@ -1372,6 +1375,7 @@ describe('CanvasBoard', () => {
           canvasFind: 'Ctrl+F',
           canvasCreateComponent: 'Tab'
         },
+        terminalCommands: createDefaultTerminalCommandLibrary(),
         pet: { ...DEFAULT_PET_SETTINGS },
         updates: { ...DEFAULT_UPDATE_SETTINGS }
       }
@@ -1532,6 +1536,7 @@ describe('CanvasBoard', () => {
           canvasFind: 'Alt+K',
           canvasCreateComponent: 'Tab'
         },
+        terminalCommands: createDefaultTerminalCommandLibrary(),
         pet: { ...DEFAULT_PET_SETTINGS },
         updates: { ...DEFAULT_UPDATE_SETTINGS }
       }

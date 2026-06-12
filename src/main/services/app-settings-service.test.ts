@@ -2,6 +2,7 @@ import { mkdir, rm, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ATLAS_SCHEMA_VERSION } from '@shared/constants'
+import { createDefaultTerminalCommandLibrary } from '@shared/terminal-commands'
 import { AppSettingsService } from './app-settings-service'
 
 const electronMocks = vi.hoisted(() => ({
@@ -46,6 +47,7 @@ describe('AppSettingsService', () => {
       updates: {
         autoCheck: true
       },
+      terminalCommands: createDefaultTerminalCommandLibrary(),
       pet: {
         enabled: true,
         showNativeNotifications: true,
@@ -112,7 +114,8 @@ describe('AppSettingsService', () => {
       },
       updates: {
         autoCheck: false
-      }
+      },
+      terminalCommands: createDefaultTerminalCommandLibrary()
     })
 
     await expect(new AppSettingsService().getSettings()).resolves.toEqual({
@@ -128,6 +131,7 @@ describe('AppSettingsService', () => {
       updates: {
         autoCheck: false
       },
+      terminalCommands: createDefaultTerminalCommandLibrary(),
       pet: {
         enabled: false,
         showNativeNotifications: false,

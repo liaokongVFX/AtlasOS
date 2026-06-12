@@ -2,7 +2,9 @@ import { render, act, fireEvent, screen } from '@testing-library/react'
 import { useState, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanvasComponent } from '@shared/schema'
+import { createDefaultTerminalCommandLibrary, createTerminalCommand, createTerminalCommandCategory } from '@shared/terminal-commands'
 import { I18nContext, translate } from '../../i18n'
+import { useAppSettingsStore } from '../../store/app-settings-store'
 import { TerminalComponent } from './terminal-component'
 
 type MockTerminal = {
@@ -144,6 +146,12 @@ function createTerminalComponent(): CanvasComponent {
   }
 }
 
+function createCommandLibrary() {
+  let library = createDefaultTerminalCommandLibrary()
+  library = createTerminalCommandCategory(library, 'work', { name: 'Work' }, '2026-06-13T00:00:00.000Z')
+  return createTerminalCommand(library, 'work', 'dev', { name: 'Dev server', command: 'npm run dev' }, '2026-06-13T00:00:00.000Z')
+}
+
 function TerminalWithHeaderActions({
   component,
   updateState
@@ -268,6 +276,14 @@ describe('TerminalComponent', () => {
     webLinksAddonHandlers.splice(0, webLinksAddonHandlers.length)
     consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     installAtlasMocks()
+    useAppSettingsStore.setState((state) => ({
+      error: null,
+      isLoaded: true,
+      settings: {
+        ...state.settings,
+        terminalCommands: createDefaultTerminalCommandLibrary()
+      }
+    }))
   })
 
   afterEach(() => {
@@ -365,6 +381,108 @@ describe('TerminalComponent', () => {
     render(<TerminalWithHeaderActions component={lockedComponent} updateState={vi.fn()} />)
 
     expect(await screen.findByRole('button', { name: 'Unlock terminal node' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('renders a collapsed command panel toggle that persists expanded state', async () => {
+    const updateState = vi.fn()
+    const component = createTerminalComponent()
+    render(<TerminalWithHeaderActions component={component} updateState={updateState} />)
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const toggleButton = await screen.findByRole('button', { name: 'Show command panel' })
+    expect(toggleButton).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByText('No command categories yet')).not.toBeInTheDocument()
+
+    fireEvent.click(toggleButton)
+    expect(updateState).toHaveBeenCalledWith({ commandPanelExpanded: true }, true)
+  })
+
+  it('writes terminal commands for insert and execute actions', async () => {
+    useAppSettingsStore.setState((state) => ({
+      settings: {
+        ...state.settings,
+        terminalCommands: createCommandLibrary()
+      }
+    }))
+    const updateState = vi.fn()
+    const component = createTerminalComponent()
+    component.state.commandPanelExpanded = true
+
+    render(<TerminalWithHeaderActions component={component} updateState={updateState} />)
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Insert command' }))
+    expect(window.atlas.terminal.write).toHaveBeenCalledWith('session-1', 'npm run dev')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Execute command' }))
+    expect(window.atlas.terminal.write).toHaveBeenCalledWith('session-1', 'npm run dev\r')
+  })
+
+  it('disables terminal command actions until the session is ready', async () => {
+    useAppSettingsStore.setState((state) => ({
+      settings: {
+        ...state.settings,
+        terminalCommands: createCommandLibrary()
+      }
+    }))
+    vi.mocked(window.atlas.terminal.create).mockReturnValue(new Promise(() => undefined))
+    const updateState = vi.fn()
+    const component = createTerminalComponent()
+    component.state.commandPanelExpanded = true
+
+    render(<TerminalWithHeaderActions component={component} updateState={updateState} />)
+
+    expect(await screen.findByRole('button', { name: 'Insert command' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Execute command' })).toBeDisabled()
+  })
+
+  it('disables terminal command actions after the session exits', async () => {
+    useAppSettingsStore.setState((state) => ({
+      settings: {
+        ...state.settings,
+        terminalCommands: createCommandLibrary()
+      }
+    }))
+    let exitListener: ((event: { exitCode: number; signal?: number }) => void) | null = null
+    vi.mocked(window.atlas.terminal.onExit).mockImplementation((_sessionId, listener) => {
+      exitListener = listener
+      return () => undefined
+    })
+    const updateState = vi.fn()
+    const component = createTerminalComponent()
+    component.state.commandPanelExpanded = true
+
+    render(<TerminalWithHeaderActions component={component} updateState={updateState} />)
+
+    const insertButton = await screen.findByRole('button', { name: 'Insert command' })
+    const executeButton = screen.getByRole('button', { name: 'Execute command' })
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(insertButton).toBeEnabled()
+    expect(executeButton).toBeEnabled()
+    expect(exitListener).toBeTypeOf('function')
+
+    act(() => {
+      exitListener?.({ exitCode: 0 })
+    })
+
+    expect(insertButton).toBeDisabled()
+    expect(executeButton).toBeDisabled()
+
+    fireEvent.click(insertButton)
+    fireEvent.click(executeButton)
+    expect(window.atlas.terminal.write).not.toHaveBeenCalled()
   })
 
   it('passes an undispatched initial command and marks it dispatched', async () => {

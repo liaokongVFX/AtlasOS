@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { BellRing, Bot, Check, ChevronDown, Puzzle, RefreshCcw, Settings, SlidersHorizontal, Trash2, Upload, X, type LucideIcon } from 'lucide-react'
+import { BellRing, Bot, Check, ChevronDown, Puzzle, RefreshCcw, Settings, SlidersHorizontal, TerminalSquare, Trash2, Upload, X, type LucideIcon } from 'lucide-react'
 import { DEFAULT_APP_SHORTCUTS } from '@shared/constants'
 import { DEFAULT_PET_SPRITE_ANIMATION, petSettingsSchema, type PetRuntimeState, type PetSettings } from '@shared/pet'
 import { localAssetUrl } from '@shared/local-assets'
@@ -16,6 +16,7 @@ import { LOCALES, useI18n, type I18nKey, type Locale, type TFunction } from '../
 import { cn } from '../lib/utils'
 import { useAppSettingsStore } from '../store/app-settings-store'
 import { PluginSettingsPanel } from './plugin-settings-panel'
+import { TerminalCommandLibraryManager } from './terminal-command-library-manager'
 
 type SettingsSectionPanelProps = {
   active: boolean
@@ -589,6 +590,20 @@ function AiSettingsPanel(): JSX.Element {
   return <EmptySettingsPanel id="ai" titleKey="settings.ai" messageKey="settings.aiEmpty" />
 }
 
+function TerminalCommandsSettingsPanel(): JSX.Element {
+  const { t } = useI18n()
+
+  return (
+    <section className="settings-panel terminal-commands-settings" aria-labelledby="settings-terminal-commands-title">
+      <div className="settings-panel__header">
+        <h2 id="settings-terminal-commands-title">{t('settings.terminalCommands')}</h2>
+        <p>{t('settings.terminalCommandsDescription')}</p>
+      </div>
+      <TerminalCommandLibraryManager className="terminal-command-library--settings" />
+    </section>
+  )
+}
+
 function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
   const { t } = useI18n()
   const [runtimeState, setRuntimeState] = useState<PetRuntimeState | null>(null)
@@ -1128,6 +1143,12 @@ const SETTINGS_SECTIONS = [
     titleKey: 'settings.ai',
     icon: Bot,
     Panel: AiSettingsPanel
+  },
+  {
+    id: 'terminal-commands',
+    titleKey: 'settings.terminalCommands',
+    icon: TerminalSquare,
+    Panel: TerminalCommandsSettingsPanel
   },
   {
     id: 'pet',

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, DEFAULT_LOCALE, DEFAULT_VIEWPORT } from './constants'
 import { appSettingsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
+import { createDefaultTerminalCommandLibrary } from './terminal-commands'
 
 describe('canvasDocumentSchema', () => {
   it('validates a minimal canvas document with default structures', () => {
@@ -191,6 +192,7 @@ describe('appSettingsSchema', () => {
       updates: {
         autoCheck: true
       },
+      terminalCommands: createDefaultTerminalCommandLibrary(),
       pet: {
         enabled: true,
         showNativeNotifications: true,
@@ -230,6 +232,10 @@ describe('appSettingsSchema', () => {
         }
       }).updates
     ).toEqual({ autoCheck: true })
+  })
+
+  it('defaults terminal command library for older app settings files', () => {
+    expect(appSettingsSchema.parse({ locale: 'en-US' }).terminalCommands).toEqual(createDefaultTerminalCommandLibrary())
   })
 
   it('accepts supported locales', () => {
