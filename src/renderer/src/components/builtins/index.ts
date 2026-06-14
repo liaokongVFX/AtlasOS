@@ -7,6 +7,7 @@ import { createFilePreviewDefinition } from './file-preview'
 import { createFileTreeDefinition } from './file-tree'
 import { createKanbanDefinition } from './kanban'
 import { createMarkdownNoteDefinition } from './markdown-note'
+import { createStickyNoteDefinition } from './sticky-note'
 import { createSketchDefinition } from './sketch'
 import { createQuickLauncherDefinition } from './quick-launcher'
 import { createSystemMonitorDefinition } from './system-monitor'
@@ -21,6 +22,7 @@ export function createBuiltInComponentDefinitions(): HostRendererPluginNodeDefin
     createFileTreeDefinition(),
     createBrowserDefinition(),
     createMarkdownNoteDefinition(),
+    createStickyNoteDefinition(),
     createSketchDefinition(),
     createFilePreviewDefinition(),
     createKanbanDefinition(),

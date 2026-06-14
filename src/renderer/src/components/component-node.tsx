@@ -16,6 +16,8 @@ type AtlasNodeData = Record<string, unknown> & {
   isFrameLocked?: boolean
   isNodeDragging?: boolean
   parentGroupPosition?: { x: number; y: number }
+  autoEditComponentId?: string | null
+  onAutoEditHandled?: (componentId: string) => void
   onRequestSelect?: (componentId: string) => void
 }
 
@@ -79,6 +81,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
   const canDragFromSelectedBody = definition.canDragFromSelectedBody?.(component) ?? false
   const nodeChromeVariant = definition.chrome?.variant
   const isTerminalChrome = nodeChromeVariant === 'terminal'
+  const isStickyNoteChrome = nodeChromeVariant === 'sticky-note'
   const isFrameLocked = data.isFrameLocked === true
   const subtitle = definition.getSubtitle?.(component) ?? null
 
@@ -234,7 +237,12 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
 
   return (
     <section
-      className={cn('component-node', selected && 'component-node--selected', isTerminalChrome && 'component-node--terminal')}
+      className={cn(
+        'component-node',
+        selected && 'component-node--selected',
+        isTerminalChrome && 'component-node--terminal',
+        isStickyNoteChrome && 'component-node--sticky-note'
+      )}
       style={{ zIndex: component.zIndex }}
       onContextMenuCapture={selectComponentForContextMenu}
     >
@@ -248,39 +256,41 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
         onResize={resizeBehavior?.keepAspectRatio ? trackResize : markResizing}
         onResizeEnd={persistResize}
       />
-      <header className={cn('component-node__header', isTerminalChrome && 'component-node__header--terminal')}>
-        <div className="component-node__title">
-          <Icon size={16} />
-          <div className={cn('component-node__title-stack', isTerminalChrome && 'component-node__title-stack--terminal')}>
-            {isEditingTitle ? (
-              <input
-                ref={titleInputRef}
-                className={cn('component-node__title-input nodrag', isTerminalChrome && 'component-node__title-input--terminal')}
-                size={definition.chrome?.titleInputSize?.(draftTitle)}
-                value={draftTitle}
-                onBlur={commitTitleEdit}
-                onChange={(event) => setDraftTitle(event.target.value)}
-                onKeyDown={handleTitleKeyDown}
-                aria-label={t('component.title')}
-              />
-            ) : (
-              <span
-                className={cn('component-node__title-display', isTerminalChrome && 'component-node__title-display--terminal')}
-                title={component.title}
-                onDoubleClick={beginTitleEdit}
-              >
-                {component.title}
-              </span>
-            )}
-            {subtitle ? (
-              <div className="component-node__subtitle component-node__subtitle--inline" title={subtitle}>
-                {subtitle}
-              </div>
-            ) : null}
+      {!isStickyNoteChrome ? (
+        <header className={cn('component-node__header', isTerminalChrome && 'component-node__header--terminal')}>
+          <div className="component-node__title">
+            <Icon size={16} />
+            <div className={cn('component-node__title-stack', isTerminalChrome && 'component-node__title-stack--terminal')}>
+              {isEditingTitle ? (
+                <input
+                  ref={titleInputRef}
+                  className={cn('component-node__title-input nodrag', isTerminalChrome && 'component-node__title-input--terminal')}
+                  size={definition.chrome?.titleInputSize?.(draftTitle)}
+                  value={draftTitle}
+                  onBlur={commitTitleEdit}
+                  onChange={(event) => setDraftTitle(event.target.value)}
+                  onKeyDown={handleTitleKeyDown}
+                  aria-label={t('component.title')}
+                />
+              ) : (
+                <span
+                  className={cn('component-node__title-display', isTerminalChrome && 'component-node__title-display--terminal')}
+                  title={component.title}
+                  onDoubleClick={beginTitleEdit}
+                >
+                  {component.title}
+                </span>
+              )}
+              {subtitle ? (
+                <div className="component-node__subtitle component-node__subtitle--inline" title={subtitle}>
+                  {subtitle}
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
-        {headerActions ? <div className="component-node__header-actions nodrag nowheel">{headerActions}</div> : null}
-      </header>
+          {headerActions ? <div className="component-node__header-actions nodrag nowheel">{headerActions}</div> : null}
+        </header>
+      ) : null}
       <div
         className={cn(
           'component-node__body',
@@ -300,6 +310,8 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
             setHeaderActions={setHeaderActions}
             isCanvasInteracting={isCanvasInteracting}
             isNodeSelected={selected}
+            autoEditComponentId={data.autoEditComponentId}
+            onAutoEditHandled={data.onAutoEditHandled}
             onRequestSelect={data.onRequestSelect}
           />
         </ComponentErrorBoundary>

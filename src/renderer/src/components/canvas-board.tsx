@@ -42,6 +42,7 @@ type ComponentNodeCacheEntry = {
   canvasZoom: number
   component: CanvasComponent
   isNodeDragging: boolean
+  shouldAutoEdit: boolean
   parentGroupId?: string
   parentGroupX?: number
   parentGroupY?: number
@@ -119,7 +120,9 @@ function componentToNode(
   onRequestSelect?: (componentId: string) => void,
   parentGroup?: CanvasGroup,
   canvasZoom = 1,
-  isNodeDragging = false
+  isNodeDragging = false,
+  shouldAutoEdit = false,
+  onAutoEditHandled?: (componentId: string) => void
 ): AtlasFlowNode {
   const isLockedTerminal = isTerminalComponentLocked(component)
   const position = parentGroup
@@ -145,8 +148,10 @@ function componentToNode(
       canvasId,
       canvasZoom,
       component,
+      autoEditComponentId: shouldAutoEdit ? component.id : null,
       isFrameLocked: isLockedTerminal,
       isNodeDragging,
+      onAutoEditHandled,
       parentGroupPosition: parentGroup ? { x: parentGroup.frame.x, y: parentGroup.frame.y } : undefined,
       onRequestSelect,
       registryVersion
@@ -166,7 +171,9 @@ function cachedComponentToNode(
   onRequestSelect?: (componentId: string) => void,
   parentGroup?: CanvasGroup,
   canvasZoom = 1,
-  isNodeDragging = false
+  isNodeDragging = false,
+  shouldAutoEdit = false,
+  onAutoEditHandled?: (componentId: string) => void
 ): AtlasFlowNode {
   const cached = cache.get(component.id)
   if (
@@ -174,6 +181,7 @@ function cachedComponentToNode(
     cached.canvasZoom === canvasZoom &&
     cached.component === component &&
     cached.isNodeDragging === isNodeDragging &&
+    cached.shouldAutoEdit === shouldAutoEdit &&
     cached.parentGroupId === parentGroup?.id &&
     cached.parentGroupX === parentGroup?.frame.x &&
     cached.parentGroupY === parentGroup?.frame.y &&
@@ -183,12 +191,23 @@ function cachedComponentToNode(
     return cached.node
   }
 
-  const node = componentToNode(canvasId, component, registryVersion, onRequestSelect, parentGroup, canvasZoom, isNodeDragging)
+  const node = componentToNode(
+    canvasId,
+    component,
+    registryVersion,
+    onRequestSelect,
+    parentGroup,
+    canvasZoom,
+    isNodeDragging,
+    shouldAutoEdit,
+    onAutoEditHandled
+  )
   cache.set(component.id, {
     canvasId,
     canvasZoom,
     component,
     isNodeDragging,
+    shouldAutoEdit,
     parentGroupId: parentGroup?.id,
     parentGroupX: parentGroup?.frame.x,
     parentGroupY: parentGroup?.frame.y,
@@ -275,10 +294,15 @@ function unselectNodeIds(nodes: CanvasFlowNode[], nodeIds: Set<string>): CanvasF
 }
 
 function selectOnlyNode(nodes: CanvasFlowNode[], nodeId: string): CanvasFlowNode[] {
+  return selectOnlyNodeIds(nodes, new Set([nodeId]))
+}
+
+function selectOnlyNodeIds(nodes: CanvasFlowNode[], nodeIds: Set<string>): CanvasFlowNode[] {
   let didChange = false
   const nextNodes = nodes.map((node) => {
-    const shouldSelect = node.id === nodeId
-    if (node.selected === shouldSelect) return node
+    const shouldSelect = nodeIds.has(node.id)
+    const isSelected = node.selected === true
+    if (isSelected === shouldSelect) return node
 
     didChange = true
     return { ...node, selected: shouldSelect }
@@ -313,24 +337,6 @@ function elevateNodeIds(nodes: CanvasFlowNode[], nodeIds: Set<string>): CanvasFl
     const zIndex = nextZIndexes.get(node.id)
     return zIndex === undefined ? node : { ...node, zIndex }
   })
-}
-
-function restorePersistedZIndexes(nodes: CanvasFlowNode[], persistedNodes: CanvasFlowNode[], nodeIds: Set<string>): CanvasFlowNode[] {
-  if (nodeIds.size === 0) return nodes
-
-  const persistedZIndexes = new Map(persistedNodes.map((node) => [node.id, nodeZIndex(node)]))
-  let didChange = false
-  const nextNodes = nodes.map((node) => {
-    if (!nodeIds.has(node.id)) return node
-
-    const zIndex = persistedZIndexes.get(node.id)
-    if (zIndex === undefined || nodeZIndex(node) === zIndex) return node
-
-    didChange = true
-    return { ...node, zIndex }
-  })
-
-  return didChange ? nextNodes : nodes
 }
 
 function splitNodeIds(nodeIds: string[], groups: CanvasGroup[]): { componentIds: string[]; groupIds: string[] } {
@@ -1076,6 +1082,7 @@ export function CanvasBoard(): JSX.Element {
   const duplicateSelection = useCanvasStore((state) => state.duplicateSelection)
   const removeComponents = useCanvasStore((state) => state.removeComponents)
   const bringToFront = useCanvasStore((state) => state.bringToFront)
+  const bringNodesToFront = useCanvasStore((state) => state.bringNodesToFront)
   const createGroup = useCanvasStore((state) => state.createGroup)
   const updateGroup = useCanvasStore((state) => state.updateGroup)
   const moveGroup = useCanvasStore((state) => state.moveGroup)
@@ -1100,6 +1107,7 @@ export function CanvasBoard(): JSX.Element {
   const [pendingGroupDelete, setPendingGroupDelete] = useState<PendingGroupDeleteRequest | null>(null)
   const [isFileDragActive, setIsFileDragActive] = useState(false)
   const [isViewportInteracting, setIsViewportInteracting] = useState(false)
+  const [autoEditComponentId, setAutoEditComponentId] = useState<string | null>(null)
   const [draggingNodeIds, setDraggingNodeIds] = useState<Set<string>>(() => new Set())
   const createMenuAnchorRef = useRef<Measurable>(createPointAnchor(0, 0))
   const canvasBoardRef = useRef<HTMLElement | null>(null)
@@ -1157,6 +1165,10 @@ export function CanvasBoard(): JSX.Element {
     [activeCanvasId, bringToFront]
   )
 
+  const clearAutoEditComponentId = useCallback((componentId: string) => {
+    setAutoEditComponentId((currentId) => (currentId === componentId ? null : currentId))
+  }, [])
+
   const persistedNodes = useMemo(() => {
     const cache = componentNodeCacheRef.current
     if (!canvas) {
@@ -1181,7 +1193,9 @@ export function CanvasBoard(): JSX.Element {
         selectComponentForContextMenu,
         memberGroups.get(component.id),
         canvas.viewport.zoom,
-        draggingComponentIds.has(component.id)
+        draggingComponentIds.has(component.id),
+        autoEditComponentId === component.id,
+        clearAutoEditComponentId
       )
     })
 
@@ -1197,7 +1211,7 @@ export function CanvasBoard(): JSX.Element {
     ]
 
     return draggingNodeIds.size > 0 ? elevateNodeIds(nextNodes, draggingNodeIds) : nextNodes
-  }, [canvas, componentRegistryVersion, draggingNodeIds, selectComponentForContextMenu])
+  }, [autoEditComponentId, canvas, clearAutoEditComponentId, componentRegistryVersion, draggingNodeIds, selectComponentForContextMenu])
 
   useLayoutEffect(() => {
     setNodes((currentNodes) => {
@@ -1207,12 +1221,14 @@ export function CanvasBoard(): JSX.Element {
       if (!pendingSelectedNodeIds) return reconciledNodes
 
       pendingSelectedNodeIdsRef.current = null
-      return reconciledNodes.map((node) => ({
-        ...node,
-        selected: pendingSelectedNodeIds.has(node.id)
-      }))
+      return selectOnlyNodeIds(reconciledNodes, pendingSelectedNodeIds)
     })
   }, [persistedNodes])
+
+  useEffect(() => {
+    if (!autoEditComponentId || canvas?.components.some((component) => component.id === autoEditComponentId)) return
+    setAutoEditComponentId(null)
+  }, [autoEditComponentId, canvas?.components])
 
   const closeCreateMenu = useCallback(() => {
     setCreateMenu((currentMenu) => (currentMenu ? null : currentMenu))
@@ -1306,8 +1322,7 @@ export function CanvasBoard(): JSX.Element {
         const stoppedNodeIds = new Set(stoppedNodes.map((draggedNode) => draggedNode.id))
         const shouldKeepDraggedSelection = stoppedNodeIds.size > 1 && !dragDuplicateState
         setNodes((currentNodes) => {
-          const restoredNodes = restorePersistedZIndexes(currentNodes, persistedNodes, stoppedNodeIds)
-          return shouldKeepDraggedSelection ? restoredNodes : unselectNodeIds(restoredNodes, stoppedNodeIds)
+          return shouldKeepDraggedSelection ? currentNodes : unselectNodeIds(currentNodes, stoppedNodeIds)
         })
 
         if (!activeCanvasId || !canvas) return
@@ -1349,10 +1364,12 @@ export function CanvasBoard(): JSX.Element {
         const componentById = new Map(canvasForPersistence.components.map((component) => [component.id, component]))
         const updatesById = new Map<string, { componentId: string; frame: { x: number; y: number }; reconcileGroup?: boolean }>()
         let didMoveGroup = false
+        const frontNodeIds: string[] = []
 
         for (const draggedNode of nodesForPersistence) {
           const group = groupsById.get(draggedNode.id)
           if (group) {
+            frontNodeIds.push(draggedNode.id)
             const position = {
               x: Math.round(draggedNode.position.x),
               y: Math.round(draggedNode.position.y)
@@ -1369,6 +1386,7 @@ export function CanvasBoard(): JSX.Element {
           const component = componentById.get(draggedNode.id)
           if (!component) continue
 
+          frontNodeIds.push(draggedNode.id)
           const parentPosition = sourceParentPositionsByDuplicateId.get(component.id) ?? memberGroups.get(component.id)?.frame
           const position = absoluteNodePosition(draggedNode, parentPosition)
           const x = position.x
@@ -1382,9 +1400,13 @@ export function CanvasBoard(): JSX.Element {
           })
         }
 
+        if (frontNodeIds.length > 0) {
+          bringNodesToFront(activeCanvasId, frontNodeIds)
+        }
+
         const updates = [...updatesById.values()]
         if (updates.length === 0) {
-          if (didMoveGroup || didDuplicateOnDrag) notifyCanvasViewportSync()
+          if (frontNodeIds.length > 0 || didMoveGroup || didDuplicateOnDrag) notifyCanvasViewportSync()
           return
         }
 
@@ -1394,7 +1416,7 @@ export function CanvasBoard(): JSX.Element {
         finishNodeDragInteraction()
       }
     },
-    [activeCanvasId, canvas, duplicateSelection, finishNodeDragInteraction, moveGroup, persistedNodes, updateComponentFrames]
+    [activeCanvasId, bringNodesToFront, canvas, duplicateSelection, finishNodeDragInteraction, moveGroup, updateComponentFrames]
   )
 
   const openNodeFinder = useCallback(() => {
@@ -1736,7 +1758,11 @@ export function CanvasBoard(): JSX.Element {
   const createComponentFromMenu = useCallback(
     (type: ComponentType) => {
       if (!createMenu) return
-      addComponent(type, createMenu.flowPosition)
+      const componentId = addComponent(type, createMenu.flowPosition)
+      if (componentId) {
+        pendingSelectedNodeIdsRef.current = new Set([componentId])
+        if (type === 'sticky-note') setAutoEditComponentId(componentId)
+      }
       closeCreateMenu()
       notifyCanvasViewportSync()
     },

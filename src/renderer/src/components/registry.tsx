@@ -17,6 +17,8 @@ export type AtlasComponentRendererProps = {
   isCanvasInteracting?: boolean
   isNodeSelected?: boolean
   isViewportInteracting?: boolean
+  autoEditComponentId?: string | null
+  onAutoEditHandled?: (componentId: string) => void
   onRequestSelect?: (componentId: string) => void
 }
 
@@ -50,7 +52,7 @@ export type AtlasComponentDefinition = ComponentDefinitionMeta & {
   Renderer: (props: AtlasComponentRendererProps) => JSX.Element
   pluginId?: string
   chrome?: {
-    variant?: 'terminal'
+    variant?: 'terminal' | 'sticky-note'
     titleInputSize?: (title: string) => number
   }
   create?: () => ComponentCreatePatch

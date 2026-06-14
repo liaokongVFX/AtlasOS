@@ -18,7 +18,10 @@ export type AtlasPluginNodeProps<
   TConfig extends object = AtlasPluginRecord,
   TState extends object = AtlasPluginRecord,
   TBindings extends object = AtlasPluginRecord
-> = Omit<AtlasComponentRendererProps, 'component' | 'updateConfig' | 'updateState' | 'setHeaderActions'> & {
+> = Omit<
+  AtlasComponentRendererProps,
+  'autoEditComponentId' | 'component' | 'onAutoEditHandled' | 'updateConfig' | 'updateState' | 'setHeaderActions'
+> & {
   component: CanvasComponent & {
     config: TConfig
     state: TState

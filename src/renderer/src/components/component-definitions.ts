@@ -16,6 +16,7 @@ export const CREATABLE_BUILTIN_COMPONENT_TYPES = [
   'file-tree',
   'browser',
   'markdown-note',
+  'sticky-note',
   'sketch',
   'kanban',
   'quick-launcher',
@@ -56,6 +57,14 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     title: 'Markdown Note',
     titleKey: 'component.markdownNote',
     defaultFrame: { x: 260, y: 220, width: 640, height: 520 },
+    permissions: ['note:edit'],
+    creatable: true
+  },
+  'sticky-note': {
+    type: 'sticky-note',
+    title: 'Sticky Note',
+    titleKey: 'component.stickyNote',
+    defaultFrame: { x: 260, y: 220, width: 280, height: 280 },
     permissions: ['note:edit'],
     creatable: true
   },

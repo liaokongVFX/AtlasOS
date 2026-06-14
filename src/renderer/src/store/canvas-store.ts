@@ -41,7 +41,7 @@ type CanvasStore = {
   beginCanvasInteraction: () => void
   endCanvasInteraction: () => void
   updateCanvas: (canvasId: string, updater: (canvas: CanvasDocument) => void, immediate?: boolean) => void
-  addComponent: (type: ComponentType, position?: { x: number; y: number }, patch?: ComponentCreatePatch) => void
+  addComponent: (type: ComponentType, position?: { x: number; y: number }, patch?: ComponentCreatePatch) => string | null
   addComponents: (components: ComponentCreateInput[]) => void
   duplicateComponents: (canvasId: string, componentIds: string[]) => string[]
   duplicateSelection: (canvasId: string, componentIds: string[], groupIds: string[]) => DuplicateSelectionResult
@@ -50,6 +50,7 @@ type CanvasStore = {
   removeComponent: (canvasId: string, componentId: string) => void
   removeComponents: (canvasId: string, componentIds: string[]) => void
   bringToFront: (canvasId: string, componentId: string) => void
+  bringNodesToFront: (canvasId: string, nodeIds: string[]) => void
   createGroup: (canvasId: string, componentIds: string[]) => string | null
   updateGroup: (canvasId: string, groupId: string, patch: Partial<Pick<CanvasGroup, 'title' | 'notes'>>, immediate?: boolean) => void
   updateGroupFrame: (canvasId: string, groupId: string, frame: Frame, immediate?: boolean) => void
@@ -117,6 +118,35 @@ function nextZIndex(canvas: CanvasDocument): number {
 
 function nextGroupZIndex(canvas: CanvasDocument): number {
   return canvas.groups.reduce((max, group) => Math.max(max, group.zIndex), 0) + 1
+}
+
+function nextCanvasNodeZIndex(canvas: CanvasDocument): number {
+  const componentMax = canvas.components.reduce((max, component) => Math.max(max, component.zIndex), 0)
+  const groupMax = canvas.groups.reduce((max, group) => Math.max(max, group.zIndex), 0)
+  return Math.max(componentMax, groupMax) + 1
+}
+
+function frontNodeRefs(canvas: CanvasDocument, nodeIds: string[]): Array<{ id: string; kind: 'component' | 'group'; zIndex: number; order: number }> {
+  const refs: Array<{ id: string; kind: 'component' | 'group'; zIndex: number; order: number }> = []
+  const seen = new Set<string>()
+  const componentsById = new Map(canvas.components.map((component) => [component.id, component]))
+  const groupsById = new Map(canvas.groups.map((group) => [group.id, group]))
+
+  nodeIds.forEach((nodeId, order) => {
+    if (seen.has(nodeId)) return
+    seen.add(nodeId)
+
+    const component = componentsById.get(nodeId)
+    if (component) {
+      if (!isTerminalComponentLocked(component)) refs.push({ id: nodeId, kind: 'component', zIndex: component.zIndex, order })
+      return
+    }
+
+    const group = groupsById.get(nodeId)
+    if (group) refs.push({ id: nodeId, kind: 'group', zIndex: group.zIndex, order })
+  })
+
+  return refs.sort((first, second) => first.zIndex - second.zIndex || first.order - second.order)
 }
 
 function selectedComponentBounds(components: CanvasComponent[]): Frame | null {
@@ -546,14 +576,17 @@ export const useCanvasStore = create<CanvasStore>()(
 
     addComponent(type, position, patch) {
       const canvasId = get().activeCanvasId
-      if (!canvasId) return
+      if (!canvasId) return null
+      let componentId: string | null = null
       get().updateCanvas(
         canvasId,
         (canvas) => {
-          canvas.components.push(createComponent(type, canvas, position, patch))
+          const component = createComponent(type, canvas, position, patch)
+          componentId = component.id
+          canvas.components.push(component)
         },
-        true
       )
+      return componentId
     },
 
     addComponents(components) {
@@ -567,7 +600,6 @@ export const useCanvasStore = create<CanvasStore>()(
             canvas.components.push(createComponent(component.type, canvas, component.position, component.patch))
           }
         },
-        true
       )
     },
 
@@ -756,6 +788,39 @@ export const useCanvasStore = create<CanvasStore>()(
       get().updateComponent(canvasId, componentId, (component) => {
         const canvas = get().canvases[canvasId]
         if (canvas) component.zIndex = nextZIndex(canvas)
+      })
+    },
+
+    bringNodesToFront(canvasId, nodeIds) {
+      if (nodeIds.length === 0) return
+
+      const currentCanvas = get().canvases[canvasId]
+      if (!currentCanvas) return
+
+      const refs = frontNodeRefs(currentCanvas, nodeIds)
+      if (refs.length === 0) return
+
+      get().updateCanvas(canvasId, (canvas) => {
+        const updatedAt = nowIso()
+        const componentsById = new Map(canvas.components.map((component) => [component.id, component]))
+        const groupsById = new Map(canvas.groups.map((group) => [group.id, group]))
+        let zIndex = nextCanvasNodeZIndex(canvas)
+
+        for (const ref of refs) {
+          if (ref.kind === 'component') {
+            const component = componentsById.get(ref.id)
+            if (!component || isTerminalComponentLocked(component)) continue
+
+            component.zIndex = zIndex
+            component.updatedAt = updatedAt
+          } else {
+            const group = groupsById.get(ref.id)
+            if (!group) continue
+
+            group.zIndex = zIndex
+          }
+          zIndex += 1
+        }
       })
     },
 
