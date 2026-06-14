@@ -1,11 +1,14 @@
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineConfig } from 'vitest/config'
+
+const rendererTestSetup = resolve(__dirname, 'src/renderer/src/test/setup.ts')
 
 export default defineConfig({
   test: {
     environment: 'happy-dom',
     globals: true,
-    setupFiles: ['./src/renderer/src/test/setup.ts']
+    setupFiles: existsSync(rendererTestSetup) ? [rendererTestSetup] : []
   },
   resolve: {
     alias: {

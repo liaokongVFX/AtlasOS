@@ -16,3 +16,10 @@ tmp
 .vscode
 *.log
 *.tsbuildinfo
+
+# Local-only tests
+*.test.*
+*.spec.*
+test/
+tests/
+__tests__/

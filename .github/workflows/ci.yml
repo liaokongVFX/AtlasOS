@@ -43,8 +43,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
-        run: ${{ matrix.npm }} test
+      - name: Verify no test files are committed
+        run: ${{ matrix.npm }} run verify:no-tests
 
       - name: Build app
         run: ${{ matrix.npm }} run build
