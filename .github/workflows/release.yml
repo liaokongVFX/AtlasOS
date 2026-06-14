@@ -54,17 +54,6 @@ jobs:
               release/*.exe
               release/*.blockmap
               release/*.yml
-          - label: macOS DMG/ZIP
-            platform: macos
-            os: macos-15
-            npm: npm
-            artifact-name: atlasos-macos
-            artifact-path: |
-              release/*.dmg
-              release/*.zip
-              release/*.blockmap
-              release/*.yml
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -81,69 +70,11 @@ jobs:
       - name: Build app
         run: ${{ matrix.npm }} run build
 
-      - name: Detect macOS signing configuration
-        id: mac_signing
-        if: matrix.platform == 'macos'
-        shell: bash
-        env:
-          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          signing_values=0
-          [[ -n "$MAC_CSC_LINK" ]] && signing_values=$((signing_values + 1))
-          [[ -n "$MAC_CSC_KEY_PASSWORD" ]] && signing_values=$((signing_values + 1))
-
-          if [[ "$signing_values" -eq 0 ]]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::MAC_CSC_LINK and MAC_CSC_KEY_PASSWORD are not configured; building macOS artifacts without a signing certificate."
-          elif [[ "$signing_values" -eq 2 ]]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::Configure both MAC_CSC_LINK and MAC_CSC_KEY_PASSWORD for macOS code signing, or leave both unset for an unsigned build."
-            exit 1
-          fi
-
-          notarization_values=0
-          [[ -n "$APPLE_ID" ]] && notarization_values=$((notarization_values + 1))
-          [[ -n "$APPLE_APP_SPECIFIC_PASSWORD" ]] && notarization_values=$((notarization_values + 1))
-          [[ -n "$APPLE_TEAM_ID" ]] && notarization_values=$((notarization_values + 1))
-
-          if [[ "$notarization_values" -ne 0 && "$notarization_values" -ne 3 ]]; then
-            echo "::error::Configure APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID together for macOS notarization."
-            exit 1
-          fi
-
-          if [[ "$notarization_values" -eq 3 && "$signing_values" -ne 2 ]]; then
-            echo "::error::macOS notarization requires MAC_CSC_LINK and MAC_CSC_KEY_PASSWORD to be configured."
-            exit 1
-          fi
-
       - name: Package Windows installer
         if: matrix.platform == 'windows'
         run: npx electron-builder --win nsis --publish never
         env:
           npm_config_devdir: .electron-gyp
-
-      - name: Package macOS app without signing certificate
-        if: matrix.platform == 'macos' && steps.mac_signing.outputs.enabled != 'true'
-        run: npx electron-builder --mac dmg zip --x64 --arm64 --publish never
-        env:
-          npm_config_devdir: .electron-gyp
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-
-      - name: Package macOS app with signing certificate
-        if: matrix.platform == 'macos' && steps.mac_signing.outputs.enabled == 'true'
-        run: npx electron-builder --mac dmg zip --x64 --arm64 --publish never
-        env:
-          npm_config_devdir: .electron-gyp
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v7
