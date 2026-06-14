@@ -1298,6 +1298,76 @@ describe('CanvasBoard', () => {
     expect(canvas.components).toHaveLength(1)
   })
 
+  it('deletes selected loose components when removing selected groups only', async () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('component-1'),
+            createComponent('component-2', { frame: { x: 640, y: 180, width: 220, height: 160 } })
+          ],
+          groups: [createGroup('group-1', { memberIds: ['component-1'] })]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([
+        { id: 'group-1', type: 'select', selected: true },
+        { id: 'component-2', type: 'select', selected: true }
+      ])
+    })
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }))
+    })
+
+    expect(await screen.findByRole('dialog', { name: 'Delete group?' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove group only' }))
+
+    const canvas = useCanvasStore.getState().canvases['canvas-1']
+    expect(canvas.groups).toHaveLength(0)
+    expect(canvas.components.map((component) => component.id)).toEqual(['component-1'])
+  })
+
+  it('deletes selected loose components when deleting selected groups with members', async () => {
+    useCanvasStore.setState((state) => ({
+      canvases: {
+        ...state.canvases,
+        'canvas-1': {
+          ...state.canvases['canvas-1'],
+          components: [
+            createComponent('component-1'),
+            createComponent('component-2', { frame: { x: 640, y: 180, width: 220, height: 160 } })
+          ],
+          groups: [createGroup('group-1', { memberIds: ['component-1'] })]
+        }
+      }
+    }))
+
+    renderCanvasBoard()
+
+    act(() => {
+      reactFlowProps.current?.onNodesChange?.([
+        { id: 'group-1', type: 'select', selected: true },
+        { id: 'component-2', type: 'select', selected: true }
+      ])
+    })
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }))
+    })
+
+    expect(await screen.findByRole('dialog', { name: 'Delete group?' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete group and members' }))
+
+    const canvas = useCanvasStore.getState().canvases['canvas-1']
+    expect(canvas.groups).toHaveLength(0)
+    expect(canvas.components).toHaveLength(0)
+  })
+
   it('finds groups by notes and focuses the selected group result', async () => {
     useCanvasStore.setState((state) => ({
       canvases: {

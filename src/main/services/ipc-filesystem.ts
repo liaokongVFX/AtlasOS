@@ -1,10 +1,9 @@
-import type { Dirent } from 'node:fs'
+import { watch as watchFileSystem, type Dirent, type FSWatcher } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { dialog, shell, type WebContents } from 'electron'
 import fg from 'fast-glob'
-import chokidar, { type FSWatcher } from 'chokidar'
 import { z } from 'zod'
 import {
   chooseDirectoryInputSchema,
@@ -21,7 +20,26 @@ import { assertInsideRoot, childPath, sanitizeFileName } from './path-safety'
 import { handleValidated } from './ipc-helpers'
 
 const FILESYSTEM_SCAN_DEPTH = 64
-const FILESYSTEM_WATCH_DEPTH = 0
+
+let asarDisabledDepth = 0
+let previousNoAsar = false
+
+async function withAsarDisabled<T>(operation: () => Promise<T>): Promise<T> {
+  if (asarDisabledDepth === 0) {
+    previousNoAsar = Boolean(process.noAsar)
+    process.noAsar = true
+  }
+  asarDisabledDepth += 1
+
+  try {
+    return await operation()
+  } finally {
+    asarDisabledDepth -= 1
+    if (asarDisabledDepth === 0) {
+      process.noAsar = previousNoAsar
+    }
+  }
+}
 
 type WatcherRecord = {
   watcher: FSWatcher
@@ -51,7 +69,7 @@ export class FileSystemService {
     handleValidated('filesystem:list-tree', listTreeInputSchema, async (_, input) => {
       const rootPath = assertInsideRoot(input.rootPath, input.rootPath)
       const targetPath = assertInsideRoot(rootPath, input.targetPath ?? rootPath)
-      return this.readTree(rootPath, targetPath, input.maxDepth)
+      return withAsarDisabled(() => this.readTree(rootPath, targetPath, input.maxDepth))
     })
 
     handleValidated('filesystem:create-file', fileOperationInputSchema, async (_, input) => {
@@ -109,13 +127,15 @@ export class FileSystemService {
 
     handleValidated('filesystem:search', searchFilesInputSchema, async (_, input) => {
       const rootPath = assertInsideRoot(input.rootPath, input.rootPath)
-      const results = await fg('**/*', {
-        cwd: rootPath,
-        dot: true,
-        onlyFiles: false,
-        deep: FILESYSTEM_SCAN_DEPTH,
-        unique: true
-      })
+      const results = await withAsarDisabled(() =>
+        fg('**/*', {
+          cwd: rootPath,
+          dot: true,
+          onlyFiles: false,
+          deep: FILESYSTEM_SCAN_DEPTH,
+          unique: true
+        })
+      )
       const lowerQuery = input.query.toLowerCase()
       return results
         .filter((item) => item.toLowerCase().includes(lowerQuery))
@@ -139,14 +159,10 @@ export class FileSystemService {
     const rootPath = assertInsideRoot(rootPathInput, rootPathInput)
     const targetPath = assertInsideRoot(rootPath, targetPathInput)
     const watchId = randomUUID()
-    const watcher = chokidar.watch(targetPath, {
-      ignoreInitial: true,
-      depth: FILESYSTEM_WATCH_DEPTH
-    })
-
-    watcher.on('all', (eventName, targetPath) => {
+    const watcher = watchFileSystem(targetPath, { persistent: true }, (eventName, fileName) => {
       if (!webContents.isDestroyed()) {
-        webContents.send('filesystem:watch-event', { watchId, eventName, path: targetPath })
+        const eventPath = fileName ? join(targetPath, fileName.toString()) : targetPath
+        webContents.send('filesystem:watch-event', { watchId, eventName, path: eventPath })
       }
     })
 
@@ -166,7 +182,8 @@ export class FileSystemService {
 
     this.watchers.delete(watchId)
     this.untrackOwnerWatch(record.ownerId, watchId)
-    return record.watcher.close()
+    record.watcher.close()
+    return Promise.resolve()
   }
 
   private trackOwnerWatch(webContents: WebContents, watchId: string): void {

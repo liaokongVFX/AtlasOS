@@ -116,6 +116,7 @@ const zhCN = {
 
   'filePreview.failedImagePreview': '图片预览加载失败。',
   'filePreview.failedRead': '读取文件失败',
+  'filePreview.failedWrite': '保存文件失败',
   'filePreview.failedVideoPreview': '视频预览加载失败。',
   'filePreview.noFileBound': '未绑定文件',
   'filePreview.refresh': '刷新',
@@ -278,6 +279,7 @@ const zhCN = {
   'terminalCommands.deleteCategoryDescription': '删除 {name} 会同时删除其中 {count} 条指令。',
   'terminalCommands.deleteCategoryTitle': '删除分类？',
   'terminalCommands.deleteCommand': '删除指令',
+  'terminalCommands.doubleClickExecute': '双击执行',
   'terminalCommands.dragCommand': '拖拽指令 {name}',
   'terminalCommands.editCategory': '编辑分类',
   'terminalCommands.editCommand': '编辑指令',
@@ -588,6 +590,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
 
   'filePreview.failedImagePreview': 'Failed to load image preview.',
   'filePreview.failedRead': 'Failed to read file',
+  'filePreview.failedWrite': 'Failed to save file',
   'filePreview.failedVideoPreview': 'Failed to load video preview.',
   'filePreview.noFileBound': 'No file bound',
   'filePreview.refresh': 'Refresh',
@@ -750,6 +753,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'terminalCommands.deleteCategoryDescription': 'Deleting {name} will also delete {count} commands in it.',
   'terminalCommands.deleteCategoryTitle': 'Delete category?',
   'terminalCommands.deleteCommand': 'Delete command',
+  'terminalCommands.doubleClickExecute': 'Double-click to execute',
   'terminalCommands.dragCommand': 'Drag command {name}',
   'terminalCommands.editCategory': 'Edit category',
   'terminalCommands.editCommand': 'Edit command',

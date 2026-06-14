@@ -28,6 +28,8 @@ describe('node header styles', () => {
     expect(styleRule(css, '.component-node--selected .file-tree-module')).toContain('cursor: default;')
     expect(styleRule(css, '.component-node--selected .markdown-editor .cm-scroller')).toContain('cursor: default;')
     expect(styleRule(css, '.component-node--selected .markdown-editor .cm-content')).toContain('cursor: default;')
+    expect(styleRule(css, '.component-node--selected .file-preview-code .cm-scroller')).toContain('cursor: default;')
+    expect(styleRule(css, '.component-node--selected .file-preview-code .cm-content')).toContain('cursor: default;')
   })
 
   it('keeps the terminal right resize hit area off the xterm scrollbar', () => {

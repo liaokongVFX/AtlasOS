@@ -2131,7 +2131,7 @@ svg {
 }
 
 .terminal-module--commands-open {
-  grid-template-rows: minmax(0, 1fr) clamp(128px, 34%, 220px);
+  grid-template-rows: minmax(0, 1fr) clamp(72px, 22%, 132px);
 }
 
 .terminal-module__screen {
@@ -2246,6 +2246,11 @@ svg {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
+.terminal-command-library--dragging-command,
+.terminal-command-library--dragging-command * {
+  cursor: grabbing !important;
+}
+
 .terminal-command-library__toolbar {
   display: flex;
   align-items: center;
@@ -2329,7 +2334,19 @@ svg {
 }
 
 .terminal-command-category-tab--dragging {
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  border-width: 0;
+  padding-inline: 0;
   opacity: 0;
+  pointer-events: none;
+  box-shadow: none;
+}
+
+.terminal-command-category-tab--dragging > * {
+  visibility: hidden;
 }
 
 .terminal-command-library__toolbar-actions {
@@ -2492,6 +2509,149 @@ svg {
   border-color: rgb(130 143 255 / 62%);
   background: var(--color-primary-soft);
   color: #fff;
+}
+
+.terminal-module__commands .terminal-command-library__toolbar {
+  gap: var(--space-1);
+  padding: 3px var(--space-2);
+  background: color-mix(in srgb, var(--color-surface-2), var(--color-canvas) 12%);
+}
+
+.terminal-module__commands .terminal-command-library__categories {
+  gap: 3px;
+}
+
+.terminal-module__commands .terminal-command-category-tab {
+  max-width: 128px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.terminal-module__commands .terminal-command-category-tab--active {
+  border-color: rgb(130 143 255 / 48%);
+  background: var(--color-surface-3);
+  box-shadow: inset 0 -1px 0 var(--color-primary);
+}
+
+.terminal-module__commands .terminal-command-library__toolbar-actions {
+  gap: 2px;
+}
+
+.terminal-module__commands .terminal-command-toolbar-button,
+.terminal-module__commands .terminal-command-icon-button {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+}
+
+.terminal-module__commands .terminal-command-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px var(--space-2);
+}
+
+.terminal-module__commands .terminal-command-list--empty {
+  display: grid;
+  height: 100%;
+  align-content: center;
+  overflow: hidden;
+}
+
+.terminal-command-row--compact {
+  display: inline-grid;
+  grid-template-columns: minmax(0, auto) auto;
+  flex: 0 1 auto;
+  width: max-content;
+  min-width: 0;
+  max-width: min(240px, 100%);
+  min-height: 30px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface-1), var(--color-canvas) 30%);
+  box-shadow: none;
+}
+
+.terminal-command-row--compact:hover,
+.terminal-command-row--compact:focus-within {
+  background: var(--color-surface-2);
+}
+
+.terminal-command-row--compact.terminal-command-row--overlay {
+  width: max-content;
+  min-width: 0;
+}
+
+.terminal-command-row--compact.terminal-command-row--dragging {
+  position: absolute;
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  height: 0;
+  min-height: 0;
+  border-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  box-shadow: none;
+}
+
+.terminal-command-row--compact.terminal-command-row--dragging > * {
+  visibility: hidden;
+}
+
+.terminal-command-row--compact.terminal-command-row--placeholder {
+  flex: 0 0 auto;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: none;
+}
+
+.terminal-command-row--compact .terminal-command-row__main {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  min-width: 0;
+  padding: 0 7px;
+  cursor: default;
+}
+
+.terminal-command-row--compact .terminal-command-row__main:active {
+  cursor: default;
+}
+
+.terminal-command-row--compact .terminal-command-row__main strong {
+  max-width: min(18ch, 156px);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.terminal-command-row--compact .terminal-command-row__main small {
+  display: none;
+}
+
+.terminal-command-row--compact .terminal-command-row__actions {
+  gap: 1px;
+  padding-right: 3px;
+}
+
+.terminal-module__commands .terminal-command-empty {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  font-size: 11px;
+}
+
+.terminal-module__commands .terminal-command-empty--library .tool-button {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .terminal-command-empty {
@@ -2890,6 +3050,14 @@ svg {
 }
 
 .component-node--selected .markdown-editor .cm-content {
+  cursor: default;
+}
+
+.component-node--selected .file-preview-code .cm-scroller {
+  cursor: default;
+}
+
+.component-node--selected .file-preview-code .cm-content {
   cursor: default;
 }
 

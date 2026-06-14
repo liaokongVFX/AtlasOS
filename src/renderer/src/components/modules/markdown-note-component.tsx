@@ -8,7 +8,7 @@ import rehypeHighlight, { type Options as RehypeHighlightOptions } from 'rehype-
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useI18n } from '../../i18n'
 import { asString } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
@@ -134,11 +134,20 @@ const HIGHLIGHT_OPTIONS = {
   ]
 } satisfies RehypeHighlightOptions
 
+type MarkdownViewMode = 'edit' | 'preview'
+
+function asMarkdownViewMode(value: unknown): MarkdownViewMode {
+  return value === 'preview' ? 'preview' : 'edit'
+}
+
 export function MarkdownNoteComponent({ component, updateState }: AtlasComponentRendererProps): JSX.Element {
   const { t } = useI18n()
-  const [mode, setMode] = useState<'edit' | 'preview'>('edit')
+  const mode = asMarkdownViewMode(component.state.viewMode)
   const content = asString(component.state.content)
   const extensions = useMemo(() => [markdown(), EditorView.lineWrapping, MARKDOWN_EDITOR_SYNTAX], [])
+  const setMode = useCallback((viewMode: MarkdownViewMode) => {
+    updateState({ viewMode }, true)
+  }, [updateState])
 
   return (
     <div className="note-module">

@@ -13,7 +13,7 @@ vi.mock('@uiw/react-codemirror', async () => {
   }
 })
 
-function createMarkdownComponent(content?: string): CanvasComponent {
+function createMarkdownComponent(content?: string, state: Record<string, unknown> = {}): CanvasComponent {
   const timestamp = '2026-05-22T00:00:00.000Z'
 
   return {
@@ -23,7 +23,7 @@ function createMarkdownComponent(content?: string): CanvasComponent {
     frame: { x: 0, y: 0, width: 420, height: 320 },
     zIndex: 1,
     config: {},
-    state: content === undefined ? {} : { content },
+    state: content === undefined ? state : { ...state, content },
     bindings: {},
     createdAt: timestamp,
     updatedAt: timestamp
@@ -34,14 +34,12 @@ function renderMarkdownPreview(content: string): HTMLElement {
   const { container } = render(
     <MarkdownNoteComponent
       canvasId="canvas-1"
-      component={createMarkdownComponent(content)}
+      component={createMarkdownComponent(content, { viewMode: 'preview' })}
       updateConfig={vi.fn()}
       updateState={vi.fn()}
       setTitle={vi.fn()}
     />
   )
-
-  fireEvent.click(screen.getByRole('button', { name: '预览' }))
 
   return container
 }
@@ -63,6 +61,57 @@ describe('MarkdownNoteComponent', () => {
     )
 
     expect(screen.getByRole('textbox', { name: 'Markdown editor' })).toHaveValue('')
+  })
+
+  it('restores the saved preview mode', () => {
+    render(
+      <MarkdownNoteComponent
+        canvasId="canvas-1"
+        component={createMarkdownComponent('# Saved preview', { viewMode: 'preview' })}
+        updateConfig={vi.fn()}
+        updateState={vi.fn()}
+        setTitle={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByRole('textbox', { name: 'Markdown editor' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Saved preview' })).toBeInTheDocument()
+  })
+
+  it('persists switching to preview mode immediately', () => {
+    const updateState = vi.fn()
+
+    render(
+      <MarkdownNoteComponent
+        canvasId="canvas-1"
+        component={createMarkdownComponent('# Note')}
+        updateConfig={vi.fn()}
+        updateState={updateState}
+        setTitle={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getAllByRole('button')[1])
+
+    expect(updateState).toHaveBeenCalledWith({ viewMode: 'preview' }, true)
+  })
+
+  it('persists returning to edit mode immediately', () => {
+    const updateState = vi.fn()
+
+    render(
+      <MarkdownNoteComponent
+        canvasId="canvas-1"
+        component={createMarkdownComponent('# Note', { viewMode: 'preview' })}
+        updateConfig={vi.fn()}
+        updateState={updateState}
+        setTitle={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getAllByRole('button')[0])
+
+    expect(updateState).toHaveBeenCalledWith({ viewMode: 'edit' }, true)
   })
 
   it('renders fenced code blocks with syntax highlighting', () => {

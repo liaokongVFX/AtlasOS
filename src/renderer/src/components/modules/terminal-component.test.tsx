@@ -1,4 +1,4 @@
-import { render, act, fireEvent, screen } from '@testing-library/react'
+import { render, act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { useState, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanvasComponent } from '@shared/schema'
@@ -152,6 +152,14 @@ function createCommandLibrary() {
   return createTerminalCommand(library, 'work', 'dev', { name: 'Dev server', command: 'npm run dev' }, '2026-06-13T00:00:00.000Z')
 }
 
+function createDragCommandLibrary() {
+  let library = createDefaultTerminalCommandLibrary()
+  library = createTerminalCommandCategory(library, 'work', { name: 'Work' }, '2026-06-13T00:00:00.000Z')
+  library = createTerminalCommandCategory(library, 'ops', { name: 'Ops' }, '2026-06-13T00:00:00.000Z')
+  library = createTerminalCommand(library, 'work', 'dev', { name: 'Dev server', command: 'npm run dev' }, '2026-06-13T00:00:00.000Z')
+  return createTerminalCommand(library, 'work', 'test', { name: 'Run tests', command: 'npm test' }, '2026-06-13T00:00:00.000Z')
+}
+
 function TerminalWithHeaderActions({
   component,
   updateState
@@ -232,6 +240,20 @@ function terminalTextarea(): HTMLTextAreaElement {
   }
 
   return element
+}
+
+function createRect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    bottom: top + height,
+    height,
+    left,
+    right: left + width,
+    top,
+    width,
+    x: left,
+    y: top,
+    toJSON: () => ({})
+  } as DOMRect
 }
 
 function dispatchPasteEvent(
@@ -418,11 +440,78 @@ describe('TerminalComponent', () => {
       await Promise.resolve()
     })
 
+    expect(screen.queryByText('npm run dev')).not.toBeInTheDocument()
+
+    fireEvent.doubleClick(await screen.findByRole('button', { name: 'Dev server' }))
+    expect(window.atlas.terminal.write).toHaveBeenCalledWith('session-1', 'npm run dev\r')
+
     fireEvent.click(await screen.findByRole('button', { name: 'Insert command' }))
     expect(window.atlas.terminal.write).toHaveBeenCalledWith('session-1', 'npm run dev')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Execute command' }))
-    expect(window.atlas.terminal.write).toHaveBeenCalledWith('session-1', 'npm run dev\r')
+    expect(screen.queryByRole('button', { name: 'Execute command' })).not.toBeInTheDocument()
+  })
+
+  it('renders compact terminal command drag previews outside the command shelf', async () => {
+    useAppSettingsStore.setState((state) => ({
+      settings: {
+        ...state.settings,
+        terminalCommands: createDragCommandLibrary()
+      }
+    }))
+    const updateState = vi.fn()
+    const component = createTerminalComponent()
+    component.state.commandPanelExpanded = true
+
+    render(<TerminalWithHeaderActions component={component} updateState={updateState} />)
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const dragTarget = await screen.findByRole('button', { name: 'Dev server' })
+    const sourceRowBeforeDrag = dragTarget.closest<HTMLElement>('.terminal-command-row')
+    const siblingRowBeforeDrag = screen.getByRole('button', { name: 'Run tests' }).closest<HTMLElement>('.terminal-command-row')
+    expect(sourceRowBeforeDrag).toBeInTheDocument()
+    expect(siblingRowBeforeDrag).toBeInTheDocument()
+
+    sourceRowBeforeDrag!.getBoundingClientRect = vi.fn(() => createRect(96, 180, 110, 30))
+    siblingRowBeforeDrag!.getBoundingClientRect = vi.fn(() => createRect(212, 180, 112, 30))
+
+    await act(async () => {
+      fireEvent.mouseDown(dragTarget, { clientX: 120, clientY: 180, button: 0 })
+      fireEvent.mouseMove(document, { clientX: 128, clientY: 180, buttons: 1 })
+    })
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      fireEvent.mouseMove(document, { clientX: 250, clientY: 182, buttons: 1 })
+    })
+
+    await waitFor(() => {
+      const overlay = document.body.querySelector('.terminal-command-drag-overlay')
+      const commandList = document.body.querySelector('.terminal-command-list')
+      const compactRows = Array.from(commandList?.querySelectorAll<HTMLElement>('.terminal-command-row--compact') ?? [])
+      const sourceRow = document.body.querySelector<HTMLElement>('.terminal-command-row--compact.terminal-command-row--dragging')
+      const siblingRow = screen.getByRole('button', { name: 'Run tests' }).closest<HTMLElement>('.terminal-command-row')
+
+      expect(overlay).toBeInTheDocument()
+      expect(overlay).toHaveStyle({ width: 'max-content', height: 'auto' })
+      expect(overlay?.querySelector('.terminal-command-row--overlay')).toHaveTextContent('Dev server')
+      expect(overlay?.querySelector('.terminal-command-row__actions')).toBeInTheDocument()
+      expect(compactRows.map((row) => row.textContent)).toEqual(['Dev server', 'Run tests'])
+      expect(sourceRow).toBeInTheDocument()
+      expect(sourceRow?.style.visibility).toBe('hidden')
+      expect(sourceRow?.style.transform).toBe('')
+      expect(siblingRow).toBeInTheDocument()
+      expect(siblingRow?.style.visibility).toBe('')
+      expect(siblingRow?.style.transform).toBe('')
+    })
+
+    await act(async () => {
+      fireEvent.mouseUp(document)
+      await new Promise((resolve) => setTimeout(resolve, 60))
+    })
   })
 
   it('disables terminal command actions until the session is ready', async () => {
@@ -439,8 +528,12 @@ describe('TerminalComponent', () => {
 
     render(<TerminalWithHeaderActions component={component} updateState={updateState} />)
 
-    expect(await screen.findByRole('button', { name: 'Insert command' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Execute command' })).toBeDisabled()
+    const commandButton = await screen.findByRole('button', { name: 'Dev server' })
+    expect(screen.getByRole('button', { name: 'Insert command' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Execute command' })).not.toBeInTheDocument()
+
+    fireEvent.doubleClick(commandButton)
+    expect(window.atlas.terminal.write).not.toHaveBeenCalled()
   })
 
   it('disables terminal command actions after the session exits', async () => {
@@ -462,7 +555,7 @@ describe('TerminalComponent', () => {
     render(<TerminalWithHeaderActions component={component} updateState={updateState} />)
 
     const insertButton = await screen.findByRole('button', { name: 'Insert command' })
-    const executeButton = screen.getByRole('button', { name: 'Execute command' })
+    const commandButton = screen.getByRole('button', { name: 'Dev server' })
 
     await act(async () => {
       await Promise.resolve()
@@ -470,7 +563,8 @@ describe('TerminalComponent', () => {
     })
 
     expect(insertButton).toBeEnabled()
-    expect(executeButton).toBeEnabled()
+    expect(commandButton).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Execute command' })).not.toBeInTheDocument()
     expect(exitListener).toBeTypeOf('function')
 
     act(() => {
@@ -478,10 +572,10 @@ describe('TerminalComponent', () => {
     })
 
     expect(insertButton).toBeDisabled()
-    expect(executeButton).toBeDisabled()
+    expect(commandButton).toBeEnabled()
 
     fireEvent.click(insertButton)
-    fireEvent.click(executeButton)
+    fireEvent.doubleClick(commandButton)
     expect(window.atlas.terminal.write).not.toHaveBeenCalled()
   })
 

@@ -497,11 +497,12 @@ export function FileTreeComponent({ component, updateConfig, updateState, setHea
     if (!rootPath || persistedOpenPaths.length === 0) return
 
     let disposed = false
-    const watchIds = new Set<string>()
+    const watchedPaths = new Map<string, string>()
     const disposeWatchEvents = window.atlas.filesystem.onWatchEvent((event) => {
-      if (!watchIds.has(event.watchId)) return
+      const watchedPath = watchedPaths.get(event.watchId)
+      if (!watchedPath) return
 
-      scheduleWatchedDirectoryRefresh(parentDirectoryPath(event.path))
+      scheduleWatchedDirectoryRefresh(event.path === watchedPath ? watchedPath : parentDirectoryPath(event.path))
     })
 
     for (const targetPath of persistedOpenPaths) {
@@ -513,7 +514,7 @@ export function FileTreeComponent({ component, updateConfig, updateState, setHea
             return
           }
 
-          watchIds.add(watch.watchId)
+          watchedPaths.set(watch.watchId, targetPath)
         })
         .catch(() => undefined)
     }
@@ -522,7 +523,7 @@ export function FileTreeComponent({ component, updateConfig, updateState, setHea
       disposed = true
       disposeWatchEvents()
       clearRefreshTimers(refreshTimersRef.current)
-      for (const watchId of watchIds) {
+      for (const watchId of watchedPaths.keys()) {
         void window.atlas.filesystem.unwatch(watchId)
       }
     }

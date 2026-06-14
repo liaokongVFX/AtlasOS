@@ -7,17 +7,31 @@ const electronMocks = vi.hoisted(() => ({
   ipcHandle: vi.fn()
 }))
 
-const chokidarMocks = vi.hoisted(() => {
+const fsWatchMocks = vi.hoisted(() => {
+  let listener: ((eventName: string, fileName: string | Buffer | null) => void) | null = null
   const watcher = {
-    close: vi.fn(async () => undefined),
-    on: vi.fn()
+    close: vi.fn()
   }
 
   return {
-    watch: vi.fn(() => watcher),
+    emit: (eventName: string, fileName: string | Buffer | null) => listener?.(eventName, fileName),
+    reset: () => {
+      listener = null
+    },
+    watch: vi.fn((_path: string, _options: unknown, callback: (eventName: string, fileName: string | Buffer | null) => void) => {
+      listener = callback
+      return watcher
+    }),
     watcher
   }
 })
+
+vi.mock('node:fs', () => ({
+  default: {
+    watch: fsWatchMocks.watch
+  },
+  watch: fsWatchMocks.watch
+}))
 
 vi.mock('electron', () => ({
   dialog: {
@@ -32,20 +46,14 @@ vi.mock('electron', () => ({
   }
 }))
 
-vi.mock('chokidar', () => ({
-  default: {
-    watch: chokidarMocks.watch
-  }
-}))
-
 const testRoot = join(process.cwd(), '.atlasos-dev', 'ipc-filesystem-test')
 
 describe('FileSystemService', () => {
   beforeEach(async () => {
     electronMocks.ipcHandle.mockClear()
-    chokidarMocks.watch.mockClear()
-    chokidarMocks.watcher.close.mockClear()
-    chokidarMocks.watcher.on.mockClear()
+    fsWatchMocks.reset()
+    fsWatchMocks.watch.mockClear()
+    fsWatchMocks.watcher.close.mockClear()
     await rm(testRoot, { recursive: true, force: true })
     await mkdir(testRoot, { recursive: true })
   })
@@ -70,7 +78,7 @@ describe('FileSystemService', () => {
     )
   })
 
-  it('watches the requested directory shallowly instead of crawling the root tree', async () => {
+  it('watches the requested directory without crawling the root tree', async () => {
     const targetPath = join(testRoot, 'src')
     await mkdir(targetPath)
 
@@ -88,9 +96,20 @@ describe('FileSystemService', () => {
     const result = await watchHandler({ sender: webContents }, { rootPath: testRoot, targetPath })
 
     expect(result).toEqual({ watchId: expect.any(String) })
-    expect(chokidarMocks.watch).toHaveBeenCalledWith(targetPath, {
-      ignoreInitial: true,
-      depth: 0
+    expect(fsWatchMocks.watch).toHaveBeenCalledWith(targetPath, { persistent: true }, expect.any(Function))
+
+    fsWatchMocks.emit('rename', 'new-file.txt')
+    expect(webContents.send).toHaveBeenCalledWith('filesystem:watch-event', {
+      watchId: result.watchId,
+      eventName: 'rename',
+      path: join(targetPath, 'new-file.txt')
+    })
+
+    fsWatchMocks.emit('change', null)
+    expect(webContents.send).toHaveBeenCalledWith('filesystem:watch-event', {
+      watchId: result.watchId,
+      eventName: 'change',
+      path: targetPath
     })
   })
 

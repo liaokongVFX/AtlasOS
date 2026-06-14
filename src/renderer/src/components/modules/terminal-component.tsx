@@ -951,6 +951,7 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
       {commandPanelExpanded ? (
         <div className="terminal-module__commands">
           <TerminalCommandLibraryManager
+            compactCommands
             commandActionsDisabled={!sessionReady}
             onInsertCommand={insertTerminalCommand}
             onExecuteCommand={executeTerminalCommand}

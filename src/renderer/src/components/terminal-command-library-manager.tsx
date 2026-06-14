@@ -10,13 +10,18 @@ import {
   useSensors,
   type CollisionDetection,
   type DragEndEvent,
-  type DragStartEvent
+  type DragMoveEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+  type ClientRect
 } from '@dnd-kit/core'
 import {
   horizontalListSortingStrategy,
   rectSortingStrategy,
   SortableContext,
   sortableKeyboardCoordinates,
+  type AnimateLayoutChanges,
+  type SortingStrategy,
   useSortable
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -46,6 +51,7 @@ import { useAppSettingsStore } from '../store/app-settings-store'
 
 type TerminalCommandLibraryManagerProps = {
   className?: string
+  compactCommands?: boolean
   commandActionsDisabled?: boolean
   onExecuteCommand?: (command: string) => void
   onInsertCommand?: (command: string) => void
@@ -89,6 +95,20 @@ type CommandDraft = {
   command: string
 }
 
+type DragItemSize = {
+  width: number
+  height: number
+}
+
+type CommandRenderEntry =
+  | {
+      type: 'command'
+      commandId: string
+    }
+  | {
+      type: 'placeholder'
+    }
+
 const CATEGORY_DRAG_PREFIX = 'terminal-command-category:'
 const COMMAND_DRAG_PREFIX = 'terminal-command:'
 
@@ -98,12 +118,114 @@ const DND_MEASURING = {
   }
 }
 
+const staticSortingStrategy: SortingStrategy = () => null
+const noSortableLayoutAnimation: AnimateLayoutChanges = () => false
+
 function categoryDragId(categoryId: string): string {
   return `${CATEGORY_DRAG_PREFIX}${categoryId}`
 }
 
 function commandDragId(commandId: string): string {
   return `${COMMAND_DRAG_PREFIX}${commandId}`
+}
+
+function moveCommandId(commandIds: string[], activeCommandId: string, targetIndex: number): string[] {
+  const activeIndex = commandIds.indexOf(activeCommandId)
+  if (activeIndex < 0) return commandIds
+
+  const nextCommandIds = [...commandIds]
+  const [commandId] = nextCommandIds.splice(activeIndex, 1)
+  const insertIndex = Math.max(0, Math.min(Math.round(targetIndex), nextCommandIds.length))
+  nextCommandIds.splice(insertIndex, 0, commandId)
+  if (nextCommandIds.every((commandId, index) => commandId === commandIds[index])) return commandIds
+  return nextCommandIds
+}
+
+function dragItemSize(rect: ClientRect | null | undefined): DragItemSize | null {
+  if (!rect || rect.width <= 0 || rect.height <= 0) return null
+  return {
+    width: rect.width,
+    height: rect.height
+  }
+}
+
+function commandInsertIndex(commandIds: string[], activeCommandId: string, overCommandId: string, activeRect: ClientRect | null, overRect: ClientRect): number | null {
+  if (!activeRect) return null
+
+  const remainingCommandIds = commandIds.filter((commandId) => commandId !== activeCommandId)
+  const overIndex = remainingCommandIds.indexOf(overCommandId)
+  if (overIndex < 0) return null
+
+  const activeCenterX = activeRect.left + activeRect.width / 2
+  const activeCenterY = activeRect.top + activeRect.height / 2
+  const overCenterX = overRect.left + overRect.width / 2
+  const overCenterY = overRect.top + overRect.height / 2
+  const verticallyOverlaps = activeRect.bottom > overRect.top && activeRect.top < overRect.bottom
+  const insertAfter = verticallyOverlaps ? activeCenterX > overCenterX : activeCenterY > overCenterY
+
+  return overIndex + (insertAfter ? 1 : 0)
+}
+
+export function previewTerminalCommandOrder(
+  commandIds: string[],
+  activeCommandId: string,
+  overCommandId: string,
+  activeRect: ClientRect | null,
+  overRect: ClientRect
+): string[] {
+  const targetIndex = commandInsertIndex(commandIds, activeCommandId, overCommandId, activeRect, overRect)
+  return targetIndex === null ? commandIds : moveCommandId(commandIds, activeCommandId, targetIndex)
+}
+
+export function terminalCommandDragRenderEntries(
+  commandIds: string[],
+  activeCommandId: string | null,
+  placeholderIndex: number | null
+): CommandRenderEntry[] {
+  if (!activeCommandId || placeholderIndex === null || !commandIds.includes(activeCommandId)) {
+    return commandIds.map((commandId) => ({ type: 'command', commandId }))
+  }
+
+  const remainingCount = commandIds.length - 1
+  const targetIndex = Math.max(0, Math.min(Math.round(placeholderIndex), remainingCount))
+  const entries: CommandRenderEntry[] = []
+  let remainingIndex = 0
+  let insertedPlaceholder = false
+
+  const insertPlaceholder = (): void => {
+    if (insertedPlaceholder || remainingIndex !== targetIndex) return
+    entries.push({ type: 'placeholder' })
+    insertedPlaceholder = true
+  }
+
+  for (const commandId of commandIds) {
+    if (commandId === activeCommandId) {
+      insertPlaceholder()
+      entries.push({ type: 'command', commandId })
+      continue
+    }
+
+    insertPlaceholder()
+    entries.push({ type: 'command', commandId })
+    remainingIndex += 1
+  }
+
+  insertPlaceholder()
+  return entries
+}
+
+function activeRectFromDragEvent(event: DragMoveEvent | DragOverEvent | DragEndEvent): ClientRect | null {
+  const initialRect = event.active.rect.current.initial
+  if (!initialRect) return event.active.rect.current.translated ?? null
+
+  return {
+    bottom: initialRect.bottom + event.delta.y,
+    height: initialRect.height,
+    left: initialRect.left + event.delta.x,
+    right: initialRect.right + event.delta.x,
+    top: initialRect.top + event.delta.y,
+    width: initialRect.width
+  }
 }
 
 function readDragData(value: unknown): DragData | null {
@@ -139,16 +261,35 @@ function CategoryOverlay({ active, category }: { active: boolean; category: Term
   )
 }
 
-function CommandOverlay({ command }: { command: TerminalCommandEntry }): JSX.Element {
+function CommandOverlayVisual({
+  command,
+  compact,
+  size
+}: {
+  command: TerminalCommandEntry
+  compact: boolean
+  size?: DragItemSize | null
+}): JSX.Element {
+  const style: CSSProperties | undefined = compact && size ? { width: size.width, height: size.height } : undefined
+
   return (
-    <div className="terminal-command-row terminal-command-row--overlay">
-      <span className="terminal-command-row__drag" aria-hidden="true">
-        <GripVertical size={14} />
-      </span>
+    <div className={cn('terminal-command-row terminal-command-row--overlay', compact && 'terminal-command-row--compact')} style={style}>
+      {compact ? null : (
+        <span className="terminal-command-row__drag" aria-hidden="true">
+          <GripVertical size={14} />
+        </span>
+      )}
       <span className="terminal-command-row__main">
         <strong>{command.name}</strong>
-        <small>{command.command}</small>
+        {compact ? null : <small>{command.command}</small>}
       </span>
+      {compact ? (
+        <span className="terminal-command-row__actions" aria-hidden="true">
+          <span className="terminal-command-icon-button">
+            <CornerDownRight size={13} />
+          </span>
+        </span>
+      ) : null}
     </div>
   )
 }
@@ -156,16 +297,30 @@ function CommandOverlay({ command }: { command: TerminalCommandEntry }): JSX.Ele
 function TerminalCommandDragOverlay({
   activeCategoryId,
   category,
-  command
+  compactCommands,
+  command,
+  commandSize
 }: {
   activeCategoryId: string
   category: TerminalCommandCategory | null
+  compactCommands: boolean
   command: TerminalCommandEntry | null
-}): JSX.Element {
-  const overlayStyle: CSSProperties | undefined = category ? { width: 'max-content', height: 'auto' } : undefined
+  commandSize: DragItemSize | null
+}): JSX.Element | null {
+  const overlayStyle: CSSProperties | undefined = category
+    ? { width: 'max-content', height: 'auto' }
+    : command && compactCommands && commandSize
+      ? { width: commandSize.width, height: commandSize.height }
+      : command && compactCommands
+        ? { width: 'max-content', height: 'auto' }
+        : undefined
   const overlay = (
     <DragOverlay className="terminal-command-drag-overlay" dropAnimation={null} style={overlayStyle}>
-      {category ? <CategoryOverlay active={category.id === activeCategoryId} category={category} /> : command ? <CommandOverlay command={command} /> : null}
+      {category ? (
+        <CategoryOverlay active={category.id === activeCategoryId} category={category} />
+      ) : command ? (
+        <CommandOverlayVisual compact={compactCommands} command={command} size={commandSize} />
+      ) : null}
     </DragOverlay>
   )
 
@@ -206,6 +361,7 @@ function SortableCategoryTab({
 }
 
 function SortableCommandRow({
+  compact,
   command,
   commandActionsDisabled,
   onDelete,
@@ -213,6 +369,7 @@ function SortableCommandRow({
   onExecute,
   onInsert
 }: {
+  compact: boolean
   command: TerminalCommandEntry
   commandActionsDisabled: boolean
   onDelete: () => void
@@ -223,29 +380,51 @@ function SortableCommandRow({
   const { t } = useI18n()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: commandDragId(command.id),
-    data: { type: 'command', commandId: command.id } satisfies DragData
+    data: { type: 'command', commandId: command.id } satisfies DragData,
+    animateLayoutChanges: compact ? noSortableLayoutAnimation : undefined,
+    transition: compact ? null : undefined
   })
   const style: CSSProperties = {
     transform: isDragging ? undefined : CSS.Transform.toString(transform),
     transition,
     visibility: isDragging ? 'hidden' : undefined
   }
+  const compactDragProps = compact ? { ...attributes, ...listeners } : {}
+  const runCompactCommand = (): void => {
+    if (!onExecute || commandActionsDisabled) return
+    onExecute()
+  }
 
   return (
-    <article ref={setNodeRef} className="terminal-command-row" style={style}>
+    <article
+      ref={setNodeRef}
+      className={cn('terminal-command-row', compact && 'terminal-command-row--compact', isDragging && 'terminal-command-row--dragging')}
+      style={style}
+    >
+      {compact ? null : (
+        <button
+          type="button"
+          className="terminal-command-row__drag"
+          title={t('terminalCommands.dragCommand', { name: command.name })}
+          aria-label={t('terminalCommands.dragCommand', { name: command.name })}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={14} />
+        </button>
+      )}
       <button
         type="button"
-        className="terminal-command-row__drag"
-        title={t('terminalCommands.dragCommand', { name: command.name })}
-        aria-label={t('terminalCommands.dragCommand', { name: command.name })}
-        {...attributes}
-        {...listeners}
+        className="terminal-command-row__main"
+        onClick={compact ? undefined : onEdit}
+        onDoubleClick={compact ? runCompactCommand : undefined}
+        title={compact ? t('terminalCommands.doubleClickExecute') : undefined}
+        aria-label={compact ? t('terminalCommands.doubleClickExecute') : undefined}
+        aria-disabled={compact && commandActionsDisabled ? 'true' : undefined}
+        {...compactDragProps}
       >
-        <GripVertical size={14} />
-      </button>
-      <button type="button" className="terminal-command-row__main" onClick={onEdit}>
         <strong>{command.name}</strong>
-        <small>{command.command}</small>
+        {compact ? null : <small>{command.command}</small>}
       </button>
       <div className="terminal-command-row__actions">
         {onInsert ? (
@@ -260,7 +439,7 @@ function SortableCommandRow({
             <CornerDownRight size={13} />
           </button>
         ) : null}
-        {onExecute ? (
+        {onExecute && !compact ? (
           <button
             type="button"
             className="terminal-command-icon-button terminal-command-icon-button--primary"
@@ -272,24 +451,28 @@ function SortableCommandRow({
             <Play size={13} />
           </button>
         ) : null}
-        <button
-          type="button"
-          className="terminal-command-icon-button"
-          onClick={onEdit}
-          title={t('terminalCommands.editCommand')}
-          aria-label={t('terminalCommands.editCommand')}
-        >
-          <Pencil size={13} />
-        </button>
-        <button
-          type="button"
-          className="terminal-command-icon-button danger"
-          onClick={onDelete}
-          title={t('terminalCommands.deleteCommand')}
-          aria-label={t('terminalCommands.deleteCommand')}
-        >
-          <Trash2 size={13} />
-        </button>
+        {compact ? null : (
+          <>
+            <button
+              type="button"
+              className="terminal-command-icon-button"
+              onClick={onEdit}
+              title={t('terminalCommands.editCommand')}
+              aria-label={t('terminalCommands.editCommand')}
+            >
+              <Pencil size={13} />
+            </button>
+            <button
+              type="button"
+              className="terminal-command-icon-button danger"
+              onClick={onDelete}
+              title={t('terminalCommands.deleteCommand')}
+              aria-label={t('terminalCommands.deleteCommand')}
+            >
+              <Trash2 size={13} />
+            </button>
+          </>
+        )}
       </div>
     </article>
   )
@@ -342,6 +525,7 @@ function CategoryPicker({
 
 export function TerminalCommandLibraryManager({
   className,
+  compactCommands = false,
   commandActionsDisabled = false,
   onExecuteCommand,
   onInsertCommand
@@ -351,9 +535,7 @@ export function TerminalCommandLibraryManager({
   const updateSettings = useAppSettingsStore((state) => state.update)
   const library = settings.terminalCommands
   const selectedCategory = activeCategory(library)
-  const commands = selectedCategory
-    ? selectedCategory.commandIds.map((commandId) => library.commands[commandId]).filter((command): command is TerminalCommandEntry => Boolean(command))
-    : []
+  const selectedCategoryCommandIds = selectedCategory?.commandIds ?? []
   const [categoryDialog, setCategoryDialog] = useState<CategoryDialogState | null>(null)
   const [commandDialog, setCommandDialog] = useState<CommandDialogState | null>(null)
   const [deleteCategoryId, setDeleteCategoryId] = useState<string | null>(null)
@@ -364,11 +546,20 @@ export function TerminalCommandLibraryManager({
   const [saving, setSaving] = useState(false)
   const [activeCategoryDragId, setActiveCategoryDragId] = useState<string | null>(null)
   const [activeCommandDragId, setActiveCommandDragId] = useState<string | null>(null)
+  const [commandDragPlaceholderIndex, setCommandDragPlaceholderIndex] = useState<number | null>(null)
+  const [commandDragSize, setCommandDragSize] = useState<DragItemSize | null>(null)
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 120, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
+  const commands = selectedCategoryCommandIds.map((commandId) => library.commands[commandId]).filter((command): command is TerminalCommandEntry => Boolean(command))
+  const commandRenderEntries = terminalCommandDragRenderEntries(
+    selectedCategoryCommandIds,
+    compactCommands ? activeCommandDragId : null,
+    compactCommands ? commandDragPlaceholderIndex : null
+  )
+  const commandPlaceholderStyle: CSSProperties | undefined = commandDragSize ? { width: commandDragSize.width, height: commandDragSize.height } : undefined
   const activeDragCategory = activeCategoryDragId ? library.categories.find((category) => category.id === activeCategoryDragId) ?? null : null
   const activeDragCommand = activeCommandDragId ? library.commands[activeCommandDragId] ?? null : null
   const showCommandActions = Boolean(onInsertCommand || onExecuteCommand)
@@ -500,23 +691,50 @@ export function TerminalCommandLibraryManager({
     setDeleteCategoryId(null)
   }, [commitLibrary, deleteCategoryId, library])
 
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    const activeData = readDragData(event.active.data.current)
-    setActiveCategoryDragId(activeData?.type === 'category' ? activeData.categoryId : null)
-    setActiveCommandDragId(activeData?.type === 'command' ? activeData.commandId : null)
-  }, [])
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const activeData = readDragData(event.active.data.current)
+      setActiveCategoryDragId(activeData?.type === 'category' ? activeData.categoryId : null)
+      setActiveCommandDragId(activeData?.type === 'command' ? activeData.commandId : null)
+      setCommandDragPlaceholderIndex(
+        compactCommands && activeData?.type === 'command' && selectedCategory ? selectedCategory.commandIds.indexOf(activeData.commandId) : null
+      )
+      setCommandDragSize(compactCommands && activeData?.type === 'command' ? dragItemSize(event.active.rect.current.initial) : null)
+    },
+    [compactCommands, selectedCategory]
+  )
 
   const clearDragOverlay = useCallback(() => {
     setActiveCategoryDragId(null)
     setActiveCommandDragId(null)
+    setCommandDragPlaceholderIndex(null)
+    setCommandDragSize(null)
   }, [])
+
+  const updateCommandDragPlaceholder = useCallback(
+    (event: DragMoveEvent | DragOverEvent) => {
+      if (!compactCommands || !selectedCategory) return
+
+      const activeData = readDragData(event.active.data.current)
+      const over = event.over
+      if (!over) return
+
+      const overData = readDragData(over.data.current)
+      if (activeData?.type !== 'command' || overData?.type !== 'command') return
+
+      const targetIndex = commandInsertIndex(selectedCategory.commandIds, activeData.commandId, overData.commandId, activeRectFromDragEvent(event), over.rect)
+      if (targetIndex !== null) setCommandDragPlaceholderIndex(targetIndex)
+    },
+    [compactCommands, selectedCategory]
+  )
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      clearDragOverlay()
       const activeData = readDragData(event.active.data.current)
-      const overData = readDragData(event.over?.data.current)
-      if (!activeData || !overData) return
+      const over = event.over
+      const overData = over ? readDragData(over.data.current) : null
+      clearDragOverlay()
+      if (!activeData || !over || !overData) return
 
       if (activeData.type === 'category' && overData.type === 'category') {
         const targetIndex = library.categories.findIndex((category) => category.id === overData.categoryId)
@@ -525,11 +743,15 @@ export function TerminalCommandLibraryManager({
       }
 
       if (activeData.type === 'command' && overData.type === 'command' && selectedCategory) {
-        const targetIndex = selectedCategory.commandIds.indexOf(overData.commandId)
+        const compactTargetIndex = compactCommands ? commandDragPlaceholderIndex : null
+        const compactEventTargetIndex = compactCommands
+          ? commandInsertIndex(selectedCategory.commandIds, activeData.commandId, overData.commandId, activeRectFromDragEvent(event), over.rect)
+          : null
+        const targetIndex = compactTargetIndex ?? compactEventTargetIndex ?? selectedCategory.commandIds.indexOf(overData.commandId)
         void commitLibrary(moveTerminalCommand(library, selectedCategory.id, activeData.commandId, targetIndex))
       }
     },
-    [clearDragOverlay, commitLibrary, library, selectedCategory]
+    [clearDragOverlay, commandDragPlaceholderIndex, commitLibrary, compactCommands, library, selectedCategory]
   )
 
   const activateCategory = useCallback(
@@ -540,12 +762,21 @@ export function TerminalCommandLibraryManager({
   )
 
   return (
-    <div className={cn('terminal-command-library', showCommandActions && 'terminal-command-library--with-actions', className)}>
+    <div
+      className={cn(
+        'terminal-command-library',
+        showCommandActions && 'terminal-command-library--with-actions',
+        compactCommands && activeCommandDragId && 'terminal-command-library--dragging-command',
+        className
+      )}
+    >
       <DndContext
         sensors={sensors}
         collisionDetection={collisionDetection}
         measuring={DND_MEASURING}
         onDragStart={handleDragStart}
+        onDragMove={updateCommandDragPlaceholder}
+        onDragOver={updateCommandDragPlaceholder}
         onDragEnd={handleDragEnd}
         onDragCancel={clearDragOverlay}
       >
@@ -610,19 +841,36 @@ export function TerminalCommandLibraryManager({
 
         <div className="terminal-command-library__body">
           {selectedCategory ? (
-            <SortableContext items={selectedCategory.commandIds.map(commandDragId)} strategy={rectSortingStrategy}>
+            <SortableContext items={selectedCategoryCommandIds.map(commandDragId)} strategy={compactCommands ? staticSortingStrategy : rectSortingStrategy}>
               <div className={cn('terminal-command-list', commands.length === 0 && 'terminal-command-list--empty')}>
-                {commands.map((command) => (
-                  <SortableCommandRow
-                    key={command.id}
-                    command={command}
-                    commandActionsDisabled={commandActionsDisabled}
-                    onDelete={() => void commitLibrary(deleteTerminalCommand(library, command.id))}
-                    onEdit={() => openEditCommand(command.id)}
-                    onExecute={onExecuteCommand ? () => onExecuteCommand(command.command) : undefined}
-                    onInsert={onInsertCommand ? () => onInsertCommand(command.command) : undefined}
-                  />
-                ))}
+                {commandRenderEntries.map((entry, index) => {
+                  if (entry.type === 'placeholder') {
+                    return (
+                      <div
+                        key={`terminal-command-placeholder:${activeCommandDragId ?? index}`}
+                        className="terminal-command-row terminal-command-row--compact terminal-command-row--placeholder"
+                        style={commandPlaceholderStyle}
+                        aria-hidden="true"
+                      />
+                    )
+                  }
+
+                  const command = library.commands[entry.commandId]
+                  if (!command) return null
+
+                  return (
+                    <SortableCommandRow
+                      key={command.id}
+                      compact={compactCommands}
+                      command={command}
+                      commandActionsDisabled={commandActionsDisabled}
+                      onDelete={() => void commitLibrary(deleteTerminalCommand(library, command.id))}
+                      onEdit={() => openEditCommand(command.id)}
+                      onExecute={onExecuteCommand ? () => onExecuteCommand(command.command) : undefined}
+                      onInsert={onInsertCommand ? () => onInsertCommand(command.command) : undefined}
+                    />
+                  )
+                })}
                 {commands.length === 0 ? <div className="terminal-command-empty">{t('terminalCommands.noCommands')}</div> : null}
               </div>
             </SortableContext>
@@ -637,7 +885,13 @@ export function TerminalCommandLibraryManager({
           )}
         </div>
 
-        <TerminalCommandDragOverlay activeCategoryId={library.activeCategoryId} category={activeDragCategory} command={activeDragCommand} />
+        <TerminalCommandDragOverlay
+          activeCategoryId={library.activeCategoryId}
+          category={activeDragCategory}
+          compactCommands={compactCommands}
+          command={activeDragCommand}
+          commandSize={commandDragSize}
+        />
       </DndContext>
 
       <Dialog.Root open={Boolean(categoryDialog)} onOpenChange={(open) => !open && setCategoryDialog(null)}>

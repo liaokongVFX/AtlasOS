@@ -596,6 +596,11 @@ type CanvasCreateMenuState = {
   flowPosition: { x: number; y: number }
 }
 
+type PendingGroupDeleteRequest = {
+  componentIds: string[]
+  groupIds: string[]
+}
+
 function createPointRect(x: number, y: number): DOMRect {
   return {
     x,
@@ -1092,7 +1097,7 @@ export function CanvasBoard(): JSX.Element {
   const [createMenu, setCreateMenu] = useState<CanvasCreateMenuState | null>(null)
   const [isNodeFinderOpen, setIsNodeFinderOpen] = useState(false)
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
-  const [pendingDeleteGroupIds, setPendingDeleteGroupIds] = useState<string[] | null>(null)
+  const [pendingGroupDelete, setPendingGroupDelete] = useState<PendingGroupDeleteRequest | null>(null)
   const [isFileDragActive, setIsFileDragActive] = useState(false)
   const [isViewportInteracting, setIsViewportInteracting] = useState(false)
   const [draggingNodeIds, setDraggingNodeIds] = useState<Set<string>>(() => new Set())
@@ -1520,10 +1525,10 @@ export function CanvasBoard(): JSX.Element {
   )
 
   const requestDeleteGroups = useCallback(
-    (groupIds: string[]) => {
+    ({ componentIds, groupIds }: PendingGroupDeleteRequest) => {
       if (groupIds.length === 0) return
       closeCreateMenu()
-      setPendingDeleteGroupIds(groupIds)
+      setPendingGroupDelete({ componentIds, groupIds })
     },
     [closeCreateMenu]
   )
@@ -1641,7 +1646,7 @@ export function CanvasBoard(): JSX.Element {
         event.preventDefault()
         event.stopPropagation()
         if (groupIds.length > 0) {
-          requestDeleteGroups(groupIds)
+          requestDeleteGroups({ componentIds, groupIds })
         } else {
           deleteSelectedComponents(componentIds)
         }
@@ -1820,28 +1825,31 @@ export function CanvasBoard(): JSX.Element {
   )
 
   const deletePendingGroupsOnly = useCallback(() => {
-    if (!activeCanvasId || !pendingDeleteGroupIds) return
+    if (!activeCanvasId || !pendingGroupDelete) return
 
-    const removedIds = new Set(pendingDeleteGroupIds)
-    removeGroups(activeCanvasId, pendingDeleteGroupIds)
-    setPendingDeleteGroupIds(null)
+    const removableComponentIds = unlockedComponentIds(pendingGroupDelete.componentIds, canvas?.components ?? [])
+    if (removableComponentIds.length > 0) removeComponents(activeCanvasId, removableComponentIds)
+    const removedIds = new Set([...pendingGroupDelete.groupIds, ...removableComponentIds])
+    removeGroups(activeCanvasId, pendingGroupDelete.groupIds)
+    setPendingGroupDelete(null)
     setNodes((currentNodes) => currentNodes.filter((node) => !removedIds.has(node.id)))
     notifyCanvasViewportSync()
-  }, [activeCanvasId, pendingDeleteGroupIds, removeGroups])
+  }, [activeCanvasId, canvas?.components, pendingGroupDelete, removeComponents, removeGroups])
 
   const deletePendingGroupsWithMembers = useCallback(() => {
-    if (!activeCanvasId || !pendingDeleteGroupIds) return
+    if (!activeCanvasId || !pendingGroupDelete) return
 
-    const memberIds = deleteGroupsWithMembers(activeCanvasId, pendingDeleteGroupIds)
-    const removedIds = new Set([...pendingDeleteGroupIds, ...memberIds])
-    setPendingDeleteGroupIds(null)
+    const removableComponentIds = unlockedComponentIds(pendingGroupDelete.componentIds, canvas?.components ?? [])
+    if (removableComponentIds.length > 0) removeComponents(activeCanvasId, removableComponentIds)
+    const memberIds = deleteGroupsWithMembers(activeCanvasId, pendingGroupDelete.groupIds)
+    const removedIds = new Set([...pendingGroupDelete.groupIds, ...removableComponentIds, ...memberIds])
+    setPendingGroupDelete(null)
     setNodes((currentNodes) => currentNodes.filter((node) => !removedIds.has(node.id)))
     notifyCanvasViewportSync()
-  }, [activeCanvasId, deleteGroupsWithMembers, pendingDeleteGroupIds])
+  }, [activeCanvasId, canvas?.components, deleteGroupsWithMembers, pendingGroupDelete, removeComponents])
 
   const requestSelectedGroupDelete = useCallback(() => {
-    const { groupIds } = getSelectedCanvasIds()
-    requestDeleteGroups(groupIds)
+    requestDeleteGroups(getSelectedCanvasIds())
   }, [getSelectedCanvasIds, requestDeleteGroups])
 
   if (!canvas) {
@@ -1939,9 +1947,9 @@ export function CanvasBoard(): JSX.Element {
       </ReactFlow>
       <CanvasGroupEditDialog group={editingGroup} onClose={() => setEditingGroupId(null)} onSave={saveGroupEdit} />
       <CanvasGroupDeleteDialog
-        count={pendingDeleteGroupIds?.length ?? 0}
-        open={Boolean(pendingDeleteGroupIds)}
-        onCancel={() => setPendingDeleteGroupIds(null)}
+        count={pendingGroupDelete?.groupIds.length ?? 0}
+        open={Boolean(pendingGroupDelete)}
+        onCancel={() => setPendingGroupDelete(null)}
         onRemoveOnly={deletePendingGroupsOnly}
         onDeleteMembers={deletePendingGroupsWithMembers}
       />

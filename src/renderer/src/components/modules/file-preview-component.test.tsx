@@ -1,8 +1,38 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanvasComponent } from '@shared/schema'
 import { localAssetUrl } from '@shared/local-assets'
 import { FilePreviewComponent } from './file-preview-component'
+
+vi.mock('@uiw/react-codemirror', async () => {
+  const React = await vi.importActual<typeof import('react')>('react')
+
+  return {
+    default: ({
+      className,
+      editable,
+      onBlur,
+      onChange,
+      readOnly,
+      value
+    }: {
+      className?: string
+      editable?: boolean
+      onBlur?: () => void
+      onChange?: (value: string) => void
+      readOnly?: boolean
+      value: string
+    }) =>
+      React.createElement('textarea', {
+        'aria-label': 'File editor',
+        className,
+        onBlur,
+        onChange: (event: { target: { value: string } }) => onChange?.(event.target.value),
+        readOnly: readOnly || editable === false,
+        value
+      })
+  }
+})
 
 function createFilePreviewComponent(patch: Partial<CanvasComponent> = {}): CanvasComponent {
   const timestamp = '2026-05-22T00:00:00.000Z'
@@ -23,6 +53,18 @@ function createFilePreviewComponent(patch: Partial<CanvasComponent> = {}): Canva
 }
 
 describe('FilePreviewComponent media previews', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'atlas', {
+      configurable: true,
+      value: {
+        filesystem: {
+          readFile: vi.fn(async () => 'const answer = 41\n'),
+          writeFile: vi.fn(async () => ({ ok: true }))
+        }
+      }
+    })
+  })
+
   it('renders images through the controlled local asset protocol', () => {
     const rootPath = 'C:\\Users\\xhwz2\\Downloads'
     const path = 'C:\\Users\\xhwz2\\Downloads\\mind-map.png'
@@ -108,5 +150,54 @@ describe('FilePreviewComponent media previews', () => {
       false
     )
     expect(updateFrame).toHaveBeenCalledWith({ x: 10, y: 20, width: 640, height: 398 }, false)
+  })
+
+  it('renders text previews as editable file editors', async () => {
+    const rootPath = 'C:\\Users\\xhwz2\\Projects\\app'
+    const path = 'C:\\Users\\xhwz2\\Projects\\app\\src\\index.ts'
+    const updateState = vi.fn()
+
+    render(
+      <FilePreviewComponent
+        canvasId="canvas-1"
+        component={createFilePreviewComponent({
+          bindings: { rootPath, path }
+        })}
+        updateConfig={vi.fn()}
+        updateState={updateState}
+        setTitle={vi.fn()}
+      />
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'File editor' })
+    expect(editor).toHaveValue('const answer = 41\n')
+    expect(editor).not.toHaveAttribute('readonly')
+    expect(window.atlas.filesystem.readFile).toHaveBeenCalledWith(rootPath, path)
+    expect(updateState).toHaveBeenCalledWith({ status: 'live' }, false)
+  })
+
+  it('writes edited text previews back to the bound file on blur', async () => {
+    const rootPath = 'C:\\Users\\xhwz2\\Projects\\app'
+    const path = 'C:\\Users\\xhwz2\\Projects\\app\\src\\index.ts'
+
+    render(
+      <FilePreviewComponent
+        canvasId="canvas-1"
+        component={createFilePreviewComponent({
+          bindings: { rootPath, path }
+        })}
+        updateConfig={vi.fn()}
+        updateState={vi.fn()}
+        setTitle={vi.fn()}
+      />
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'File editor' })
+    fireEvent.change(editor, { target: { value: 'const answer = 42\n' } })
+    fireEvent.blur(editor)
+
+    await waitFor(() => {
+      expect(window.atlas.filesystem.writeFile).toHaveBeenCalledWith(rootPath, path, 'const answer = 42\n')
+    })
   })
 })
