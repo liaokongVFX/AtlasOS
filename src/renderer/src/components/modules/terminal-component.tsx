@@ -3,8 +3,18 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { Lock, PanelBottomClose, PanelBottomOpen, Unlock } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createTerminalAgentRestore, terminalAgentRestoreSchema, type TerminalAgentRestore } from '@shared/terminal-agent'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent
+} from 'react'
+import { createTerminalAgentRestore, terminalAgentRestoreSchema, type TerminalAgentRestore, type TerminalAgentSessionEndedEvent } from '@shared/terminal-agent'
 import { fileExtension, fileName } from '../../lib/file-types'
 import { useI18n, type TFunction } from '../../i18n'
 import { writeClipboardText } from '../../lib/clipboard'
@@ -61,9 +71,24 @@ type TerminalClipboardShortcutHandlers = {
   onCopySelection: () => void
 }
 
+type CommandPanelResizeSession = {
+  maxHeight: number
+  minHeight: number
+  pointerId: number
+  scaleY: number
+  startHeight: number
+  startY: number
+}
+
 const MIN_TRANSFORM_SCALE_DELTA = 0.001
 const PASTE_FEEDBACK_DURATION_MS = 3200
 const PASTE_SHORTCUT_FALLBACK_DELAY_MS = 80
+const TERMINAL_MIN_COLS = 10
+const TERMINAL_MIN_ROWS = 4
+const COMMAND_PANEL_DEFAULT_HEIGHT = 96
+const COMMAND_PANEL_MIN_HEIGHT = 72
+const COMMAND_PANEL_MAX_HEIGHT = 320
+const COMMAND_PANEL_MIN_SCREEN_HEIGHT = 96
 const TERMINAL_PATH_QUOTE_PATTERN = /[\s"'`$&|<>()[\]{};]/
 const PASTED_IMAGE_MIME_TYPES_BY_EXTENSION = new Map([
   ['.png', 'image/png'],
@@ -84,6 +109,65 @@ const PASTED_IMAGE_MIME_TYPES_BY_EXTENSION = new Map([
 function readTerminalAgentRestore(value: unknown): TerminalAgentRestore | null {
   const result = terminalAgentRestoreSchema.safeParse(value)
   return result.success ? result.data : null
+}
+
+function agentRestoreMatchesSessionEnd(restore: TerminalAgentRestore, event: TerminalAgentSessionEndedEvent): boolean {
+  return restore.source === event.source && (!event.providerSessionId || restore.sessionId === event.providerSessionId)
+}
+
+function commandPanelResizeBounds(moduleHeight: number | null | undefined): { minHeight: number; maxHeight: number } {
+  const availableMaxHeight =
+    typeof moduleHeight === 'number' && Number.isFinite(moduleHeight) && moduleHeight > 0
+      ? Math.max(COMMAND_PANEL_MIN_HEIGHT, moduleHeight - COMMAND_PANEL_MIN_SCREEN_HEIGHT)
+      : COMMAND_PANEL_MAX_HEIGHT
+
+  return {
+    minHeight: COMMAND_PANEL_MIN_HEIGHT,
+    maxHeight: Math.min(COMMAND_PANEL_MAX_HEIGHT, availableMaxHeight)
+  }
+}
+
+function clampCommandPanelHeight(height: number, moduleHeight?: number | null): number {
+  const { minHeight, maxHeight } = commandPanelResizeBounds(moduleHeight)
+  return Math.round(Math.min(Math.max(height, minHeight), maxHeight))
+}
+
+function readCommandPanelHeight(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? clampCommandPanelHeight(value) : null
+}
+
+function safeScale(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 1
+}
+
+function elementScaleY(element: HTMLElement, fallbackScale = 1): number {
+  const height = element.offsetHeight
+  const rectHeight = element.getBoundingClientRect().height
+  return height > 0 && rectHeight > 0 ? safeScale(rectHeight / height) : safeScale(fallbackScale)
+}
+
+function elementLayoutHeight(element: HTMLElement | null, fallbackScale = 1): number {
+  if (!element) return 0
+  if (element.offsetHeight > 0) return element.offsetHeight
+
+  const rectHeight = element.getBoundingClientRect().height
+  return rectHeight > 0 ? rectHeight / safeScale(fallbackScale) : 0
+}
+
+function resizeSessionPanelHeight(session: CommandPanelResizeSession, clientY: number): number {
+  const deltaY = (session.startY - clientY) / safeScale(session.scaleY)
+  return Math.round(Math.min(Math.max(session.startHeight + deltaY, session.minHeight), session.maxHeight))
+}
+
+function validTerminalSize(terminal: Terminal): boolean {
+  return terminal.cols >= TERMINAL_MIN_COLS && terminal.rows >= TERMINAL_MIN_ROWS
+}
+
+function createTerminalSize(terminal: Terminal): { cols: number; rows: number } {
+  return {
+    cols: Math.max(TERMINAL_MIN_COLS, terminal.cols),
+    rows: Math.max(TERMINAL_MIN_ROWS, terminal.rows)
+  }
 }
 
 function createUnscaledMouseEvent<T extends XtermMouseEvent>(event: T, element: HTMLElement): T {
@@ -322,17 +406,28 @@ function openTerminalWebLink(event: MouseEvent, uri: string): void {
   })
 }
 
-export function TerminalComponent({ canvasId, component, updateState, setHeaderActions, isNodeSelected = false }: AtlasComponentRendererProps): JSX.Element {
+export function TerminalComponent({
+  canvasId,
+  canvasZoom,
+  component,
+  updateState,
+  setHeaderActions,
+  isNodeSelected = false
+}: AtlasComponentRendererProps): JSX.Element {
   const { t } = useI18n()
+  const moduleRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const commandPanelRef = useRef<HTMLDivElement | null>(null)
   const sessionIdRef = useRef<string | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const cwdRef = useRef(asString(component.state.cwd, asString(component.config.cwd)))
   const initialCommand = asString(component.config.initialCommand)
   const initialCommandDispatched = asBoolean(component.state.initialCommandDispatched)
-  const storedAgentRestore = readTerminalAgentRestore(component.state.agentRestore) ?? createTerminalAgentRestore(initialCommand, cwdRef.current)
+  const storedAgentRestore = asBoolean(component.state.agentRestoreActive) ? readTerminalAgentRestore(component.state.agentRestore) : null
   const startupCommand = initialCommand && !initialCommandDispatched ? initialCommand : storedAgentRestore?.command
-  const autoConfirmWorkspaceTrust = storedAgentRestore?.source === 'claude' && startupCommand === storedAgentRestore.command
+  const startupAgentRestore = startupCommand ? createTerminalAgentRestore(startupCommand, cwdRef.current) : null
+  const autoConfirmWorkspaceTrust = startupAgentRestore?.source === 'claude'
+  const activeAgentRestoreRef = useRef<TerminalAgentRestore | null>(storedAgentRestore ?? startupAgentRestore)
   const pendingFocusRef = useRef(false)
   const focusFrameRef = useRef<number | null>(null)
   const feedbackTimerRef = useRef<number | null>(null)
@@ -340,16 +435,44 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
   const tRef = useRef(t)
   const isLocked = isTerminalComponentLocked(component)
   const commandPanelExpanded = asBoolean(component.state.commandPanelExpanded)
+  const persistedCommandPanelHeight = readCommandPanelHeight(component.state.commandPanelHeight)
+  const commandPanelResizeSessionRef = useRef<CommandPanelResizeSession | null>(null)
+  const [commandPanelHeight, setCommandPanelHeight] = useState<number | null>(persistedCommandPanelHeight)
   const [isDropActive, setIsDropActive] = useState(false)
   const [pasteFeedback, setPasteFeedback] = useState<TerminalPasteFeedback | null>(null)
   const [sessionReady, setSessionReady] = useState(false)
+  const canvasScale = safeScale(canvasZoom)
 
   isNodeSelectedRef.current = isNodeSelected
   cwdRef.current = asString(component.state.cwd, asString(component.config.cwd))
+  activeAgentRestoreRef.current = storedAgentRestore ?? startupAgentRestore
 
   useEffect(() => {
     tRef.current = t
   }, [t])
+
+  useEffect(() => {
+    setCommandPanelHeight(persistedCommandPanelHeight)
+  }, [persistedCommandPanelHeight])
+
+  const persistActiveAgentRestore = useCallback(
+    (agentRestore: TerminalAgentRestore) => {
+      activeAgentRestoreRef.current = agentRestore
+      updateState({ agentRestore, agentRestoreActive: true }, true)
+    },
+    [updateState]
+  )
+
+  const clearActiveAgentRestore = useCallback(
+    (event: TerminalAgentSessionEndedEvent) => {
+      const agentRestore = activeAgentRestoreRef.current
+      if (!agentRestore || !agentRestoreMatchesSessionEnd(agentRestore, event)) return
+
+      activeAgentRestoreRef.current = null
+      updateState({ agentRestoreActive: false }, true)
+    },
+    [updateState]
+  )
 
   const clearScheduledFocus = useCallback(() => {
     pendingFocusRef.current = false
@@ -387,6 +510,125 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
   const toggleCommandPanel = useCallback(() => {
     updateState({ commandPanelExpanded: !commandPanelExpanded }, true)
   }, [commandPanelExpanded, updateState])
+
+  const panelModuleHeight = useCallback((): number | null => {
+    const height = elementLayoutHeight(moduleRef.current, canvasScale)
+    return typeof height === 'number' && Number.isFinite(height) && height > 0 ? height : null
+  }, [canvasScale])
+
+  const commandPanelScaleY = useCallback((): number => {
+    const module = moduleRef.current
+    return module ? elementScaleY(module, canvasScale) : canvasScale
+  }, [canvasScale])
+
+  const currentCommandPanelHeight = useCallback((): number => {
+    const measuredHeight = elementLayoutHeight(commandPanelRef.current, commandPanelScaleY())
+    return clampCommandPanelHeight(
+      measuredHeight > 0 ? measuredHeight : commandPanelHeight ?? persistedCommandPanelHeight ?? COMMAND_PANEL_DEFAULT_HEIGHT,
+      panelModuleHeight()
+    )
+  }, [commandPanelHeight, commandPanelScaleY, panelModuleHeight, persistedCommandPanelHeight])
+
+  const setResizedCommandPanelHeight = useCallback(
+    (height: number, immediate: boolean): number => {
+      const nextHeight = clampCommandPanelHeight(height, panelModuleHeight())
+      setCommandPanelHeight(nextHeight)
+      updateState({ commandPanelHeight: nextHeight }, immediate)
+      return nextHeight
+    },
+    [panelModuleHeight, updateState]
+  )
+
+  useLayoutEffect(() => {
+    if (!commandPanelExpanded || commandPanelHeight === null) return
+
+    const clampedHeight = clampCommandPanelHeight(commandPanelHeight, panelModuleHeight())
+    if (clampedHeight !== commandPanelHeight) {
+      setCommandPanelHeight(clampedHeight)
+    }
+  }, [commandPanelExpanded, commandPanelHeight, panelModuleHeight])
+
+  const beginCommandPanelResize = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) return
+
+      event.preventDefault()
+      event.stopPropagation()
+
+      const { minHeight, maxHeight } = commandPanelResizeBounds(panelModuleHeight())
+      commandPanelResizeSessionRef.current = {
+        maxHeight,
+        minHeight,
+        pointerId: event.pointerId,
+        scaleY: commandPanelScaleY(),
+        startHeight: currentCommandPanelHeight(),
+        startY: event.clientY
+      }
+
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        // Pointer capture is not implemented in every test DOM.
+      }
+    },
+    [commandPanelScaleY, currentCommandPanelHeight, panelModuleHeight]
+  )
+
+  const moveCommandPanelResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const session = commandPanelResizeSessionRef.current
+    if (!session || session.pointerId !== event.pointerId) return
+
+    event.preventDefault()
+    event.stopPropagation()
+
+    setCommandPanelHeight(resizeSessionPanelHeight(session, event.clientY))
+  }, [])
+
+  const endCommandPanelResize = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const session = commandPanelResizeSessionRef.current
+      if (!session || session.pointerId !== event.pointerId) return
+
+      event.preventDefault()
+      event.stopPropagation()
+
+      const nextHeight = resizeSessionPanelHeight(session, event.clientY)
+      commandPanelResizeSessionRef.current = null
+      setCommandPanelHeight(nextHeight)
+      updateState({ commandPanelHeight: nextHeight }, true)
+
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      } catch {
+        // Pointer capture is not implemented in every test DOM.
+      }
+    },
+    [updateState]
+  )
+
+  const nudgeCommandPanelResize = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      if (!['ArrowDown', 'ArrowUp', 'End', 'Home'].includes(event.key)) return
+
+      event.preventDefault()
+      event.stopPropagation()
+
+      const { maxHeight, minHeight } = commandPanelResizeBounds(panelModuleHeight())
+      const step = event.shiftKey ? 40 : 16
+      let nextHeight = currentCommandPanelHeight()
+
+      if (event.key === 'Home') {
+        nextHeight = minHeight
+      } else if (event.key === 'End') {
+        nextHeight = maxHeight
+      } else {
+        nextHeight += event.key === 'ArrowUp' ? step : -step
+      }
+
+      setResizedCommandPanelHeight(nextHeight, false)
+    },
+    [currentCommandPanelHeight, panelModuleHeight, setResizedCommandPanelHeight]
+  )
 
   const headerActions = useMemo(
     () => (
@@ -696,7 +938,7 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
 
       try {
         fitAddon.fit()
-        if (sendResize && sessionIdRef.current) {
+        if (sendResize && sessionIdRef.current && validTerminalSize(terminal)) {
           void window.atlas.terminal.resize(sessionIdRef.current, terminal.cols, terminal.rows)
         }
       } catch (error) {
@@ -836,6 +1078,7 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
       resizeObserver = new ResizeObserver(scheduleFit)
       resizeObserver.observe(container)
 
+      const initialSize = createTerminalSize(instance)
       void window.atlas.terminal
         .create({
           componentId: component.id,
@@ -845,8 +1088,8 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
           shell: asString(component.config.shell),
           initialCommand: startupCommand,
           autoConfirmWorkspaceTrust,
-          cols: instance.cols,
-          rows: instance.rows
+          cols: initialSize.cols,
+          rows: initialSize.rows
         })
         .then((session) => {
           if (disposed) {
@@ -864,7 +1107,11 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
           if (session.didRunInitialCommand) {
             startupStatePatch.initialCommandDispatched = true
             const agentRestore = startupCommand ? createTerminalAgentRestore(startupCommand, session.cwd) : null
-            if (agentRestore) startupStatePatch.agentRestore = agentRestore
+            if (agentRestore) {
+              activeAgentRestoreRef.current = agentRestore
+              startupStatePatch.agentRestore = agentRestore
+              startupStatePatch.agentRestoreActive = true
+            }
           }
           if (Object.keys(startupStatePatch).length > 0) {
             updateState(startupStatePatch, true)
@@ -883,7 +1130,11 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
           const disposeAgentCommand = window.atlas.terminal.onAgentCommand(session.sessionId, (event) => {
             if (disposed) return
             const agentRestore = createTerminalAgentRestore(event.command, event.cwd || cwdRef.current)
-            if (agentRestore) updateState({ agentRestore }, true)
+            if (agentRestore) persistActiveAgentRestore(agentRestore)
+          })
+          const disposeAgentSessionEnded = window.atlas.terminal.onAgentSessionEnded(session.sessionId, (event) => {
+            if (disposed) return
+            clearActiveAgentRestore(event)
           })
           disposeExit = window.atlas.terminal.onExit(session.sessionId, ({ exitCode }) => {
             if (disposed) return
@@ -896,6 +1147,7 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
             previousDisposeExit()
             disposeCwd()
             disposeAgentCommand()
+            disposeAgentSessionEnded()
           }
         })
         .catch((error) => {
@@ -930,6 +1182,7 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
       }
     }
   }, [
+    clearActiveAgentRestore,
     clearScheduledFocus,
     canvasId,
     component.id,
@@ -941,15 +1194,43 @@ export function TerminalComponent({ canvasId, component, updateState, setHeaderA
     pasteFilesIntoTerminal,
     pasteNativeClipboardFilesIntoTerminal,
     pasteNativeClipboardImageIntoTerminal,
+    persistActiveAgentRestore,
     requestFocus,
     updateState
   ])
 
+  const commandPanelStyle = commandPanelHeight === null
+    ? undefined
+    : ({
+        '--terminal-command-panel-height': `${commandPanelHeight}px`
+      } as CSSProperties)
+  const { minHeight: commandPanelAriaMinHeight, maxHeight: commandPanelAriaMaxHeight } = commandPanelResizeBounds(component.frame.height)
+  const commandPanelAriaHeight = commandPanelHeight ?? persistedCommandPanelHeight ?? COMMAND_PANEL_DEFAULT_HEIGHT
+
   return (
-    <div className={cn('terminal-module', commandPanelExpanded && 'terminal-module--commands-open')}>
+    <div ref={moduleRef} className={cn('terminal-module', commandPanelExpanded && 'terminal-module--commands-open')} style={commandPanelStyle}>
       <div ref={containerRef} className="terminal-module__screen" />
       {commandPanelExpanded ? (
-        <div className="terminal-module__commands">
+        <div ref={commandPanelRef} className="terminal-module__commands">
+          <button
+            type="button"
+            className="terminal-module__command-resizer"
+            role="separator"
+            aria-label={t('terminal.resizeCommandPanel')}
+            aria-orientation="horizontal"
+            aria-valuemin={commandPanelAriaMinHeight}
+            aria-valuemax={commandPanelAriaMaxHeight}
+            aria-valuenow={Math.round(commandPanelAriaHeight)}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+            }}
+            onPointerDown={beginCommandPanelResize}
+            onPointerMove={moveCommandPanelResize}
+            onPointerUp={endCommandPanelResize}
+            onPointerCancel={endCommandPanelResize}
+            onKeyDown={nudgeCommandPanelResize}
+          />
           <TerminalCommandLibraryManager
             compactCommands
             commandActionsDisabled={!sessionReady}

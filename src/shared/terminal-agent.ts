@@ -19,9 +19,19 @@ export const terminalAgentCommandEventSchema = z.object({
   command: z.string().trim().min(1).max(8192)
 })
 
+export const terminalAgentSessionEndedEventSchema = z.object({
+  sessionId: z.string().min(1),
+  componentId: z.string().min(1),
+  canvasId: z.string().min(1).optional(),
+  source: terminalAgentSourceSchema,
+  providerSessionId: z.string().trim().min(1).max(300).optional(),
+  cwd: z.string().min(1).optional()
+})
+
 export type TerminalAgentSource = z.infer<typeof terminalAgentSourceSchema>
 export type TerminalAgentRestore = z.infer<typeof terminalAgentRestoreSchema>
 export type TerminalAgentCommandEvent = z.infer<typeof terminalAgentCommandEventSchema>
+export type TerminalAgentSessionEndedEvent = z.infer<typeof terminalAgentSessionEndedEventSchema>
 
 type ShellToken = {
   token: string

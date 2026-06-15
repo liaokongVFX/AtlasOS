@@ -262,34 +262,19 @@ function CategoryOverlay({ active, category }: { active: boolean; category: Term
 }
 
 function CommandOverlayVisual({
-  command,
-  compact,
-  size
+  command
 }: {
   command: TerminalCommandEntry
-  compact: boolean
-  size?: DragItemSize | null
 }): JSX.Element {
-  const style: CSSProperties | undefined = compact && size ? { width: size.width, height: size.height } : undefined
-
   return (
-    <div className={cn('terminal-command-row terminal-command-row--overlay', compact && 'terminal-command-row--compact')} style={style}>
-      {compact ? null : (
-        <span className="terminal-command-row__drag" aria-hidden="true">
-          <GripVertical size={14} />
-        </span>
-      )}
+    <div className="terminal-command-row terminal-command-row--overlay">
+      <span className="terminal-command-row__drag" aria-hidden="true">
+        <GripVertical size={14} />
+      </span>
       <span className="terminal-command-row__main">
         <strong>{command.name}</strong>
-        {compact ? null : <small>{command.command}</small>}
+        <small>{command.command}</small>
       </span>
-      {compact ? (
-        <span className="terminal-command-row__actions" aria-hidden="true">
-          <span className="terminal-command-icon-button">
-            <CornerDownRight size={13} />
-          </span>
-        </span>
-      ) : null}
     </div>
   )
 }
@@ -298,28 +283,22 @@ function TerminalCommandDragOverlay({
   activeCategoryId,
   category,
   compactCommands,
-  command,
-  commandSize
+  command
 }: {
   activeCategoryId: string
   category: TerminalCommandCategory | null
   compactCommands: boolean
   command: TerminalCommandEntry | null
-  commandSize: DragItemSize | null
 }): JSX.Element | null {
-  const overlayStyle: CSSProperties | undefined = category
-    ? { width: 'max-content', height: 'auto' }
-    : command && compactCommands && commandSize
-      ? { width: commandSize.width, height: commandSize.height }
-      : command && compactCommands
-        ? { width: 'max-content', height: 'auto' }
-        : undefined
+  if (!category && (!command || compactCommands)) return null
+
+  const overlayStyle: CSSProperties | undefined = category ? { width: 'max-content', height: 'auto' } : undefined
   const overlay = (
     <DragOverlay className="terminal-command-drag-overlay" dropAnimation={null} style={overlayStyle}>
       {category ? (
         <CategoryOverlay active={category.id === activeCategoryId} category={category} />
       ) : command ? (
-        <CommandOverlayVisual compact={compactCommands} command={command} size={commandSize} />
+        <CommandOverlayVisual command={command} />
       ) : null}
     </DragOverlay>
   )
@@ -385,9 +364,9 @@ function SortableCommandRow({
     transition: compact ? null : undefined
   })
   const style: CSSProperties = {
-    transform: isDragging ? undefined : CSS.Transform.toString(transform),
+    transform: compact || !isDragging ? CSS.Transform.toString(transform) : undefined,
     transition,
-    visibility: isDragging ? 'hidden' : undefined
+    visibility: !compact && isDragging ? 'hidden' : undefined
   }
   const compactDragProps = compact ? { ...attributes, ...listeners } : {}
   const runCompactCommand = (): void => {
@@ -419,7 +398,6 @@ function SortableCommandRow({
         onClick={compact ? undefined : onEdit}
         onDoubleClick={compact ? runCompactCommand : undefined}
         title={compact ? t('terminalCommands.doubleClickExecute') : undefined}
-        aria-label={compact ? t('terminalCommands.doubleClickExecute') : undefined}
         aria-disabled={compact && commandActionsDisabled ? 'true' : undefined}
         {...compactDragProps}
       >
@@ -890,7 +868,6 @@ export function TerminalCommandLibraryManager({
           category={activeDragCategory}
           compactCommands={compactCommands}
           command={activeDragCommand}
-          commandSize={commandDragSize}
         />
       </DndContext>
 

@@ -29,7 +29,7 @@ export type HostRendererPluginNodeDefinition = AtlasRendererPluginNodeDefinition
   Partial<
     Pick<
       AtlasComponentDefinition,
-      'acceptsFile' | 'canDragFromSelectedBody' | 'chrome' | 'createFromFile' | 'dispose' | 'getResizeBehavior' | 'titleKey'
+      'acceptsFile' | 'canDragFromSelectedBody' | 'chrome' | 'createFromFile' | 'dispose' | 'getResizeBehavior' | 'titleKey' | 'usesCanvasZoom'
     >
   >
 
@@ -109,6 +109,7 @@ export function createRendererPluginApi(
         componentDefinition.createFromFile = hostDefinition.createFromFile
         componentDefinition.dispose = hostDefinition.dispose
         componentDefinition.getResizeBehavior = hostDefinition.getResizeBehavior
+        componentDefinition.usesCanvasZoom = hostDefinition.usesCanvasZoom
       }
 
       registeredNodeIds.add(nodeId)

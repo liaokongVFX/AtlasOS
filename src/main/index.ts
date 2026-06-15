@@ -351,7 +351,8 @@ async function createWindow(): Promise<void> {
     appSettingsService,
     loadPetRenderer: (targetWindow) => loadRenderer(targetWindow, 'pet'),
     openTarget: openPetTarget,
-    onAgentProviderSessionResolved: (context) => ptyService?.recordAgentProviderSession(context)
+    onAgentProviderSessionResolved: (context) => ptyService?.recordAgentProviderSession(context),
+    onAgentProviderSessionEnded: (context) => ptyService?.recordAgentProviderSessionEnded(context)
   })
 
   new WorkspaceDocumentService(persistence, () => petService?.scanKanban()).registerIpc()

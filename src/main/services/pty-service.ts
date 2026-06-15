@@ -17,7 +17,13 @@ import {
   terminalWriteInputSchema
 } from '@shared/ipc'
 import { terminalCreateSchema } from '@shared/schema'
-import { detectTerminalAgentCommand, terminalAgentCommandEventSchema, terminalAgentResumeCommand, type TerminalAgentSource } from '@shared/terminal-agent'
+import {
+  detectTerminalAgentCommand,
+  terminalAgentCommandEventSchema,
+  terminalAgentResumeCommand,
+  terminalAgentSessionEndedEventSchema,
+  type TerminalAgentSource
+} from '@shared/terminal-agent'
 import { parseFileUriListPaths, readClipboardFilePathsFromNativeFormats } from './clipboard-files'
 import { handleValidated } from './ipc-helpers'
 import { buildPowerShellBootstrapScript, extractCwdMarkers } from './pty-cwd'
@@ -57,6 +63,8 @@ type AgentProviderSessionContext = {
   providerSessionId: string
   cwd?: string
 }
+
+type AgentProviderSessionEndedContext = AgentProviderSessionContext
 
 type OwnerSessionCleanup = {
   sessionIds: Set<string>
@@ -271,6 +279,21 @@ export class PtyService {
       command
     })
     this.sendToOwner(session.ownerId, 'terminal:agent-command', event)
+  }
+
+  recordAgentProviderSessionEnded(context: AgentProviderSessionEndedContext): void {
+    const session = this.sessionsById.get(context.terminalSessionId)
+    if (!session) return
+
+    const event = terminalAgentSessionEndedEventSchema.parse({
+      sessionId: session.id,
+      componentId: session.componentId,
+      canvasId: session.canvasId,
+      source: context.source,
+      providerSessionId: context.providerSessionId,
+      cwd: context.cwd || session.cwd
+    })
+    this.sendToOwner(session.ownerId, 'terminal:agent-session-ended', event)
   }
 
   private acquireOrCreate(

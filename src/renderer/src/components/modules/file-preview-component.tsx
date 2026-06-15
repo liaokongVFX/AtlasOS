@@ -18,6 +18,14 @@ import { asString } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
 
 const MAX_HIGHLIGHTED_TEXT_LENGTH = 1_500_000
+const FILE_PREVIEW_CODE_BASIC_SETUP = {
+  autocompletion: false,
+  closeBrackets: false,
+  foldGutter: true,
+  highlightActiveLine: false,
+  highlightActiveLineGutter: false,
+  searchKeymap: true
+}
 
 export function FilePreviewComponent({
   component,
@@ -221,12 +229,14 @@ export function FilePreviewComponent({
           <span>{path}</span>
           {languageDescription && content.length <= MAX_HIGHLIGHTED_TEXT_LENGTH ? <strong>{languageDescription.name}</strong> : null}
         </div>
-        <button className="icon-button" onClick={() => void load()} title={t('filePreview.refresh')} aria-label={t('filePreview.refresh')}>
-          <RefreshCw size={14} />
-        </button>
-        <button className="icon-button" onClick={() => void save()} title={t('common.save')} aria-label={t('common.save')} disabled={!isDirty || isSaving}>
-          <Save size={14} />
-        </button>
+        <div className="file-preview-toolbar__actions">
+          <button className="icon-button" onClick={() => void load()} title={t('filePreview.refresh')} aria-label={t('filePreview.refresh')}>
+            <RefreshCw size={14} />
+          </button>
+          <button className="icon-button" onClick={() => void save()} title={t('common.save')} aria-label={t('common.save')} disabled={!isDirty || isSaving}>
+            <Save size={14} />
+          </button>
+        </div>
       </div>
       {error ? (
         <div className="module-error">{error}</div>
@@ -239,14 +249,7 @@ export function FilePreviewComponent({
             height="100%"
             theme={oneDark}
             extensions={editorExtensions}
-            basicSetup={{
-              autocompletion: false,
-              closeBrackets: false,
-              foldGutter: true,
-              highlightActiveLine: false,
-              highlightActiveLineGutter: false,
-              searchKeymap: true
-            }}
+            basicSetup={FILE_PREVIEW_CODE_BASIC_SETUP}
             onChange={updateContent}
             onBlur={() => void save()}
           />

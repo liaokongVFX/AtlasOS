@@ -4,7 +4,7 @@ import type { GitDiffInput, LauncherChooseFileResult, LauncherOpenInput } from '
 import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
 import type { AppSettings, AtlasAppState, CanvasDocument } from '@shared/schema'
 import type { SystemMetricsSnapshot } from '@shared/system-metrics'
-import type { TerminalAgentCommandEvent } from '@shared/terminal-agent'
+import type { TerminalAgentCommandEvent, TerminalAgentSessionEndedEvent } from '@shared/terminal-agent'
 import type { AtlasUpdateState } from '@shared/updates'
 import type { ClaudeHistoryListResult, ClaudeHistorySessionDetail } from '@shared/claude-history'
 import type { CodexHistoryListResult, CodexHistorySessionDetail } from '@shared/codex-history'
@@ -116,6 +116,10 @@ const atlasApi = {
       }),
     onAgentCommand: (sessionId: string, listener: Listener<TerminalAgentCommandEvent>) =>
       on<TerminalAgentCommandEvent>('terminal:agent-command', (payload) => {
+        if (payload.sessionId === sessionId) listener(payload)
+      }),
+    onAgentSessionEnded: (sessionId: string, listener: Listener<TerminalAgentSessionEndedEvent>) =>
+      on<TerminalAgentSessionEndedEvent>('terminal:agent-session-ended', (payload) => {
         if (payload.sessionId === sessionId) listener(payload)
       })
   },

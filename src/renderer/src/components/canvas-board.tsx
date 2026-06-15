@@ -39,7 +39,7 @@ import {
 
 type ComponentNodeCacheEntry = {
   canvasId: string
-  canvasZoom: number
+  canvasZoom?: number
   component: CanvasComponent
   isNodeDragging: boolean
   shouldAutoEdit: boolean
@@ -54,6 +54,10 @@ type ComponentNodeCacheEntry = {
 export type CanvasFlowNode = AtlasFlowNode | CanvasGroupFlowNode
 
 const BACKGROUND_IMAGE_BLUR_BLEED_MULTIPLIER = 3
+
+function componentCanvasZoom(component: CanvasComponent, canvasZoom: number): number | undefined {
+  return getComponentDefinition(component.type).usesCanvasZoom === true ? canvasZoom : undefined
+}
 
 type ScreenPosition = {
   x: number
@@ -125,6 +129,7 @@ function componentToNode(
   onAutoEditHandled?: (componentId: string) => void
 ): AtlasFlowNode {
   const isLockedTerminal = isTerminalComponentLocked(component)
+  const dataCanvasZoom = componentCanvasZoom(component, canvasZoom)
   const position = parentGroup
     ? {
         x: component.frame.x - parentGroup.frame.x,
@@ -146,7 +151,7 @@ function componentToNode(
     zIndex: component.zIndex,
     data: {
       canvasId,
-      canvasZoom,
+      canvasZoom: dataCanvasZoom,
       component,
       autoEditComponentId: shouldAutoEdit ? component.id : null,
       isFrameLocked: isLockedTerminal,
@@ -176,9 +181,10 @@ function cachedComponentToNode(
   onAutoEditHandled?: (componentId: string) => void
 ): AtlasFlowNode {
   const cached = cache.get(component.id)
+  const dataCanvasZoom = componentCanvasZoom(component, canvasZoom)
   if (
     cached?.canvasId === canvasId &&
-    cached.canvasZoom === canvasZoom &&
+    cached.canvasZoom === dataCanvasZoom &&
     cached.component === component &&
     cached.isNodeDragging === isNodeDragging &&
     cached.shouldAutoEdit === shouldAutoEdit &&
@@ -204,7 +210,7 @@ function cachedComponentToNode(
   )
   cache.set(component.id, {
     canvasId,
-    canvasZoom,
+    canvasZoom: dataCanvasZoom,
     component,
     isNodeDragging,
     shouldAutoEdit,
@@ -457,13 +463,6 @@ function closestFlowNodeId(target: EventTarget | null): string | null {
   return target.closest<HTMLElement>('.react-flow__node[data-id]')?.dataset.id ?? null
 }
 
-function isSelectedTerminalTarget(target: EventTarget | null, selectedNodeIds: Set<string>): boolean {
-  if (!(target instanceof Element) || !target.closest('.xterm')) return false
-
-  const flowNodeId = closestFlowNodeId(target)
-  return Boolean(flowNodeId && selectedNodeIds.has(flowNodeId))
-}
-
 function isSelectedNodeTarget(target: EventTarget | null, selectedNodeIds: Set<string>): boolean {
   const flowNodeId = closestFlowNodeId(target)
   return Boolean(flowNodeId && selectedNodeIds.has(flowNodeId))
@@ -474,7 +473,6 @@ function isCanvasShortcutBlocked(
   selectedNodeIds: Set<string>,
   shortcut: 'create' | 'delete' | 'deselect' | 'duplicate' | 'find'
 ): boolean {
-  if (shortcut === 'delete' && isSelectedTerminalTarget(target, selectedNodeIds)) return false
   if (shortcut === 'find') {
     return target instanceof Element && Boolean(target.closest(CANVAS_FIND_SHORTCUT_BLOCKLIST_SELECTOR))
   }

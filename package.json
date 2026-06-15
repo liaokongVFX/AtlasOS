@@ -13,7 +13,7 @@
     "build": "npm run verify:assets && tsc --noEmit && electron-vite build",
     "test": "vitest run --passWithNoTests",
     "verify:no-tests": "node scripts/verify-no-committed-tests.cjs",
-    "verify:assets": "node scripts/verify-build-assets.cjs",
+    "verify:assets": "node scripts/verify-build-assets.cjs && node scripts/verify-windows-update-artifact-name.cjs",
     "release:guard": "node scripts/verify-release-tag.cjs",
     "package:win": "npm run ensure:electron && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --win nsis --publish never",
     "package:win:publish": "npm run ensure:electron && npm run release:guard && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --win nsis --publish always",
@@ -138,6 +138,7 @@
       ]
     },
     "nsis": {
+      "artifactName": "${productName}.Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }

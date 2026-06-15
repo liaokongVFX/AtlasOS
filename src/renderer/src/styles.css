@@ -2151,7 +2151,7 @@ svg {
 }
 
 .terminal-module--commands-open {
-  grid-template-rows: minmax(0, 1fr) clamp(72px, 22%, 132px);
+  grid-template-rows: minmax(0, 1fr) var(--terminal-command-panel-height, clamp(72px, 22%, 132px));
 }
 
 .terminal-module__screen {
@@ -2161,11 +2161,50 @@ svg {
 }
 
 .terminal-module__commands {
+  position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   border-top: 1px solid var(--color-hairline);
   background: var(--color-surface-1);
+}
+
+.terminal-module__command-resizer {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 8px;
+  border: 0;
+  padding: 0;
+  outline: 0;
+  background: transparent;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.terminal-module__command-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: transparent;
+  transition:
+    height 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.terminal-module__command-resizer:hover::before,
+.terminal-module__command-resizer:focus-visible::before,
+.terminal-module__command-resizer:active::before {
+  height: 2px;
+  background: var(--color-primary);
+  box-shadow: 0 0 0 3px rgb(94 106 210 / 18%);
 }
 
 .terminal-module__commands .terminal-command-library {
@@ -2577,6 +2616,10 @@ svg {
   padding: 6px var(--space-2);
 }
 
+.terminal-module__commands .terminal-command-library--dragging-command .terminal-command-list {
+  overflow: visible;
+}
+
 .terminal-module__commands .terminal-command-list--empty {
   display: grid;
   height: 100%;
@@ -2608,22 +2651,15 @@ svg {
 }
 
 .terminal-command-row--compact.terminal-command-row--dragging {
-  position: absolute;
-  flex: 0 0 0;
-  width: 0;
-  min-width: 0;
-  max-width: 0;
-  height: 0;
-  min-height: 0;
-  border-width: 0;
-  opacity: 0;
-  overflow: hidden;
+  position: relative;
+  z-index: 3;
+  border-color: rgb(130 143 255 / 48%);
+  background: var(--color-surface-3);
+  opacity: 0.96;
   pointer-events: none;
-  box-shadow: none;
-}
-
-.terminal-command-row--compact.terminal-command-row--dragging > * {
-  visibility: hidden;
+  box-shadow:
+    var(--edge-highlight),
+    0 10px 28px rgb(0 0 0 / 26%);
 }
 
 .terminal-command-row--compact.terminal-command-row--placeholder {
@@ -3642,7 +3678,15 @@ svg {
 .file-preview-toolbar__title {
   display: flex;
   align-items: center;
+  flex: 1 1 auto;
   min-width: 0;
+  gap: var(--space-2);
+}
+
+.file-preview-toolbar__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
   gap: var(--space-2);
 }
 

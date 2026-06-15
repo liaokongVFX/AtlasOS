@@ -10,6 +10,7 @@ export function createSketchDefinition(): HostRendererPluginNodeDefinition {
     ...builtInNodeMeta('sketch'),
     icon: PenLine,
     Renderer: SketchComponent,
+    usesCanvasZoom: true,
     create: () => ({ state: { sketchScene: normalizeSketchScene(null) } }),
     getDetail: (component) => translateCurrent('sketch.stats', { elements: sketchElementCount(normalizeSketchScene(component.state.sketchScene)) }),
     getSearchTokens: (component) => getSketchSearchTokens(normalizeSketchScene(component.state.sketchScene)),

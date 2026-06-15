@@ -36,6 +36,7 @@ type PetServiceOptions = {
   loadPetRenderer: (window: BrowserWindow) => Promise<void>
   openTarget: (target: PetAlertTarget) => Promise<void>
   onAgentProviderSessionResolved?: (context: AgentProviderSessionResolvedContext) => void
+  onAgentProviderSessionEnded?: (context: AgentProviderSessionEndedContext) => void
 }
 
 type StoredPetState = {
@@ -63,6 +64,8 @@ type AgentProviderSessionResolvedContext = {
   canvasId?: string
   cwd?: string
 }
+
+type AgentProviderSessionEndedContext = AgentProviderSessionResolvedContext
 
 type AgentHookRequestContext = {
   hookName?: string
@@ -444,6 +447,12 @@ function hookEventStatus(source: PetAgentSource, hookName: string, payload: Reco
 
 function shouldRecordProviderSession(hookName: string): boolean {
   return hookName !== 'SubagentStart' && hookName !== 'SubagentStop'
+}
+
+function shouldEndTerminalAgentRestore(event: AgentHookEventInput): boolean {
+  if (!event.providerSessionId) return false
+  if (event.source === 'claude') return event.hookName === 'SessionEnd'
+  return event.hookName === 'Stop'
 }
 
 function hookBody(hookName: string, payload: Record<string, unknown>): string | undefined {
@@ -1324,6 +1333,16 @@ export class PetService {
       this.agentSessions.set(parsed.data.id, parsed.data)
       if (event.providerSessionId && shouldRecordProviderSession(event.hookName)) {
         this.options.onAgentProviderSessionResolved?.({
+          terminalSessionId,
+          source: parsed.data.source,
+          providerSessionId: event.providerSessionId,
+          componentId: parsed.data.componentId,
+          canvasId: parsed.data.canvasId,
+          cwd: parsed.data.cwd
+        })
+      }
+      if (event.providerSessionId && shouldEndTerminalAgentRestore(event)) {
+        this.options.onAgentProviderSessionEnded?.({
           terminalSessionId,
           source: parsed.data.source,
           providerSessionId: event.providerSessionId,

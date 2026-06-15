@@ -55,6 +55,7 @@ export type AtlasComponentDefinition = ComponentDefinitionMeta & {
     variant?: 'terminal' | 'sticky-note'
     titleInputSize?: (title: string) => number
   }
+  usesCanvasZoom?: boolean
   create?: () => ComponentCreatePatch
   duplicate?: (component: CanvasComponent) => ComponentCreatePatch | null
   dispose?: (component: CanvasComponent) => void | Promise<void>
