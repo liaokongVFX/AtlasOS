@@ -15,6 +15,7 @@ import type { AppShortcutSettings } from '@shared/schema'
 import { LOCALES, useI18n, type I18nKey, type Locale, type TFunction } from '../i18n'
 import { cn } from '../lib/utils'
 import { useAppSettingsStore } from '../store/app-settings-store'
+import { AiSettingsPanel } from './ai-settings-panel'
 import { PluginSettingsPanel } from './plugin-settings-panel'
 import { TerminalCommandLibraryManager } from './terminal-command-library-manager'
 
@@ -584,10 +585,6 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
       </div>
     </section>
   )
-}
-
-function AiSettingsPanel(): JSX.Element {
-  return <EmptySettingsPanel id="ai" titleKey="settings.ai" messageKey="settings.aiEmpty" />
 }
 
 function TerminalCommandsSettingsPanel(): JSX.Element {

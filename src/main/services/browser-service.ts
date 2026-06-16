@@ -11,6 +11,7 @@ import {
   browserTypeInputSchema
 } from '@shared/ipc'
 import {
+  BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL,
   BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL,
   BROWSER_ZOOM_DEFAULT_FACTOR,
   BROWSER_ZOOM_MAX_FACTOR,
@@ -27,6 +28,10 @@ type BrowserTab = {
   loadSequence: number
   view: WebContentsView
   visible: boolean
+}
+
+type BrowserServiceOptions = {
+  onGuestTranslationRequest?: (text: string) => void
 }
 
 function jsString(value: string): string {
@@ -80,13 +85,16 @@ function isNavigationAbort(error: unknown): boolean {
 
 export class BrowserService {
   private readonly tabs = new Map<string, BrowserTab>()
+  private translationRequestHandler: ((event: IpcMainEvent, payload: unknown) => void) | null = null
   private zoomRequestHandler: ((event: IpcMainEvent, payload: unknown) => void) | null = null
 
-  constructor(private readonly window: BrowserWindow) {}
+  constructor(private readonly window: BrowserWindow, private readonly options: BrowserServiceOptions = {}) {}
 
   registerIpc(): void {
     this.zoomRequestHandler = (event, payload) => this.handleGuestZoomRequest(event.sender, payload)
     ipcMain.on(BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL, this.zoomRequestHandler)
+    this.translationRequestHandler = (event, payload) => this.handleGuestTranslationRequest(event.sender, payload)
+    ipcMain.on(BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL, this.translationRequestHandler)
 
     handleValidated('browser:create-tab', browserCreateTabInputSchema, async (_, input) => {
       const tabId = randomUUID()
@@ -218,6 +226,11 @@ export class BrowserService {
   }
 
   dispose(): void {
+    if (this.translationRequestHandler) {
+      ipcMain.removeListener(BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL, this.translationRequestHandler)
+      this.translationRequestHandler = null
+    }
+
     if (this.zoomRequestHandler) {
       ipcMain.removeListener(BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL, this.zoomRequestHandler)
       this.zoomRequestHandler = null
@@ -323,6 +336,17 @@ export class BrowserService {
         zoomFactor
       })
     }
+  }
+
+  private handleGuestTranslationRequest(webContents: WebContents, payload: unknown): void {
+    const text = typeof payload === 'object' && payload !== null && 'text' in payload ? String(payload.text ?? '').trim() : ''
+    if (!text) return
+
+    const isKnownNativeTab = Boolean(this.tabForWebContents(webContents))
+    const isDomWebview = webContents.getType() === 'webview'
+    if (!isKnownNativeTab && !isDomWebview) return
+
+    this.options.onGuestTranslationRequest?.(text)
   }
 
   private setWebContentsZoom(webContents: WebContents, value: number): number | null {

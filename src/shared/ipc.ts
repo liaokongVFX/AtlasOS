@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { aiProfileDraftSchema, aiTranslationSettingsPatchSchema } from './ai'
 import { pluginConfigSchema, pluginIdSchema } from './plugins'
 import { petAlertTargetSchema, petSettingsSchema } from './pet'
 import { appSettingsSchema, browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
@@ -25,6 +26,34 @@ export const saveCanvasInputSchema = z.object({
 
 export const updateAppSettingsInputSchema = z.object({
   settings: appSettingsSchema
+})
+
+export const aiProfileSaveInputSchema = z.object({
+  profile: aiProfileDraftSchema,
+  apiKey: z.string().trim().max(20_000).optional()
+})
+
+export const aiProfileIdInputSchema = z.object({
+  profileId: z.string().trim().min(1).max(120)
+})
+
+export const aiProfileApiKeyInputSchema = aiProfileIdInputSchema.extend({
+  apiKey: z.string().trim().min(1).max(20_000)
+})
+
+export const aiUpdateTranslationSettingsInputSchema = z.object({
+  patch: aiTranslationSettingsPatchSchema
+})
+
+export const aiOpenTranslatorInputSchema = z.object({
+  text: z.string().trim().min(1).max(20_000),
+  source: z.enum(['app', 'browser', 'system'])
+})
+
+export const aiTranslateInputSchema = z.object({
+  text: z.string().trim().min(1).max(20_000),
+  profileId: z.string().trim().min(1).max(120).optional(),
+  targetLanguage: z.string().trim().min(1).max(80).optional()
 })
 
 export const chooseDirectoryInputSchema = z.object({

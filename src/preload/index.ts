@@ -1,4 +1,5 @@
 import { clipboard, contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { AiProfileDraft, AiSettings, AiTranslationRequest } from '@shared/ai'
 import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } from '@shared/plugins'
 import type { GitDiffInput, LauncherChooseFileResult, LauncherOpenInput } from '@shared/ipc'
 import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
@@ -53,6 +54,21 @@ const atlasApi = {
   appSettings: {
     get: () => ipcRenderer.invoke('app-settings:get', {}) as Promise<AppSettings>,
     update: (settings: AppSettings) => ipcRenderer.invoke('app-settings:update', { settings }) as Promise<AppSettings>
+  },
+  ai: {
+    getSettings: () => ipcRenderer.invoke('ai:get-settings', {}) as Promise<AiSettings>,
+    saveProfile: (profile: AiProfileDraft, apiKey?: string) => ipcRenderer.invoke('ai:save-profile', { profile, apiKey }) as Promise<AiSettings>,
+    deleteProfile: (profileId: string) => ipcRenderer.invoke('ai:delete-profile', { profileId }) as Promise<AiSettings>,
+    setProfileApiKey: (profileId: string, apiKey: string) => ipcRenderer.invoke('ai:set-profile-api-key', { profileId, apiKey }) as Promise<AiSettings>,
+    clearProfileApiKey: (profileId: string) => ipcRenderer.invoke('ai:clear-profile-api-key', { profileId }) as Promise<AiSettings>,
+    updateTranslationSettings: (patch: Partial<AiSettings['translation']>) =>
+      ipcRenderer.invoke('ai:update-translation-settings', { patch }) as Promise<AiSettings>,
+    openTranslator: (input: { text: string; source: AiTranslationRequest['source'] }) => ipcRenderer.invoke('ai:open-translator', input) as Promise<AiTranslationRequest>,
+    translate: (input: { text: string; profileId?: string; targetLanguage?: string }) =>
+      ipcRenderer.invoke('ai:translate', input) as Promise<{ text: string }>,
+    getActiveTranslationRequest: () => ipcRenderer.invoke('ai:get-active-translation-request', {}) as Promise<AiTranslationRequest | null>,
+    closeTranslator: () => ipcRenderer.invoke('ai:close-translator', {}) as Promise<{ ok: true }>,
+    onTranslationRequest: (listener: Listener<AiTranslationRequest>) => on('ai:translation-request', listener)
   },
   canvas: {
     list: () => ipcRenderer.invoke('canvas:list', {}) as Promise<CanvasDocument[]>,

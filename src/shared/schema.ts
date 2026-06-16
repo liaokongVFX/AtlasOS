@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_LOCALE, DEFAULT_VIEWPORT, LOCALES } from './constants'
+import { aiSettingsSchema } from './ai'
 import { normalizeKeyboardShortcut } from './keyboard-shortcuts'
 import { petSettingsSchema } from './pet'
 import { terminalCommandLibrarySchema } from './terminal-commands'
@@ -121,7 +122,8 @@ export const appSettingsSchema = z.object({
   shortcuts: appShortcutSettingsSchema,
   terminalCommands: terminalCommandLibrarySchema,
   pet: petSettingsSchema,
-  updates: updateSettingsSchema
+  updates: updateSettingsSchema,
+  ai: aiSettingsSchema
 })
 
 export type FileEntry = {

@@ -8,6 +8,7 @@ import { FileSystemService } from './services/ipc-filesystem'
 import { PtyService } from './services/pty-service'
 import { BrowserService } from './services/browser-service'
 import { AppSettingsService } from './services/app-settings-service'
+import { AiTranslationService } from './services/ai-translation-service'
 import { PluginService } from './services/plugin-service'
 import { WorkspaceDocumentService } from './services/workspace-document-service'
 import { LauncherService } from './services/launcher-service'
@@ -30,6 +31,7 @@ let fileSystemService: FileSystemService | null = null
 let pluginService: PluginService | null = null
 let ptyService: PtyService | null = null
 let appSettingsService: AppSettingsService | null = null
+let aiTranslationService: AiTranslationService | null = null
 let petService: PetService | null = null
 let updateService: UpdateService | null = null
 let trayLocale: Locale = DEFAULT_LOCALE
@@ -76,6 +78,7 @@ function disposeWindowServices(): void {
   fileSystemService?.dispose()
   pluginService?.dispose()
   ptyService?.dispose()
+  aiTranslationService?.dispose()
   petService?.dispose()
   updateService?.dispose()
 
@@ -83,6 +86,7 @@ function disposeWindowServices(): void {
   fileSystemService = null
   pluginService = null
   ptyService = null
+  aiTranslationService = null
   petService = null
   updateService = null
 }
@@ -231,7 +235,7 @@ async function waitForRendererDevServer(url: string, timeoutMs = 10_000): Promis
   throw new Error(`Timed out waiting for renderer dev server: ${url}`)
 }
 
-type RendererView = 'pet' | 'update'
+type RendererView = 'pet' | 'translation' | 'update'
 
 async function loadRenderer(window: BrowserWindow, view?: RendererView): Promise<void> {
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -354,6 +358,12 @@ async function createWindow(): Promise<void> {
     onAgentProviderSessionResolved: (context) => ptyService?.recordAgentProviderSession(context),
     onAgentProviderSessionEnded: (context) => ptyService?.recordAgentProviderSessionEnded(context)
   })
+  aiTranslationService = new AiTranslationService({
+    appSettingsService,
+    getMainWindow: () => mainWindow,
+    loadTranslationRenderer: (targetWindow) => loadRenderer(targetWindow, 'translation')
+  })
+  aiTranslationService.registerIpc()
 
   new WorkspaceDocumentService(persistence, () => petService?.scanKanban()).registerIpc()
   fileSystemService = new FileSystemService()
@@ -364,7 +374,11 @@ async function createWindow(): Promise<void> {
     onSessionClosed: (sessionId) => petService?.removeAgentSession(sessionId)
   })
   ptyService.registerIpc()
-  browserService = new BrowserService(window)
+  browserService = new BrowserService(window, {
+    onGuestTranslationRequest: (text) => {
+      void aiTranslationService?.openTranslator(text, 'browser')
+    }
+  })
   browserService.registerIpc()
   new LauncherService().registerIpc()
   new SystemMetricsService().registerIpc()
@@ -381,6 +395,7 @@ async function createWindow(): Promise<void> {
   appSettingsService.registerIpc((nextSettings) => {
     trayLocale = nextSettings.locale
     updateTrayMenu()
+    void aiTranslationService?.refreshSystemHook()
   })
   pluginService = new PluginService()
   pluginService.registerIpc()
