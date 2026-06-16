@@ -81,6 +81,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
   const canDragFromSelectedBody = definition.canDragFromSelectedBody?.(component) ?? false
   const nodeChromeVariant = definition.chrome?.variant
   const isTerminalChrome = nodeChromeVariant === 'terminal'
+  const isFilePreviewChrome = component.type === 'file-preview'
   const isStickyNoteChrome = nodeChromeVariant === 'sticky-note'
   const isFrameLocked = data.isFrameLocked === true
   const subtitle = definition.getSubtitle?.(component) ?? null
@@ -241,6 +242,7 @@ function ComponentNodeBase({ data, selected, dragging }: NodeProps<AtlasFlowNode
         'component-node',
         selected && 'component-node--selected',
         isTerminalChrome && 'component-node--terminal',
+        isFilePreviewChrome && 'component-node--file-preview',
         isStickyNoteChrome && 'component-node--sticky-note'
       )}
       style={{ zIndex: component.zIndex }}

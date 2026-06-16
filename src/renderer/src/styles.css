@@ -211,6 +211,11 @@ svg {
   background: var(--color-canvas);
 }
 
+::-webkit-scrollbar-corner,
+::-webkit-resizer {
+  background: var(--color-canvas);
+}
+
 ::-webkit-scrollbar-thumb {
   border: 3px solid var(--color-canvas);
   border-radius: 999px;
@@ -763,6 +768,14 @@ svg {
   transform: translate(0, 0);
 }
 
+.canvas-board .component-node--file-preview .react-flow__resize-control.component-node__resize-line.right {
+  transform: translate(0, 0);
+}
+
+.canvas-board .component-node--file-preview .react-flow__resize-control.component-node__resize-line.bottom {
+  transform: translate(0, 0);
+}
+
 .canvas-board .react-flow__resize-control.component-node__resize-line.top,
 .canvas-board .react-flow__resize-control.component-node__resize-line.bottom {
   left: 0;
@@ -782,6 +795,16 @@ svg {
 
 .canvas-board .component-node--terminal .react-flow__resize-control.component-node__resize-line.right::after {
   left: 0;
+  transform: none;
+}
+
+.canvas-board .component-node--file-preview .react-flow__resize-control.component-node__resize-line.right::after {
+  left: 0;
+  transform: none;
+}
+
+.canvas-board .component-node--file-preview .react-flow__resize-control.component-node__resize-line.bottom::after {
+  top: 0;
   transform: none;
 }
 
@@ -813,6 +836,18 @@ svg {
   background: var(--color-primary-hover);
   box-shadow: 0 0 0 1px var(--component-node-selected-ring);
   pointer-events: none;
+}
+
+.canvas-board .component-node--file-preview .react-flow__resize-control.component-node__resize-handle.right {
+  transform: translate(0, -50%);
+}
+
+.canvas-board .component-node--file-preview .react-flow__resize-control.component-node__resize-handle.bottom {
+  transform: translate(-50%, 0);
+}
+
+.canvas-board .component-node--file-preview .react-flow__resize-control.component-node__resize-handle.right.bottom {
+  transform: translate(0, 0);
 }
 
 .component-node__header {
@@ -3531,6 +3566,37 @@ svg {
   color: var(--markdown-subtle);
 }
 
+.markdown-preview .task-list-item input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  width: 16px;
+  height: 16px;
+  margin: 0 8px 0 0;
+  border: 1px solid var(--color-hairline-strong);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface-2);
+  vertical-align: -3px;
+  opacity: 1;
+  cursor: default;
+}
+
+.markdown-preview .task-list-item input[type="checkbox"]:checked {
+  border-color: var(--color-primary-hover);
+  background: var(--color-primary);
+}
+
+.markdown-preview .task-list-item input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid var(--color-ink);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
 .markdown-preview code,
 .file-preview-module pre {
   border-radius: var(--radius-sm);
@@ -4350,12 +4416,7 @@ svg {
   display: block;
   min-width: 0;
   min-height: 98px;
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-lg);
-  padding: 6px;
-  background: var(--color-surface-1);
   color: var(--color-ink-muted);
-  box-shadow: var(--edge-highlight);
 }
 
 .system-monitor-wave-panel--cpu {
