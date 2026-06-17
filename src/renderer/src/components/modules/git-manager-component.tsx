@@ -39,6 +39,14 @@ type GitManagerTab = 'changes' | 'log' | 'branches' | 'stashes'
 type DiffMode = 'split' | 'unified'
 type ResizePane = 'sidebar' | 'fileRail'
 
+type ResizeSession = {
+  pane: ResizePane
+  pointerId: number
+  scaleX: number
+  startWidth: number
+  startX: number
+}
+
 type PendingConfirm = {
   title: string
   description: string
@@ -285,6 +293,7 @@ const COPY: Record<'zh-CN' | 'en-US', GitManagerCopy> = {
 
 const HISTORY_LIMIT = 200
 const SPLITTER_SIZE = 8
+const MIN_TRANSFORM_SCALE_DELTA = 0.001
 const DEFAULT_SIDEBAR_WIDTH = 320
 const MIN_SIDEBAR_WIDTH = 260
 const MAX_SIDEBAR_WIDTH = 560
@@ -296,6 +305,33 @@ const MIN_DIFF_WIDTH = 420
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max))
+}
+
+function safeScale(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 1
+}
+
+function elementScaleX(element: HTMLElement | null): number {
+  if (!element) return 1
+  const width = element.offsetWidth
+  const rectWidth = element.getBoundingClientRect().width
+  if (width <= 0 || rectWidth <= 0) return 1
+  const scaleX = rectWidth / width
+  return Math.abs(scaleX - 1) < MIN_TRANSFORM_SCALE_DELTA ? 1 : safeScale(scaleX)
+}
+
+function elementLayoutWidth(element: HTMLElement | null): number {
+  if (!element) return 0
+  if (element.clientWidth > 0) return element.clientWidth
+  if (element.offsetWidth > 0) return element.offsetWidth
+
+  const rectWidth = element.getBoundingClientRect().width
+  return rectWidth > 0 ? rectWidth / elementScaleX(element) : 0
+}
+
+function resizeSessionWidth(session: ResizeSession, clientX: number): number {
+  const deltaX = (clientX - session.startX) / safeScale(session.scaleX)
+  return session.pane === 'sidebar' ? session.startWidth + deltaX : session.startWidth - deltaX
 }
 
 function statusLabel(status: GitChangedFile['status'] | GitCommitFile['status']): string {
@@ -461,7 +497,7 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
   const mainRef = useRef<HTMLDivElement | null>(null)
   const detailContentRef = useRef<HTMLDivElement | null>(null)
   const selectAllChangesRef = useRef<HTMLInputElement | null>(null)
-  const resizeSessionRef = useRef<{ pane: ResizePane; pointerId: number } | null>(null)
+  const resizeSessionRef = useRef<ResizeSession | null>(null)
   const loadSeqRef = useRef(0)
 
   const currentBranch = status?.currentBranch ?? null
@@ -517,46 +553,53 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
   }, [persistedFileRailWidth])
 
   const clampSidebarWidth = useCallback((value: number) => {
-    const containerWidth = mainRef.current?.getBoundingClientRect().width
+    const containerWidth = elementLayoutWidth(mainRef.current)
     const maxByContainer = containerWidth ? containerWidth - MIN_DETAIL_WIDTH - SPLITTER_SIZE : MAX_SIDEBAR_WIDTH
     return clampNumber(value, MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, maxByContainer))
   }, [])
 
   const clampFileRailWidth = useCallback((value: number) => {
-    const containerWidth = detailContentRef.current?.getBoundingClientRect().width
+    const containerWidth = elementLayoutWidth(detailContentRef.current)
     const maxByContainer = containerWidth ? containerWidth - MIN_DIFF_WIDTH - SPLITTER_SIZE : MAX_FILE_RAIL_WIDTH
     return clampNumber(value, MIN_FILE_RAIL_WIDTH, Math.min(MAX_FILE_RAIL_WIDTH, maxByContainer))
   }, [])
 
-  const resizePaneFromPointer = useCallback(
-    (pane: ResizePane, clientX: number) => {
-      if (pane === 'sidebar') {
-        const rect = mainRef.current?.getBoundingClientRect()
-        if (!rect) return sidebarWidth
-        const nextWidth = clampSidebarWidth(clientX - rect.left)
+  const resizePaneFromSession = useCallback(
+    (session: ResizeSession, clientX: number) => {
+      if (session.pane === 'sidebar') {
+        const nextWidth = clampSidebarWidth(resizeSessionWidth(session, clientX))
         setSidebarWidth(nextWidth)
         return nextWidth
       }
 
-      const rect = detailContentRef.current?.getBoundingClientRect()
-      if (!rect) return fileRailWidth
-      const nextWidth = clampFileRailWidth(rect.right - clientX)
+      const nextWidth = clampFileRailWidth(resizeSessionWidth(session, clientX))
       setFileRailWidth(nextWidth)
       return nextWidth
     },
-    [clampFileRailWidth, clampSidebarWidth, fileRailWidth, sidebarWidth]
+    [clampFileRailWidth, clampSidebarWidth]
   )
 
-  const beginPaneResize = useCallback((pane: ResizePane, event: PointerEvent<HTMLButtonElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
-    resizeSessionRef.current = { pane, pointerId: event.pointerId }
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId)
-    } catch {
-      // Pointer capture is not implemented in every test DOM.
-    }
-  }, [])
+  const beginPaneResize = useCallback(
+    (pane: ResizePane, event: PointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) return
+      event.preventDefault()
+      event.stopPropagation()
+      const element = pane === 'sidebar' ? mainRef.current : detailContentRef.current
+      resizeSessionRef.current = {
+        pane,
+        pointerId: event.pointerId,
+        scaleX: elementScaleX(element),
+        startWidth: pane === 'sidebar' ? sidebarWidth : fileRailWidth,
+        startX: event.clientX
+      }
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        // Pointer capture is not implemented in every test DOM.
+      }
+    },
+    [fileRailWidth, sidebarWidth]
+  )
 
   const movePaneResize = useCallback(
     (event: PointerEvent<HTMLButtonElement>) => {
@@ -564,9 +607,9 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
       if (!session || session.pointerId !== event.pointerId) return
       event.preventDefault()
       event.stopPropagation()
-      resizePaneFromPointer(session.pane, event.clientX)
+      resizePaneFromSession(session, event.clientX)
     },
-    [resizePaneFromPointer]
+    [resizePaneFromSession]
   )
 
   const endPaneResize = useCallback(
@@ -575,7 +618,7 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
       if (!session || session.pointerId !== event.pointerId) return
       event.preventDefault()
       event.stopPropagation()
-      const nextWidth = Math.round(resizePaneFromPointer(session.pane, event.clientX))
+      const nextWidth = Math.round(resizePaneFromSession(session, event.clientX))
       resizeSessionRef.current = null
       try {
         event.currentTarget.releasePointerCapture(event.pointerId)
@@ -588,7 +631,7 @@ export function GitManagerComponent({ component, updateConfig, updateState }: At
         updateState({ fileRailWidth: nextWidth }, false)
       }
     },
-    [resizePaneFromPointer, updateState]
+    [resizePaneFromSession, updateState]
   )
 
   const nudgePaneResize = useCallback(

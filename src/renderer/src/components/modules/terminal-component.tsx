@@ -19,6 +19,7 @@ import { fileExtension, fileName } from '../../lib/file-types'
 import { useI18n, type TFunction } from '../../i18n'
 import { writeClipboardText } from '../../lib/clipboard'
 import { TERMINAL_LOCKED_STATE_KEY, isTerminalComponentLocked } from '../../lib/terminal-lock'
+import { registerTranslationSelectionProvider } from '../../lib/translation-selection'
 import { asBoolean, asString, cn } from '../../lib/utils'
 import { TerminalCommandLibraryManager } from '../terminal-command-library-manager'
 import type { AtlasComponentRendererProps } from '../registry'
@@ -927,6 +928,7 @@ export function TerminalComponent({
     let transformedCanvasMouseFix: Disposable | null = null
     let disposeData: () => void = () => undefined
     let disposeExit: () => void = () => undefined
+    let unregisterTranslationSelectionProvider: () => void = () => undefined
     let removeDomListeners: () => void = () => undefined
     let shortcutPasteFallbackTimer: number | null = null
 
@@ -1000,6 +1002,10 @@ export function TerminalComponent({
       instance.loadAddon(new WebLinksAddon(openTerminalWebLink))
       instance.open(container)
       transformedCanvasMouseFix = installTransformedCanvasMouseFix(instance)
+      unregisterTranslationSelectionProvider = registerTranslationSelectionProvider(() => {
+        if (!container.isConnected || !container.contains(document.activeElement) || !instance.hasSelection()) return ''
+        return instance.getSelection()
+      })
       installTerminalClipboardShortcuts(instance, {
         onCopySelection: () => {
           void writeClipboardText(instance.getSelection()).catch(() => undefined)
@@ -1167,6 +1173,7 @@ export function TerminalComponent({
       clearScheduledFocus()
       clearPendingShortcutPasteFallback()
       removeDomListeners()
+      unregisterTranslationSelectionProvider()
       disposeData()
       disposeExit()
       dataDisposable?.dispose()
