@@ -9,6 +9,7 @@ release
 .electron-gyp
 .atlasos-dev
 .codex-temp
+.codegraph
 .dev-smoke
 output
 tmp
