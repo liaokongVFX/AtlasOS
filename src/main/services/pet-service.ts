@@ -1064,11 +1064,10 @@ export class PetService {
     })
 
     handleValidated('pet:update-settings', petUpdateSettingsInputSchema, async (_, input) => {
-      const settings = await this.options.appSettingsService.getSettings()
-      const saved = await this.options.appSettingsService.updateSettings({
+      const saved = await this.options.appSettingsService.updateSettingsWith((settings) => ({
         ...settings,
         pet: input.settings
-      })
+      }))
       await this.applySettings(saved)
       await this.persistAndBroadcast()
       return saved.pet
@@ -1094,23 +1093,26 @@ export class PetService {
     })
 
     handleValidated('pet:set-position', petSetPositionInputSchema, async (_, input) => {
-      const settings = await this.options.appSettingsService.getSettings()
-      const nextSettings = {
-        ...settings,
-        pet: {
-          ...settings.pet,
-          position: { x: input.x, y: input.y }
+      const saved = await this.options.appSettingsService.updateSettingsWith((settings) => {
+        const nextSettings = {
+          ...settings,
+          pet: {
+            ...settings.pet,
+            position: { x: input.x, y: input.y }
+          }
         }
-      }
-      const layout = petWindowLayout(nextSettings)
-      const saved = await this.options.appSettingsService.updateSettings({
-        ...nextSettings,
-        pet: {
-          ...nextSettings.pet,
-          position: layout.orbPosition
+
+        const nextLayout = petWindowLayout(nextSettings)
+        return {
+          ...nextSettings,
+          pet: {
+            ...nextSettings.pet,
+            position: nextLayout.orbPosition
+          }
         }
       })
-      this.petWindow?.setBounds({ x: layout.x, y: layout.y, width: PET_WINDOW_WIDTH, height: PET_WINDOW_HEIGHT })
+      const savedLayout = petWindowLayout(saved)
+      this.petWindow?.setBounds({ x: savedLayout.x, y: savedLayout.y, width: PET_WINDOW_WIDTH, height: PET_WINDOW_HEIGHT })
       await this.broadcastState()
       return saved.pet.position
     })

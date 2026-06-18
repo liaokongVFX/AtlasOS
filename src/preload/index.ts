@@ -3,7 +3,7 @@ import type { AiProfileDraft, AiSettings, AiTranslationRequest } from '@shared/a
 import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } from '@shared/plugins'
 import type { GitDiffInput, LauncherChooseFileResult, LauncherOpenInput } from '@shared/ipc'
 import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
-import type { AppSettings, AtlasAppState, CanvasDocument } from '@shared/schema'
+import type { AppSettings, AppSettingsPatch, AtlasAppState, CanvasDocument } from '@shared/schema'
 import type { SystemMetricsSnapshot } from '@shared/system-metrics'
 import type { TerminalAgentCommandEvent, TerminalAgentSessionEndedEvent } from '@shared/terminal-agent'
 import type { AtlasUpdateState } from '@shared/updates'
@@ -53,7 +53,8 @@ const atlasApi = {
   },
   appSettings: {
     get: () => ipcRenderer.invoke('app-settings:get', {}) as Promise<AppSettings>,
-    update: (settings: AppSettings) => ipcRenderer.invoke('app-settings:update', { settings }) as Promise<AppSettings>
+    update: (settings: AppSettings) => ipcRenderer.invoke('app-settings:update', { settings }) as Promise<AppSettings>,
+    patch: (patch: AppSettingsPatch) => ipcRenderer.invoke('app-settings:patch', { patch }) as Promise<AppSettings>
   },
   ai: {
     getSettings: () => ipcRenderer.invoke('ai:get-settings', {}) as Promise<AiSettings>,

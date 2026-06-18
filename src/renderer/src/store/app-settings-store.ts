@@ -4,7 +4,7 @@ import { DEFAULT_AI_SETTINGS } from '@shared/ai'
 import { DEFAULT_PET_SETTINGS } from '@shared/pet'
 import { createDefaultTerminalCommandLibrary } from '@shared/terminal-commands'
 import { DEFAULT_UPDATE_SETTINGS } from '@shared/updates'
-import type { AppSettings } from '@shared/schema'
+import type { AppSettings, AppSettingsPatch } from '@shared/schema'
 
 const DEFAULT_APP_SETTINGS: AppSettings = {
   schemaVersion: ATLAS_SCHEMA_VERSION,
@@ -22,6 +22,7 @@ type AppSettingsStore = {
   settings: AppSettings
   load: () => Promise<void>
   update: (settings: AppSettings) => Promise<AppSettings>
+  patch: (patch: AppSettingsPatch) => Promise<AppSettings>
 }
 
 export const useAppSettingsStore = create<AppSettingsStore>((set) => ({
@@ -40,6 +41,12 @@ export const useAppSettingsStore = create<AppSettingsStore>((set) => ({
 
   update: async (settings) => {
     const saved = await window.atlas.appSettings.update(settings)
+    set({ error: null, isLoaded: true, settings: saved })
+    return saved
+  },
+
+  patch: async (patch) => {
+    const saved = await window.atlas.appSettings.patch(patch)
     set({ error: null, isLoaded: true, settings: saved })
     return saved
   }

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { aiProfileDraftSchema, aiTranslationSettingsPatchSchema } from './ai'
 import { pluginConfigSchema, pluginIdSchema } from './plugins'
 import { petAlertTargetSchema, petSettingsSchema } from './pet'
-import { appSettingsSchema, browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
+import { appSettingsPatchSchema, appSettingsSchema, browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
 
 export const MAX_TERMINAL_PASTED_ASSET_BASE64_CHARS = 14 * 1024 * 1024
 
@@ -26,6 +26,10 @@ export const saveCanvasInputSchema = z.object({
 
 export const updateAppSettingsInputSchema = z.object({
   settings: appSettingsSchema
+})
+
+export const patchAppSettingsInputSchema = z.object({
+  patch: appSettingsPatchSchema
 })
 
 export const aiProfileSaveInputSchema = z.object({

@@ -510,7 +510,7 @@ export function TerminalCommandLibraryManager({
 }: TerminalCommandLibraryManagerProps): JSX.Element {
   const { t } = useI18n()
   const settings = useAppSettingsStore((state) => state.settings)
-  const updateSettings = useAppSettingsStore((state) => state.update)
+  const patchSettings = useAppSettingsStore((state) => state.patch)
   const library = settings.terminalCommands
   const selectedCategory = activeCategory(library)
   const selectedCategoryCommandIds = selectedCategory?.commandIds ?? []
@@ -558,8 +558,7 @@ export function TerminalCommandLibraryManager({
       setActionError(null)
 
       try {
-        await updateSettings({
-          ...settings,
+        await patchSettings({
           terminalCommands: nextLibrary
         })
       } catch (error) {
@@ -568,7 +567,7 @@ export function TerminalCommandLibraryManager({
         setSaving(false)
       }
     },
-    [settings, updateSettings]
+    [patchSettings]
   )
 
   const openCreateCategory = useCallback(() => {

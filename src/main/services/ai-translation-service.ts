@@ -320,14 +320,15 @@ export class AiTranslationService {
   }
 
   private async updateAiSettings(update: (settings: AiSettings) => Promise<AiSettings>): Promise<AiSettings> {
-    const appSettings = await this.options.appSettingsService.getSettings()
-    const nextAiSettings = aiSettingsSchema.parse(await update(appSettings.ai))
-    await this.options.appSettingsService.updateSettings({
-      ...appSettings,
-      ai: nextAiSettings
+    const appSettings = await this.options.appSettingsService.updateSettingsWith(async (currentSettings) => {
+      const nextAiSettings = aiSettingsSchema.parse(await update(currentSettings.ai))
+      return {
+        ...currentSettings,
+        ai: nextAiSettings
+      }
     })
     await this.refreshSystemHook()
-    return this.getSettings()
+    return this.withKeyStatus(appSettings.ai)
   }
 
   private async withKeyStatus(settings: AiSettings): Promise<AiSettings> {

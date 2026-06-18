@@ -372,7 +372,7 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
   const settings = useAppSettingsStore((state) => state.settings)
   const isLoaded = useAppSettingsStore((state) => state.isLoaded)
   const loadSettings = useAppSettingsStore((state) => state.load)
-  const updateSettings = useAppSettingsStore((state) => state.update)
+  const patchSettings = useAppSettingsStore((state) => state.patch)
   const [draft, setDraft] = useState<AppShortcutSettings>(() => ({ ...DEFAULT_APP_SHORTCUTS }))
   const [errors, setErrors] = useState<ShortcutErrors>({})
   const [actionError, setActionError] = useState<string | null>(null)
@@ -425,8 +425,7 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
     setActionError(null)
 
     try {
-      const saved = await updateSettings({
-        ...settings,
+      const saved = await patchSettings({
         shortcuts: validation.shortcuts
       })
       setDraft(saved.shortcuts)
@@ -442,8 +441,7 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
     setActionError(null)
 
     try {
-      await updateSettings({
-        ...settings,
+      await patchSettings({
         locale: nextLocale
       })
     } catch (error) {
@@ -457,8 +455,7 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
     setActionError(null)
 
     try {
-      await updateSettings({
-        ...settings,
+      await patchSettings({
         updates: {
           ...settings.updates,
           autoCheck

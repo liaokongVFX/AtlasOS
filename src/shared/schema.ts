@@ -126,6 +126,21 @@ export const appSettingsSchema = z.object({
   ai: aiSettingsSchema
 })
 
+const appSettingsPatchField = <T>(schema: z.ZodType<T>) =>
+  z.unknown().optional().transform((value) => (value === undefined ? undefined : schema.parse(value)))
+
+export const appSettingsPatchSchema = z
+  .object({
+    schemaVersion: z.literal(ATLAS_SCHEMA_VERSION).optional(),
+    locale: z.enum(LOCALES).optional(),
+    shortcuts: appSettingsPatchField(appShortcutSettingsSchema),
+    terminalCommands: appSettingsPatchField(terminalCommandLibrarySchema),
+    pet: appSettingsPatchField(petSettingsSchema),
+    updates: appSettingsPatchField(updateSettingsSchema),
+    ai: appSettingsPatchField(aiSettingsSchema)
+  })
+  .transform((patch) => Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)))
+
 export type FileEntry = {
   id: string
   name: string
@@ -184,3 +199,4 @@ export type CanvasDocument = z.infer<typeof canvasDocumentSchema>
 export type AtlasAppState = z.infer<typeof appStateSchema>
 export type AppShortcutSettings = z.infer<typeof appShortcutSettingsSchema>
 export type AppSettings = z.infer<typeof appSettingsSchema>
+export type AppSettingsPatch = z.infer<typeof appSettingsPatchSchema>

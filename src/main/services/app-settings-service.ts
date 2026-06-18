@@ -3,13 +3,25 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { z } from 'zod'
-import { updateAppSettingsInputSchema } from '@shared/ipc'
-import { appSettingsSchema, type AppSettings } from '@shared/schema'
+import { patchAppSettingsInputSchema, updateAppSettingsInputSchema } from '@shared/ipc'
+import { appSettingsPatchSchema, appSettingsSchema, type AppSettings, type AppSettingsPatch } from '@shared/schema'
 import { handleValidated } from './ipc-helpers'
 
 const APP_SETTINGS_DIR = 'app-settings'
 const APP_SETTINGS_FILE = 'settings.json'
 const JSON_WRITE_RETRY_DELAYS_MS = [10, 25, 50]
+
+function errorCode(error: unknown): unknown {
+  return typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
+}
+
+function settingsNeedMigration(rawValue: unknown, settings: AppSettings): boolean {
+  return JSON.stringify(rawValue) !== JSON.stringify(settings)
+}
+
+function compactSettingsPatch(patch: AppSettingsPatch): AppSettingsPatch {
+  return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as AppSettingsPatch
+}
 
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`
@@ -20,7 +32,7 @@ async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> 
       await rename(tmpPath, filePath)
       return
     } catch (error) {
-      const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
+      const code = errorCode(error)
       if (code !== 'EEXIST' && code !== 'EPERM') throw error
 
       await rm(filePath, { force: true })
@@ -28,7 +40,7 @@ async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> 
         await rename(tmpPath, filePath)
         return
       } catch (renameError) {
-        const renameCode = typeof renameError === 'object' && renameError !== null && 'code' in renameError ? renameError.code : undefined
+        const renameCode = errorCode(renameError)
         const delay = JSON_WRITE_RETRY_DELAYS_MS[attempt]
         if (delay === undefined || (renameCode !== 'EPERM' && renameCode !== 'ENOENT')) throw renameError
         await new Promise((resolve) => setTimeout(resolve, delay))
@@ -61,19 +73,25 @@ export class AppSettingsService {
       onSettingsUpdated?.(settings)
       return settings
     })
+    handleValidated('app-settings:patch', patchAppSettingsInputSchema, async (_, input) => {
+      const settings = await this.patchSettings(input.patch)
+      onSettingsUpdated?.(settings)
+      return settings
+    })
   }
 
   async getSettings(): Promise<AppSettings> {
     await mkdir(this.stateDir, { recursive: true })
 
-    try {
-      const raw = await readFile(this.settingsPath, 'utf8')
-      return appSettingsSchema.parse(JSON.parse(raw))
-    } catch {
-      const settings = appSettingsSchema.parse({})
-      await this.writeSettings(settings)
-      return settings
+    const saved = await this.readSettings()
+    if (saved) {
+      if (saved.needsMigration) await this.writeSettings(saved.settings)
+      return saved.settings
     }
+
+    const settings = appSettingsSchema.parse({})
+    await this.writeSettings(settings)
+    return settings
   }
 
   async updateSettings(settings: AppSettings): Promise<AppSettings> {
@@ -82,11 +100,59 @@ export class AppSettingsService {
     return parsed
   }
 
+  async patchSettings(patch: AppSettingsPatch): Promise<AppSettings> {
+    const parsedPatch = compactSettingsPatch(appSettingsPatchSchema.parse(patch))
+    return this.updateSettingsWith((settings) => ({
+      ...settings,
+      ...parsedPatch
+    }))
+  }
+
+  async updateSettingsWith(update: (settings: AppSettings) => AppSettings | Promise<AppSettings>): Promise<AppSettings> {
+    let savedSettings: AppSettings | null = null
+
+    await writeJsonQueued(this.settingsPath, async () => {
+      await mkdir(this.stateDir, { recursive: true })
+      const saved = await this.readSettings()
+      const currentSettings = saved?.settings ?? appSettingsSchema.parse({})
+      savedSettings = appSettingsSchema.parse(await update(currentSettings))
+      await this.writeSettingsFile(savedSettings)
+    })
+
+    return savedSettings ?? appSettingsSchema.parse({})
+  }
+
   private async writeSettings(settings: AppSettings): Promise<void> {
     const parsed = appSettingsSchema.parse(settings)
     await writeJsonQueued(this.settingsPath, async () => {
       await mkdir(this.stateDir, { recursive: true })
-      await writeJsonAtomic(this.settingsPath, parsed)
+      await this.writeSettingsFile(parsed)
     })
+  }
+
+  private async readSettings(): Promise<{ settings: AppSettings; needsMigration: boolean } | null> {
+    let raw = ''
+
+    try {
+      raw = await readFile(this.settingsPath, 'utf8')
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return null
+      throw error
+    }
+
+    try {
+      const rawValue = JSON.parse(raw)
+      const settings = appSettingsSchema.parse(rawValue)
+      return { settings, needsMigration: settingsNeedMigration(rawValue, settings) }
+    } catch (error) {
+      const backupPath = `${this.settingsPath}.invalid-${Date.now()}.json`
+      await rename(this.settingsPath, backupPath)
+      console.warn(`Backed up invalid app settings to ${backupPath}`, error)
+      return null
+    }
+  }
+
+  private async writeSettingsFile(settings: AppSettings): Promise<void> {
+    await writeJsonAtomic(this.settingsPath, appSettingsSchema.parse(settings))
   }
 }
