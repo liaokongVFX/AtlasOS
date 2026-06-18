@@ -155,6 +155,7 @@ const atlasApi = {
     getState: () => ipcRenderer.invoke('updates:get-state', {}) as Promise<AtlasUpdateState>,
     check: () => ipcRenderer.invoke('updates:check', {}) as Promise<AtlasUpdateState>,
     download: () => ipcRenderer.invoke('updates:download', {}) as Promise<AtlasUpdateState>,
+    dismissWindow: () => ipcRenderer.invoke('updates:dismiss-window', {}) as Promise<{ ok: true }>,
     installAndRestart: () => ipcRenderer.invoke('updates:install-and-restart', {}) as Promise<{ ok: true }>,
     onStateUpdated: (listener: Listener<AtlasUpdateState>) => on('updates:state-updated', listener)
   },

@@ -82,6 +82,7 @@ export class UpdateService {
   private readonly now: () => Date
   private readonly platform: NodeJS.Platform
   private readonly listenerDisposers: Array<() => void> = []
+  private dismissedUpdateWindowVersion: string | null = null
   private updateWindow: UpdateWindow | null = null
   private state: AtlasUpdateState
 
@@ -109,6 +110,7 @@ export class UpdateService {
     handleValidated('updates:get-state', emptyInputSchema, () => this.getState())
     handleValidated('updates:check', emptyInputSchema, () => this.check())
     handleValidated('updates:download', emptyInputSchema, () => this.download())
+    handleValidated('updates:dismiss-window', emptyInputSchema, () => this.dismissWindow())
     handleValidated('updates:install-and-restart', emptyInputSchema, () => this.installAndRestart())
   }
 
@@ -122,6 +124,8 @@ export class UpdateService {
   }
 
   async check(options: { automatic?: boolean } = {}): Promise<AtlasUpdateState> {
+    if (!options.automatic) this.dismissedUpdateWindowVersion = null
+
     if (!this.canUseUpdater()) {
       return this.setState({
         status: 'error',
@@ -153,6 +157,8 @@ export class UpdateService {
   }
 
   async download(): Promise<AtlasUpdateState> {
+    this.dismissedUpdateWindowVersion = null
+
     if (!this.canUseUpdater()) {
       const state = this.setState({
         status: 'error',
@@ -204,6 +210,13 @@ export class UpdateService {
     return this.getState()
   }
 
+  dismissWindow(): { ok: true } {
+    if (this.state.availableVersion) this.dismissedUpdateWindowVersion = this.state.availableVersion
+    if (this.updateWindow && !this.updateWindow.isDestroyed()) this.updateWindow.close()
+    this.updateWindow = null
+    return { ok: true }
+  }
+
   installAndRestart(): { ok: true } {
     this.updater.quitAndInstall(false, true)
     return { ok: true }
@@ -224,6 +237,10 @@ export class UpdateService {
   }
 
   private setState(patch: Omit<AtlasUpdateState, 'updatedAt'>): AtlasUpdateState {
+    if (patch.availableVersion && patch.availableVersion !== this.state.availableVersion) {
+      this.dismissedUpdateWindowVersion = null
+    }
+
     this.state = {
       ...patch,
       updatedAt: this.timestamp()
@@ -319,6 +336,7 @@ export class UpdateService {
 
   private async openUpdateWindow(): Promise<void> {
     if (!this.createUpdateWindow || !this.loadUpdateRenderer) return
+    if (this.state.availableVersion && this.dismissedUpdateWindowVersion === this.state.availableVersion) return
 
     if (!this.updateWindow || this.updateWindow.isDestroyed()) {
       const window = this.createUpdateWindow()

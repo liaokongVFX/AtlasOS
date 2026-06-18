@@ -1,7 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { CircleAlert, Download, Loader2, PackageOpen, RefreshCcw, RotateCw, X } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { AtlasUpdateState } from '@shared/updates'
 import { useI18n, type I18nKey } from './i18n'
+
+const HTML_RELEASE_NOTE_PATTERN =
+  /<\/?(?:a|b|blockquote|br|code|del|div|em|h[1-6]|hr|i|img|li|ol|p|pre|s|span|strong|table|tbody|td|th|thead|tr|ul)(?:\s|>|\/)/i
+const SAFE_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -16,6 +22,117 @@ function formatBytes(bytes: number): string {
   }
 
   return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
+}
+
+function safeLinkHref(href: string | null): string | undefined {
+  if (!href?.trim()) return undefined
+
+  try {
+    const url = new URL(href, 'https://github.com')
+    return SAFE_LINK_PROTOCOLS.has(url.protocol) ? url.href : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function renderHtmlReleaseNoteNode(node: ChildNode, key: string): ReactNode {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent
+  if (node.nodeType !== Node.ELEMENT_NODE) return null
+
+  const element = node as Element
+  const tag = element.tagName.toLowerCase()
+  const children = Array.from(element.childNodes).map((child, index) => renderHtmlReleaseNoteNode(child, `${key}.${index}`))
+
+  switch (tag) {
+    case 'a': {
+      const href = safeLinkHref(element.getAttribute('href'))
+      return href ? (
+        <a key={key} href={href} target="_blank" rel="noreferrer">
+          {children}
+        </a>
+      ) : (
+        <Fragment key={key}>{children}</Fragment>
+      )
+    }
+    case 'blockquote':
+      return <blockquote key={key}>{children}</blockquote>
+    case 'br':
+      return <br key={key} />
+    case 'b':
+      return <strong key={key}>{children}</strong>
+    case 'code':
+      return <code key={key}>{children}</code>
+    case 'p':
+      return <p key={key}>{children}</p>
+    case 'del':
+    case 's':
+      return <del key={key}>{children}</del>
+    case 'div':
+      return <Fragment key={key}>{children}</Fragment>
+    case 'em':
+      return <em key={key}>{children}</em>
+    case 'hr':
+      return <hr key={key} />
+    case 'i':
+      return <em key={key}>{children}</em>
+    case 'img': {
+      const alt = element.getAttribute('alt')?.trim()
+      return alt ? <span key={key}>{alt}</span> : null
+    }
+    case 'h1':
+    case 'h2':
+    case 'h3':
+    case 'h4':
+    case 'h5':
+    case 'h6':
+      return (
+        <p key={key}>
+          <strong>{children}</strong>
+        </p>
+      )
+    case 'strong':
+      return <strong key={key}>{children}</strong>
+    case 'li':
+      return <li key={key}>{children}</li>
+    case 'ol':
+      return <ol key={key}>{children}</ol>
+    case 'pre':
+      return <pre key={key}>{children}</pre>
+    case 'script':
+    case 'style':
+      return null
+    case 'span':
+      return <Fragment key={key}>{children}</Fragment>
+    case 'table':
+      return <table key={key}>{children}</table>
+    case 'tbody':
+      return <tbody key={key}>{children}</tbody>
+    case 'td':
+      return <td key={key}>{children}</td>
+    case 'th':
+      return <th key={key}>{children}</th>
+    case 'thead':
+      return <thead key={key}>{children}</thead>
+    case 'tr':
+      return <tr key={key}>{children}</tr>
+    case 'ul':
+      return <ul key={key}>{children}</ul>
+    default:
+      return <Fragment key={key}>{children}</Fragment>
+  }
+}
+
+function ReleaseNotesContent({ notes }: { notes: string }): JSX.Element {
+  const trimmed = notes.trim()
+  const htmlContent = useMemo(() => {
+    if (!HTML_RELEASE_NOTE_PATTERN.test(trimmed)) return null
+    const parsed = new DOMParser().parseFromString(trimmed, 'text/html')
+    return Array.from(parsed.body.childNodes).map((node, index) => renderHtmlReleaseNoteNode(node, String(index)))
+  }, [trimmed])
+
+  if (htmlContent) return <>{htmlContent}</>
+
+  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{trimmed}</ReactMarkdown>
 }
 
 function statusTitleKey(state: AtlasUpdateState | null): I18nKey {
@@ -73,6 +190,11 @@ export function UpdateApp(): JSX.Element {
   const body = t(statusBodyKey(state), { version: availableVersion })
   const releaseNotes = useMemo(() => state?.releaseNotes?.trim() || t('update.noNotes'), [state?.releaseNotes, t])
 
+  const closeWindow = (): void => {
+    void window.atlas.updates.dismissWindow()
+    window.close()
+  }
+
   useEffect(() => {
     let active = true
 
@@ -121,7 +243,7 @@ export function UpdateApp(): JSX.Element {
   return (
     <main className="update-window" aria-live="polite">
       <div className="update-window__drag-region" aria-hidden="true" />
-      <button type="button" className="update-window__close" aria-label={t('update.close')} onClick={() => window.close()}>
+      <button type="button" className="update-window__close" aria-label={t('update.close')} onClick={closeWindow}>
         <X size={15} aria-hidden="true" />
       </button>
 
@@ -153,8 +275,10 @@ export function UpdateApp(): JSX.Element {
 
       {state?.status === 'available' || state?.status === 'downloaded' || state?.status === 'error' ? (
         <div className="update-window__notes">
-          <strong>{state.availableVersion ?? state.currentVersion}</strong>
-          <p>{state.status === 'error' ? state.error ?? t('update.errorBody') : releaseNotes}</p>
+          <strong className="update-window__notes-version">{state.availableVersion ?? state.currentVersion}</strong>
+          <div className="update-window__notes-body">
+            {state.status === 'error' ? <p>{state.error ?? t('update.errorBody')}</p> : <ReleaseNotesContent notes={releaseNotes} />}
+          </div>
         </div>
       ) : null}
 
@@ -177,7 +301,7 @@ export function UpdateApp(): JSX.Element {
             <span>{t('update.retry')}</span>
           </button>
         ) : null}
-        <button type="button" className="tool-button" onClick={() => window.close()}>
+        <button type="button" className="tool-button" onClick={closeWindow}>
           <span>{t('update.later')}</span>
         </button>
       </div>

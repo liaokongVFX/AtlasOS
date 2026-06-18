@@ -8011,18 +8011,116 @@ svg {
   background: var(--color-surface-1);
 }
 
-.update-window__notes strong {
+.update-window__notes-version {
   display: block;
   margin-bottom: 6px;
   color: var(--color-ink);
   font-size: 12px;
 }
 
-.update-window__notes p {
-  margin: 0;
+.update-window__notes-body {
   color: var(--color-ink-subtle);
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.update-window__notes-body > :first-child {
+  margin-top: 0;
+}
+
+.update-window__notes-body > :last-child {
+  margin-bottom: 0;
+}
+
+.update-window__notes-body p,
+.update-window__notes-body ul,
+.update-window__notes-body ol,
+.update-window__notes-body blockquote,
+.update-window__notes-body pre,
+.update-window__notes-body table {
+  margin: 0 0 8px;
+}
+
+.update-window__notes-body ul,
+.update-window__notes-body ol {
+  padding-left: 18px;
+}
+
+.update-window__notes-body li {
+  margin: 2px 0;
+}
+
+.update-window__notes-body strong {
+  color: var(--color-ink);
+  font-weight: 650;
+}
+
+.update-window__notes-body a {
+  color: var(--color-primary-hover);
+  text-decoration: none;
+}
+
+.update-window__notes-body a:hover {
+  text-decoration: underline;
+}
+
+.update-window__notes-body blockquote {
+  border-left: 2px solid var(--color-hairline-strong);
+  padding-left: 8px;
+  color: var(--color-ink-muted);
+}
+
+.update-window__notes-body hr {
+  height: 1px;
+  border: 0;
+  margin: 8px 0;
+  background: var(--color-hairline);
+}
+
+.update-window__notes-body code {
+  border: 1px solid var(--color-hairline);
+  border-radius: 4px;
+  padding: 1px 4px;
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.update-window__notes-body pre {
+  overflow: auto;
+  border: 1px solid var(--color-hairline);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--color-surface-2);
+}
+
+.update-window__notes-body pre code {
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.update-window__notes-body table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.update-window__notes-body th,
+.update-window__notes-body td {
+  border: 1px solid var(--color-hairline);
+  padding: 4px 6px;
+  text-align: left;
+}
+
+.update-window__notes-body th {
+  color: var(--color-ink);
+  font-weight: 650;
+}
+
+.update-window__notes-body p {
+  color: var(--color-ink-subtle);
   white-space: pre-wrap;
 }
 
