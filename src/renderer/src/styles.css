@@ -835,8 +835,6 @@ svg {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  transform: none;
-  translate: -50% -50%;
 }
 
 .canvas-board .react-flow__resize-control.component-node__resize-handle::after {
