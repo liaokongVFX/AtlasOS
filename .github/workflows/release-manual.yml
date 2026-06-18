@@ -9,6 +9,10 @@ on:
         description: 'SemVer version to release, for example 0.1.1. A leading v is accepted.'
         required: true
         type: string
+      release_notes:
+        description: 'Optional release notes. Leave empty to preserve an existing GitHub Release description for this tag.'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -199,6 +203,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
         run: |
           mapfile -d '' assets < <(find release-assets -type f -print0)
           if [ "${#assets[@]}" -eq 0 ]; then
@@ -206,10 +211,24 @@ jobs:
             exit 1
           fi
 
+          notes_file="$(mktemp)"
+          if [ -n "$(printf '%s' "$RELEASE_NOTES" | tr -d '[:space:]')" ]; then
+            printf '%s\n' "$RELEASE_NOTES" > "$notes_file"
+          fi
+
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [ -s "$notes_file" ]; then
+              gh release edit "$RELEASE_TAG" --notes-file "$notes_file"
+            fi
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
-            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "AtlasOS $RELEASE_TAG" --notes ""
+            if [ ! -s "$notes_file" ]; then
+              echo "release_notes was not provided and GitHub Release $RELEASE_TAG does not exist."
+              echo "Create the release with a Description first, or rerun this workflow with release_notes."
+              exit 1
+            fi
+
+            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "AtlasOS $RELEASE_TAG" --notes-file "$notes_file"
           fi
 
   cleanup:
