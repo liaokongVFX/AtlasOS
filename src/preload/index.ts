@@ -1,5 +1,6 @@
 import { clipboard, contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiProfileDraft, AiSettings, AiTranslationRequest } from '@shared/ai'
+import type { AgentUsageDayDetail, AgentUsageIndexStatus, AgentUsageYearResult } from '@shared/agent-usage'
 import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } from '@shared/plugins'
 import type { GitDiffInput, LauncherChooseFileResult, LauncherOpenInput } from '@shared/ipc'
 import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
@@ -64,8 +65,10 @@ const atlasApi = {
     clearProfileApiKey: (profileId: string) => ipcRenderer.invoke('ai:clear-profile-api-key', { profileId }) as Promise<AiSettings>,
     updateTranslationSettings: (patch: Partial<AiSettings['translation']>) =>
       ipcRenderer.invoke('ai:update-translation-settings', { patch }) as Promise<AiSettings>,
+    updateDailySummarySettings: (patch: Partial<AiSettings['dailySummary']>) =>
+      ipcRenderer.invoke('ai:update-daily-summary-settings', { patch }) as Promise<AiSettings>,
     openTranslator: (input: { text: string; source: AiTranslationRequest['source'] }) => ipcRenderer.invoke('ai:open-translator', input) as Promise<AiTranslationRequest>,
-    translate: (input: { text: string; profileId?: string; targetLanguage?: string }) =>
+    translate: (input: { text: string; profileId?: string; model?: string; targetLanguage?: string }) =>
       ipcRenderer.invoke('ai:translate', input) as Promise<{ text: string }>,
     getActiveTranslationRequest: () => ipcRenderer.invoke('ai:get-active-translation-request', {}) as Promise<AiTranslationRequest | null>,
     closeTranslator: () => ipcRenderer.invoke('ai:close-translator', {}) as Promise<{ ok: true }>,
@@ -150,6 +153,13 @@ const atlasApi = {
   },
   systemMetrics: {
     get: () => ipcRenderer.invoke('system-metrics:get', {}) as Promise<SystemMetricsSnapshot>
+  },
+  agentUsage: {
+    refresh: () => ipcRenderer.invoke('agent-usage:refresh', {}) as Promise<AgentUsageIndexStatus>,
+    getYear: (year?: number) => ipcRenderer.invoke('agent-usage:get-year', { year }) as Promise<AgentUsageYearResult>,
+    getDay: (day: string) => ipcRenderer.invoke('agent-usage:get-day', { day }) as Promise<AgentUsageDayDetail>,
+    generateSummary: (input: { day: string; locale?: string; regenerate?: boolean }) =>
+      ipcRenderer.invoke('agent-usage:generate-summary', input) as Promise<AgentUsageDayDetail>
   },
   updates: {
     getState: () => ipcRenderer.invoke('updates:get-state', {}) as Promise<AtlasUpdateState>,

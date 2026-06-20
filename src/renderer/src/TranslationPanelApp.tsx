@@ -51,6 +51,7 @@ export function TranslationPanelApp(): JSX.Element {
       const result = await window.atlas.ai.translate({
         text: nextRequest.text,
         profileId: nextRequest.profileId ?? undefined,
+        model: nextRequest.model ?? undefined,
         targetLanguage: nextRequest.targetLanguage
       })
       if (activeRequestIdRef.current !== nextRequest.id) return

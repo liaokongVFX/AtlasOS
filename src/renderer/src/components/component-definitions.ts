@@ -24,7 +24,8 @@ export const CREATABLE_BUILTIN_COMPONENT_TYPES = [
   'calendar',
   'git-manager',
   'claude-history',
-  'codex-history'
+  'codex-history',
+  'agent-usage-calendar'
 ] as const satisfies readonly BuiltInComponentType[]
 
 export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefinitionMeta> = {
@@ -137,6 +138,14 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     titleKey: 'component.codexHistory',
     defaultFrame: { x: 260, y: 200, width: 1040, height: 680 },
     permissions: ['codex:history', 'pty:spawn', 'pty:write'],
+    creatable: true
+  },
+  'agent-usage-calendar': {
+    type: 'agent-usage-calendar',
+    title: 'Agent Usage',
+    titleKey: 'component.agentUsageCalendar',
+    defaultFrame: { x: 240, y: 180, width: 1080, height: 720 },
+    permissions: ['claude:history', 'codex:history', 'ai:summary'],
     creatable: true
   }
 }

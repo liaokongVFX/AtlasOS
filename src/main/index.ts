@@ -9,6 +9,8 @@ import { PtyService } from './services/pty-service'
 import { BrowserService } from './services/browser-service'
 import { AppSettingsService } from './services/app-settings-service'
 import { AiTranslationService } from './services/ai-translation-service'
+import { AppDatabaseService } from './services/app-database-service'
+import { AgentUsageService } from './services/agent-usage-service'
 import { PluginService } from './services/plugin-service'
 import { WorkspaceDocumentService } from './services/workspace-document-service'
 import { LauncherService } from './services/launcher-service'
@@ -32,6 +34,7 @@ let pluginService: PluginService | null = null
 let ptyService: PtyService | null = null
 let appSettingsService: AppSettingsService | null = null
 let aiTranslationService: AiTranslationService | null = null
+let appDatabaseService: AppDatabaseService | null = null
 let petService: PetService | null = null
 let updateService: UpdateService | null = null
 let trayLocale: Locale = DEFAULT_LOCALE
@@ -79,6 +82,7 @@ function disposeWindowServices(): void {
   pluginService?.dispose()
   ptyService?.dispose()
   aiTranslationService?.dispose()
+  appDatabaseService?.close()
   petService?.dispose()
   updateService?.dispose()
 
@@ -87,6 +91,7 @@ function disposeWindowServices(): void {
   pluginService = null
   ptyService = null
   aiTranslationService = null
+  appDatabaseService = null
   petService = null
   updateService = null
 }
@@ -304,6 +309,7 @@ function installSecurityDefaults(): void {
 
 async function createWindow(): Promise<void> {
   appSettingsService = new AppSettingsService()
+  appDatabaseService = new AppDatabaseService()
   const settings = await appSettingsService.getSettings()
   trayLocale = settings.locale
   updateTrayMenu()
@@ -385,6 +391,7 @@ async function createWindow(): Promise<void> {
   new GitService().registerIpc()
   new ClaudeHistoryService().registerIpc()
   new CodexHistoryService().registerIpc()
+  new AgentUsageService({ databaseService: appDatabaseService, appSettingsService }).registerIpc()
   updateService = new UpdateService({
     isDev,
     isPackaged: app.isPackaged,

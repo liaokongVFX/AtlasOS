@@ -15,6 +15,7 @@ import { createTerminalDefinition } from './terminal'
 import { createGitManagerDefinition } from './git-manager'
 import { createClaudeHistoryDefinition } from './claude-history'
 import { createCodexHistoryDefinition } from './codex-history'
+import { createAgentUsageCalendarDefinition } from './agent-usage-calendar'
 
 export function createBuiltInComponentDefinitions(): HostRendererPluginNodeDefinition[] {
   return [
@@ -31,7 +32,8 @@ export function createBuiltInComponentDefinitions(): HostRendererPluginNodeDefin
     createCalendarDefinition(),
     createGitManagerDefinition(),
     createClaudeHistoryDefinition(),
-    createCodexHistoryDefinition()
+    createCodexHistoryDefinition(),
+    createAgentUsageCalendarDefinition()
   ]
 }
 

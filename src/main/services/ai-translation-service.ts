@@ -4,6 +4,7 @@ import { BrowserWindow, clipboard, screen, shell } from 'electron'
 import { z } from 'zod'
 import {
   aiOpenTranslatorInputSchema,
+  aiUpdateDailySummarySettingsInputSchema,
   aiProfileApiKeyInputSchema,
   aiProfileIdInputSchema,
   aiProfileSaveInputSchema,
@@ -13,11 +14,14 @@ import {
 import {
   aiProfileDraftSchema,
   aiProfileSchema,
+  aiDailySummarySettingsSchema,
   aiSettingsSchema,
   aiTranslationSettingsSchema,
   DEFAULT_AI_TARGET_LANGUAGE,
+  firstAiProfileModel,
   isAiAutoTargetLanguage,
   type AiProfile,
+  type AiDailySummarySettings,
   type AiSettings,
   type AiTranslationRequest,
   type AiTranslationSettings
@@ -37,6 +41,11 @@ type AiTranslationServiceOptions = {
 
 type TranslationApiResult = {
   text: string
+}
+
+type AiModelSelection = {
+  profileId: string | null
+  model: string | null
 }
 
 const TRANSLATION_WINDOW_WIDTH = 640
@@ -103,6 +112,20 @@ function translationSystemPrompt(targetLanguage: string): string {
   ].join(' ')
 }
 
+function modelSelection(profile: AiProfile | undefined): AiModelSelection {
+  return profile ? { profileId: profile.id, model: firstAiProfileModel(profile) } : { profileId: null, model: null }
+}
+
+function reconcileModelSelection<T extends AiModelSelection>(selection: T, profiles: AiProfile[]): T {
+  if (!selection.profileId) return { ...selection, model: null }
+
+  const selectedProfile = profiles.find((profile) => profile.id === selection.profileId)
+  if (!selectedProfile) return { ...selection, ...modelSelection(profiles[0]) }
+  if (selection.model && selectedProfile.models.includes(selection.model)) return selection
+
+  return { ...selection, model: firstAiProfileModel(selectedProfile) }
+}
+
 async function readErrorBody(response: Response): Promise<string> {
   try {
     return (await response.text()).trim().slice(0, 500)
@@ -141,8 +164,11 @@ export class AiTranslationService {
     handleValidated('ai:update-translation-settings', aiUpdateTranslationSettingsInputSchema, (_, input) =>
       this.updateTranslationSettings(input.patch)
     )
+    handleValidated('ai:update-daily-summary-settings', aiUpdateDailySummarySettingsInputSchema, (_, input) =>
+      this.updateDailySummarySettings(input.patch)
+    )
     handleValidated('ai:open-translator', aiOpenTranslatorInputSchema, (_, input) => this.openTranslator(input.text, input.source))
-    handleValidated('ai:translate', aiTranslateInputSchema, (_, input) => this.translate(input.text, input.profileId, input.targetLanguage))
+    handleValidated('ai:translate', aiTranslateInputSchema, (_, input) => this.translate(input.text, input.profileId, input.model, input.targetLanguage))
     handleValidated('ai:get-active-translation-request', z.object({}), () => this.activeRequest)
     handleValidated('ai:close-translator', z.object({}), () => {
       this.closeTranslator()
@@ -196,9 +222,16 @@ export class AiTranslationService {
       const profiles = settings.profiles.some((candidate) => candidate.id === profile.id)
         ? settings.profiles.map((candidate) => (candidate.id === profile.id ? profile : candidate))
         : [...settings.profiles, profile]
-      const translation = settings.translation.profileId ? settings.translation : { ...settings.translation, profileId: profile.id }
+      const translation = reconcileModelSelection(
+        settings.translation.profileId ? settings.translation : { ...settings.translation, ...modelSelection(profile) },
+        profiles
+      )
+      const dailySummary = reconcileModelSelection(
+        settings.dailySummary.profileId ? settings.dailySummary : { ...settings.dailySummary, ...modelSelection(profile) },
+        profiles
+      )
 
-      return { ...settings, profiles, translation }
+      return { ...settings, profiles, translation, dailySummary }
     })
   }
 
@@ -207,12 +240,10 @@ export class AiTranslationService {
 
     return this.updateAiSettings(async (settings) => {
       const profiles = settings.profiles.filter((profile) => profile.id !== profileId)
-      const translation =
-        settings.translation.profileId === profileId
-          ? { ...settings.translation, profileId: profiles[0]?.id ?? null }
-          : settings.translation
+      const translation = reconcileModelSelection(settings.translation, profiles)
+      const dailySummary = reconcileModelSelection(settings.dailySummary, profiles)
 
-      return { ...settings, profiles, translation }
+      return { ...settings, profiles, translation, dailySummary }
     })
   }
 
@@ -231,7 +262,14 @@ export class AiTranslationService {
   async updateTranslationSettings(patch: Partial<AiTranslationSettings>): Promise<AiSettings> {
     return this.updateAiSettings(async (settings) => ({
       ...settings,
-      translation: aiTranslationSettingsSchema.parse({ ...settings.translation, ...patch })
+      translation: reconcileModelSelection(aiTranslationSettingsSchema.parse({ ...settings.translation, ...patch }), settings.profiles)
+    }))
+  }
+
+  async updateDailySummarySettings(patch: Partial<AiDailySummarySettings>): Promise<AiSettings> {
+    return this.updateAiSettings(async (settings) => ({
+      ...settings,
+      dailySummary: reconcileModelSelection(aiDailySummarySettingsSchema.parse({ ...settings.dailySummary, ...patch }), settings.profiles)
     }))
   }
 
@@ -243,27 +281,31 @@ export class AiTranslationService {
       source,
       targetLanguage: settings.translation.targetLanguage,
       profileId: settings.translation.profileId,
+      model: settings.translation.model,
       createdAt: new Date().toISOString()
     })
   }
 
-  async translate(text: string, profileIdInput?: string, targetLanguageInput?: string): Promise<TranslationApiResult> {
+  async translate(text: string, profileIdInput?: string, modelInput?: string, targetLanguageInput?: string): Promise<TranslationApiResult> {
     const settings = await this.getSettings()
     const profileId = profileIdInput ?? settings.translation.profileId
+    const model = modelInput?.trim() || settings.translation.model
     const targetLanguage = targetLanguageInput?.trim() || settings.translation.targetLanguage || DEFAULT_AI_TARGET_LANGUAGE
-    if (!profileId) throw new Error('Choose a translation profile in AI settings first')
+    if (!profileId) throw new Error('Choose a translation provider in AI settings first')
+    if (!model) throw new Error('Choose a translation model in AI settings first')
 
     const profile = settings.profiles.find((candidate) => candidate.id === profileId)
-    if (!profile) throw new Error('Translation profile does not exist')
+    if (!profile) throw new Error('Translation provider does not exist')
+    if (!profile.models.includes(model)) throw new Error('Translation model does not belong to the selected provider')
 
     const apiKey = await this.keyStore.readKey(profile.id)
     if (!apiKey) throw new Error(`API key is not configured for ${profile.name}`)
 
     if (profile.format === 'anthropic') {
-      return { text: await this.translateWithAnthropic(profile, apiKey, text, targetLanguage) }
+      return { text: await this.translateWithAnthropic(profile, model, apiKey, text, targetLanguage) }
     }
 
-    return { text: await this.translateWithOpenAi(profile, apiKey, text, targetLanguage) }
+    return { text: await this.translateWithOpenAi(profile, model, apiKey, text, targetLanguage) }
   }
 
   closeTranslator(): void {
@@ -272,7 +314,7 @@ export class AiTranslationService {
     }
   }
 
-  private async translateWithOpenAi(profile: AiProfile, apiKey: string, text: string, targetLanguage: string): Promise<string> {
+  private async translateWithOpenAi(profile: AiProfile, model: string, apiKey: string, text: string, targetLanguage: string): Promise<string> {
     const payload = await requestJson(endpointUrl(profile.baseUrl, '/chat/completions'), {
       method: 'POST',
       headers: {
@@ -280,7 +322,7 @@ export class AiTranslationService {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: profile.model,
+        model,
         temperature: 0,
         messages: [
           { role: 'system', content: translationSystemPrompt(targetLanguage) },
@@ -292,7 +334,7 @@ export class AiTranslationService {
     return parseOpenAiTranslation(payload)
   }
 
-  private async translateWithAnthropic(profile: AiProfile, apiKey: string, text: string, targetLanguage: string): Promise<string> {
+  private async translateWithAnthropic(profile: AiProfile, model: string, apiKey: string, text: string, targetLanguage: string): Promise<string> {
     const payload = await requestJson(endpointUrl(profile.baseUrl, '/messages'), {
       method: 'POST',
       headers: {
@@ -301,7 +343,7 @@ export class AiTranslationService {
         'anthropic-version': ANTHROPIC_VERSION
       },
       body: JSON.stringify({
-        model: profile.model,
+        model,
         max_tokens: 2048,
         temperature: 0,
         system: translationSystemPrompt(targetLanguage),
@@ -359,6 +401,7 @@ export class AiTranslationService {
         source: 'system',
         targetLanguage: settings.translation.targetLanguage,
         profileId: settings.translation.profileId,
+        model: settings.translation.model,
         error: error instanceof Error ? error.message : String(error),
         createdAt: new Date().toISOString()
       })

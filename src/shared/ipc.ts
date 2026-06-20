@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { aiProfileDraftSchema, aiTranslationSettingsPatchSchema } from './ai'
+import { aiDailySummarySettingsPatchSchema, aiProfileDraftSchema, aiTranslationSettingsPatchSchema } from './ai'
+import { agentUsageDaySchema } from './agent-usage'
 import { pluginConfigSchema, pluginIdSchema } from './plugins'
 import { petAlertTargetSchema, petSettingsSchema } from './pet'
 import { appSettingsPatchSchema, appSettingsSchema, browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
@@ -49,6 +50,10 @@ export const aiUpdateTranslationSettingsInputSchema = z.object({
   patch: aiTranslationSettingsPatchSchema
 })
 
+export const aiUpdateDailySummarySettingsInputSchema = z.object({
+  patch: aiDailySummarySettingsPatchSchema
+})
+
 export const aiOpenTranslatorInputSchema = z.object({
   text: z.string().trim().min(1).max(20_000),
   source: z.enum(['app', 'browser', 'system'])
@@ -57,6 +62,7 @@ export const aiOpenTranslatorInputSchema = z.object({
 export const aiTranslateInputSchema = z.object({
   text: z.string().trim().min(1).max(20_000),
   profileId: z.string().trim().min(1).max(120).optional(),
+  model: z.string().trim().min(1).max(200).optional(),
   targetLanguage: z.string().trim().min(1).max(80).optional()
 })
 
@@ -134,6 +140,21 @@ export const terminalSaveClipboardImageInputSchema = z.object({})
 export const terminalReadClipboardFilesInputSchema = z.object({})
 
 export const systemMetricsGetInputSchema = z.object({})
+
+export const agentUsageRefreshInputSchema = z.object({})
+
+export const agentUsageYearInputSchema = z.object({
+  year: z.number().int().min(2000).max(2200).optional()
+})
+
+export const agentUsageDayInputSchema = z.object({
+  day: agentUsageDaySchema
+})
+
+export const agentUsageGenerateSummaryInputSchema = agentUsageDayInputSchema.extend({
+  locale: z.enum(['zh-CN', 'en-US']).optional(),
+  regenerate: z.boolean().default(false)
+})
 
 export const claudeHistoryListInputSchema = z.object({})
 
