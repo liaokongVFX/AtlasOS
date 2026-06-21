@@ -6,6 +6,8 @@ export type ComponentDefinitionMeta = {
   type: string
   title: string
   titleKey?: I18nKey
+  category?: string
+  categoryKey?: I18nKey
   defaultFrame: Frame
   permissions: string[]
   creatable?: boolean
@@ -25,7 +27,8 @@ export const CREATABLE_BUILTIN_COMPONENT_TYPES = [
   'git-manager',
   'claude-history',
   'codex-history',
-  'agent-usage-calendar'
+  'agent-usage-calendar',
+  'remote-server'
 ] as const satisfies readonly BuiltInComponentType[]
 
 export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefinitionMeta> = {
@@ -33,6 +36,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'terminal',
     title: 'Terminal',
     titleKey: 'component.terminal',
+    categoryKey: 'componentCategory.development',
     defaultFrame: { x: 120, y: 120, width: 720, height: 420 },
     permissions: ['pty:spawn', 'pty:write'],
     creatable: true
@@ -41,6 +45,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'file-tree',
     title: 'Files',
     titleKey: 'component.files',
+    categoryKey: 'componentCategory.development',
     defaultFrame: { x: 180, y: 160, width: 360, height: 560 },
     permissions: ['fs:choose-directory', 'fs:read', 'fs:write', 'fs:trash', 'fs:watch'],
     creatable: true
@@ -49,6 +54,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'browser',
     title: 'Browser',
     titleKey: 'component.browser',
+    categoryKey: 'componentCategory.development',
     defaultFrame: { x: 240, y: 180, width: 900, height: 620 },
     permissions: ['browser:view', 'browser:automation'],
     creatable: true
@@ -57,6 +63,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'markdown-note',
     title: 'Markdown Note',
     titleKey: 'component.markdownNote',
+    categoryKey: 'componentCategory.planning',
     defaultFrame: { x: 260, y: 220, width: 640, height: 520 },
     permissions: ['note:edit'],
     creatable: true
@@ -65,6 +72,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'sticky-note',
     title: 'Sticky Note',
     titleKey: 'component.stickyNote',
+    categoryKey: 'componentCategory.planning',
     defaultFrame: { x: 260, y: 220, width: 280, height: 280 },
     permissions: ['note:edit'],
     creatable: true
@@ -73,6 +81,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'sketch',
     title: 'Sketch',
     titleKey: 'component.sketch',
+    categoryKey: 'componentCategory.planning',
     defaultFrame: { x: 280, y: 220, width: 900, height: 620 },
     permissions: ['sketch:edit'],
     creatable: true
@@ -81,6 +90,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'file-preview',
     title: 'File Preview',
     titleKey: 'component.filePreview',
+    categoryKey: 'componentCategory.development',
     defaultFrame: { x: 300, y: 260, width: 560, height: 420 },
     permissions: ['fs:read']
   },
@@ -88,6 +98,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'kanban',
     title: 'Kanban',
     titleKey: 'component.kanban',
+    categoryKey: 'componentCategory.planning',
     defaultFrame: { x: 280, y: 220, width: 920, height: 620 },
     permissions: ['kanban:edit'],
     creatable: true
@@ -96,6 +107,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'quick-launcher',
     title: 'Quick Launcher',
     titleKey: 'component.quickLauncher',
+    categoryKey: 'componentCategory.utilities',
     defaultFrame: { x: 320, y: 240, width: 680, height: 520 },
     permissions: ['launcher:open'],
     creatable: true
@@ -104,6 +116,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'system-monitor',
     title: 'System Monitor',
     titleKey: 'component.systemMonitor',
+    categoryKey: 'componentCategory.utilities',
     defaultFrame: { x: 340, y: 260, width: 520, height: 360 },
     permissions: ['system:metrics'],
     creatable: true
@@ -112,6 +125,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'calendar',
     title: 'Calendar',
     titleKey: 'component.calendar',
+    categoryKey: 'componentCategory.planning',
     defaultFrame: { x: 360, y: 280, width: 560, height: 460 },
     permissions: [],
     creatable: true
@@ -120,6 +134,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'git-manager',
     title: 'Git Manager',
     titleKey: 'component.gitManager',
+    categoryKey: 'componentCategory.development',
     defaultFrame: { x: 220, y: 180, width: 980, height: 680 },
     permissions: ['git:read', 'git:write', 'git:network'],
     creatable: true
@@ -128,6 +143,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'claude-history',
     title: 'Claude History',
     titleKey: 'component.claudeHistory',
+    categoryKey: 'componentCategory.agents',
     defaultFrame: { x: 240, y: 180, width: 1040, height: 680 },
     permissions: ['claude:history', 'pty:spawn', 'pty:write'],
     creatable: true
@@ -136,6 +152,7 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'codex-history',
     title: 'Codex History',
     titleKey: 'component.codexHistory',
+    categoryKey: 'componentCategory.agents',
     defaultFrame: { x: 260, y: 200, width: 1040, height: 680 },
     permissions: ['codex:history', 'pty:spawn', 'pty:write'],
     creatable: true
@@ -144,8 +161,18 @@ export const COMPONENT_DEFINITIONS: Record<BuiltInComponentType, ComponentDefini
     type: 'agent-usage-calendar',
     title: 'Agent Usage',
     titleKey: 'component.agentUsageCalendar',
+    categoryKey: 'componentCategory.agents',
     defaultFrame: { x: 240, y: 180, width: 1080, height: 720 },
     permissions: ['claude:history', 'codex:history', 'ai:summary'],
+    creatable: true
+  },
+  'remote-server': {
+    type: 'remote-server',
+    title: 'Remote Server',
+    titleKey: 'component.remoteServer',
+    categoryKey: 'componentCategory.development',
+    defaultFrame: { x: 220, y: 180, width: 1160, height: 720 },
+    permissions: ['remote:ssh', 'remote:sftp', 'native:network'],
     creatable: true
   }
 }

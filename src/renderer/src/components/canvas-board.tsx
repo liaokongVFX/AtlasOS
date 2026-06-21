@@ -13,7 +13,7 @@ import {
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Popover from '@radix-ui/react-popover'
 import { Command } from 'cmdk'
-import { Group as GroupIcon, Maximize2, Pencil, Search, Trash2, Ungroup, ZoomIn, ZoomOut } from 'lucide-react'
+import { ChevronRight, Group as GroupIcon, Maximize2, Pencil, Search, Trash2, Ungroup, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type RefObject } from 'react'
 import type { Measurable } from '@radix-ui/rect'
 import type { CanvasComponent, CanvasDocument, CanvasGroup, ComponentType, FileEntry, Frame } from '@shared/schema'
@@ -26,14 +26,16 @@ import type { MediaDimensions } from '../lib/media-frame'
 import { isTerminalComponentLocked } from '../lib/terminal-lock'
 import { useAppSettingsStore } from '../store/app-settings-store'
 import { useCanvasStore } from '../store/canvas-store'
-import { useI18n } from '../i18n'
+import { useI18n, type TFunction } from '../i18n'
 import { CanvasGroupNode, type CanvasGroupFlowNode } from './canvas-group-node'
 import { ComponentNode, type AtlasFlowNode } from './component-node'
 import {
+  componentDefinitionCategoryTitle,
   componentDefinitionTitle,
   createComponentInputFromFileSource,
   getComponentDefinition,
   getCreatableComponentDefinitions,
+  type AtlasComponentDefinition,
   useComponentRegistryVersion
 } from './registry'
 
@@ -600,6 +602,12 @@ type CanvasCreateMenuState = {
   flowPosition: { x: number; y: number }
 }
 
+type CanvasCreateMenuCategory = {
+  key: string
+  title: string
+  definitions: AtlasComponentDefinition[]
+}
+
 type PendingGroupDeleteRequest = {
   componentIds: string[]
   groupIds: string[]
@@ -639,6 +647,35 @@ function isDoubleClickPaneActivation(previous: PaneActivation | null, current: P
   return distancePx <= CANVAS_CREATE_DOUBLE_CLICK_DISTANCE_PX
 }
 
+function componentDefinitionCategoryKey(definition: AtlasComponentDefinition): string {
+  if (definition.categoryKey) return `key:${definition.categoryKey}`
+
+  const category = definition.category?.trim()
+  if (category) return `category:${category}`
+
+  return definition.pluginId ? 'plugins' : 'other'
+}
+
+function groupCreateMenuDefinitions(definitions: AtlasComponentDefinition[], t: TFunction): CanvasCreateMenuCategory[] {
+  const categories = new Map<string, CanvasCreateMenuCategory>()
+
+  for (const definition of definitions) {
+    const key = componentDefinitionCategoryKey(definition)
+    const category =
+      categories.get(key) ??
+      ({
+        key,
+        title: componentDefinitionCategoryTitle(definition, t),
+        definitions: []
+      } satisfies CanvasCreateMenuCategory)
+
+    category.definitions.push(definition)
+    categories.set(key, category)
+  }
+
+  return [...categories.values()]
+}
+
 function CanvasCreateMenu({
   anchorRef,
   open,
@@ -651,12 +688,25 @@ function CanvasCreateMenu({
   onCreate: (type: ComponentType) => void
 }): JSX.Element {
   const { t } = useI18n()
-  const creatableDefinitions = getCreatableComponentDefinitions()
-  const [activeType, setActiveType] = useState<ComponentType>(creatableDefinitions[0]?.type ?? '')
+  const registryVersion = useComponentRegistryVersion()
+  const categories = useMemo(() => groupCreateMenuDefinitions(getCreatableComponentDefinitions(), t), [registryVersion, t])
+  const [activeCategoryKey, setActiveCategoryKey] = useState(categories[0]?.key ?? '')
+  const [activeType, setActiveType] = useState<ComponentType>(categories[0]?.definitions[0]?.type ?? '')
+  const activeCategory = categories.find((category) => category.key === activeCategoryKey) ?? categories[0] ?? null
+  const activeDefinitions = activeCategory?.definitions ?? []
 
   useEffect(() => {
-    if (open) setActiveType(getCreatableComponentDefinitions()[0]?.type ?? '')
-  }, [open])
+    if (!open) return
+
+    const firstCategory = categories[0]
+    setActiveCategoryKey(firstCategory?.key ?? '')
+    setActiveType(firstCategory?.definitions[0]?.type ?? '')
+  }, [categories, open])
+
+  const selectCategory = useCallback((category: CanvasCreateMenuCategory) => {
+    setActiveCategoryKey(category.key)
+    setActiveType(category.definitions[0]?.type ?? '')
+  }, [])
 
   return (
     <Popover.Root open={open} modal={false} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
@@ -673,32 +723,58 @@ function CanvasCreateMenu({
           role="menu"
           aria-label={t('canvas.createComponent')}
         >
-          {creatableDefinitions.map((definition) => {
-            const type = definition.type
-            const Icon = definition.icon
-            const title = componentDefinitionTitle(definition, t)
-
-            return (
+          <div className="canvas-create-menu__categories" role="group" aria-label={t('canvas.createComponentCategories')}>
+            {categories.map((category) => (
               <button
-                key={type}
+                key={category.key}
                 type="button"
                 className={[
                   'menu-item',
-                  'canvas-create-menu__item',
-                  activeType === type ? 'menu-item--active canvas-create-menu__item--active' : ''
+                  'canvas-create-menu__category',
+                  activeCategory?.key === category.key ? 'menu-item--active canvas-create-menu__category--active' : ''
                 ]
                   .filter(Boolean)
                   .join(' ')}
                 role="menuitem"
-                onFocus={() => setActiveType(type)}
-                onMouseEnter={() => setActiveType(type)}
-                onClick={() => onCreate(type)}
+                aria-haspopup="menu"
+                aria-expanded={activeCategory?.key === category.key}
+                onClick={() => selectCategory(category)}
+                onFocus={() => selectCategory(category)}
+                onMouseEnter={() => selectCategory(category)}
               >
-                <Icon size={14} />
-                <span>{title}</span>
+                <span className="canvas-create-menu__category-label">{category.title}</span>
+                <ChevronRight size={13} aria-hidden="true" />
               </button>
-            )
-          })}
+            ))}
+          </div>
+          <div className="canvas-create-menu__nodes" role="group" aria-label={activeCategory?.title ?? t('canvas.createComponent')}>
+            {activeDefinitions.map((definition) => {
+              const type = definition.type
+              const Icon = definition.icon
+              const title = componentDefinitionTitle(definition, t)
+
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  className={[
+                    'menu-item',
+                    'canvas-create-menu__item',
+                    activeType === type ? 'menu-item--active canvas-create-menu__item--active' : ''
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  role="menuitem"
+                  onFocus={() => setActiveType(type)}
+                  onMouseEnter={() => setActiveType(type)}
+                  onClick={() => onCreate(type)}
+                >
+                  <Icon size={14} />
+                  <span>{title}</span>
+                </button>
+              )
+            })}
+          </div>
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

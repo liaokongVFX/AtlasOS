@@ -43,6 +43,7 @@ export type AtlasRendererPluginNodeDefinition<
   defaultFrame?: Frame
   permissions?: string[]
   creatable?: boolean
+  category?: string
   icon?: LucideIcon
   Renderer: (props: AtlasPluginNodeProps<TConfig, TState, TBindings>) => React.ReactNode
   create?: () => ComponentCreatePatch

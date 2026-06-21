@@ -110,6 +110,18 @@ export function componentDefinitionTitle(definition: Pick<AtlasComponentDefiniti
   return definition.titleKey ? t(definition.titleKey) : definition.title
 }
 
+export function componentDefinitionCategoryTitle(
+  definition: Pick<AtlasComponentDefinition, 'category' | 'categoryKey' | 'pluginId'>,
+  t: TFunction = translateCurrent
+): string {
+  if (definition.categoryKey) return t(definition.categoryKey)
+
+  const category = definition.category?.trim()
+  if (category) return category
+
+  return definition.pluginId ? t('componentCategory.plugins') : t('componentCategory.other')
+}
+
 export function registerComponentDefinition(definition: AtlasComponentDefinition): void {
   componentRegistry[definition.type] = definition
   notifyComponentRegistryChanged()

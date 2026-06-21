@@ -16,6 +16,7 @@ import { createGitManagerDefinition } from './git-manager'
 import { createClaudeHistoryDefinition } from './claude-history'
 import { createCodexHistoryDefinition } from './codex-history'
 import { createAgentUsageCalendarDefinition } from './agent-usage-calendar'
+import { createRemoteServerDefinition } from './remote-server'
 
 export function createBuiltInComponentDefinitions(): HostRendererPluginNodeDefinition[] {
   return [
@@ -33,7 +34,8 @@ export function createBuiltInComponentDefinitions(): HostRendererPluginNodeDefin
     createGitManagerDefinition(),
     createClaudeHistoryDefinition(),
     createCodexHistoryDefinition(),
-    createAgentUsageCalendarDefinition()
+    createAgentUsageCalendarDefinition(),
+    createRemoteServerDefinition()
   ]
 }
 

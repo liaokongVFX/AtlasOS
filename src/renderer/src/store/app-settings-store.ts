@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_LOCALE } from '@shared/constants'
 import { DEFAULT_AI_SETTINGS } from '@shared/ai'
 import { DEFAULT_PET_SETTINGS } from '@shared/pet'
+import { DEFAULT_REMOTE_SERVER_SETTINGS } from '@shared/remote-servers'
 import { createDefaultTerminalCommandLibrary } from '@shared/terminal-commands'
 import { DEFAULT_UPDATE_SETTINGS } from '@shared/updates'
 import type { AppSettings, AppSettingsPatch } from '@shared/schema'
@@ -13,7 +14,8 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   terminalCommands: createDefaultTerminalCommandLibrary(),
   pet: { ...DEFAULT_PET_SETTINGS },
   updates: { ...DEFAULT_UPDATE_SETTINGS },
-  ai: DEFAULT_AI_SETTINGS
+  ai: DEFAULT_AI_SETTINGS,
+  remoteServers: DEFAULT_REMOTE_SERVER_SETTINGS
 }
 
 type AppSettingsStore = {

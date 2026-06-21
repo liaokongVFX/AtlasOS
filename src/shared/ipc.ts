@@ -3,6 +3,21 @@ import { aiDailySummarySettingsPatchSchema, aiProfileDraftSchema, aiTranslationS
 import { agentUsageDaySchema } from './agent-usage'
 import { pluginConfigSchema, pluginIdSchema } from './plugins'
 import { petAlertTargetSchema, petSettingsSchema } from './pet'
+import {
+  remoteServerComponentInputSchema,
+  remoteServerConnectInputSchema,
+  remoteServerDeleteProfileInputSchema,
+  remoteServerDownloadInputSchema,
+  remoteServerFileOperationInputSchema,
+  remoteServerRenameInputSchema,
+  remoteServerSaveProfileInputSchema,
+  remoteServerSessionInputSchema,
+  remoteServerShellResizeInputSchema,
+  remoteServerShellWriteInputSchema,
+  remoteServerTestConnectionInputSchema,
+  remoteServerTreeInputSchema,
+  remoteServerUploadInputSchema
+} from './remote-servers'
 import { appSettingsPatchSchema, appSettingsSchema, browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
 
 export const MAX_TERMINAL_PASTED_ASSET_BASE64_CHARS = 14 * 1024 * 1024
@@ -138,6 +153,26 @@ export const terminalPersistAssetInputSchema = z.object({
 export const terminalSaveClipboardImageInputSchema = z.object({})
 
 export const terminalReadClipboardFilesInputSchema = z.object({})
+
+export const remoteServersListProfilesInputSchema = z.object({})
+export const remoteServersSaveProfileInputSchema = remoteServerSaveProfileInputSchema
+export const remoteServersDeleteProfileInputSchema = remoteServerDeleteProfileInputSchema
+export const remoteServersTestConnectionInputSchema = remoteServerTestConnectionInputSchema
+export const remoteServersConnectInputSchema = remoteServerConnectInputSchema
+export const remoteServersCloseSessionInputSchema = remoteServerSessionInputSchema
+export const remoteServersCloseComponentInputSchema = remoteServerComponentInputSchema
+export const remoteServersShellWriteInputSchema = remoteServerShellWriteInputSchema
+export const remoteServersShellResizeInputSchema = remoteServerShellResizeInputSchema
+export const remoteServersStatusInputSchema = remoteServerSessionInputSchema
+export const remoteServersListTreeInputSchema = remoteServerTreeInputSchema
+export const remoteServersReadFileInputSchema = remoteServerFileOperationInputSchema
+export const remoteServersWriteFileInputSchema = remoteServerFileOperationInputSchema
+export const remoteServersCreateFileInputSchema = remoteServerFileOperationInputSchema
+export const remoteServersCreateFolderInputSchema = remoteServerFileOperationInputSchema
+export const remoteServersRenameInputSchema = remoteServerRenameInputSchema
+export const remoteServersDeleteInputSchema = remoteServerFileOperationInputSchema
+export const remoteServersUploadInputSchema = remoteServerUploadInputSchema
+export const remoteServersDownloadInputSchema = remoteServerDownloadInputSchema
 
 export const systemMetricsGetInputSchema = z.object({})
 

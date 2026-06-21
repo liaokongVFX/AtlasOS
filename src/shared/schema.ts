@@ -3,6 +3,7 @@ import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND,
 import { aiSettingsSchema } from './ai'
 import { normalizeKeyboardShortcut } from './keyboard-shortcuts'
 import { petSettingsSchema } from './pet'
+import { remoteServerSettingsSchema } from './remote-servers'
 import { terminalCommandLibrarySchema } from './terminal-commands'
 import { updateSettingsSchema } from './updates'
 
@@ -123,7 +124,8 @@ export const appSettingsSchema = z.object({
   terminalCommands: terminalCommandLibrarySchema,
   pet: petSettingsSchema,
   updates: updateSettingsSchema,
-  ai: aiSettingsSchema
+  ai: aiSettingsSchema,
+  remoteServers: remoteServerSettingsSchema
 })
 
 const appSettingsPatchField = <T>(schema: z.ZodType<T>) =>
@@ -137,7 +139,8 @@ export const appSettingsPatchSchema = z
     terminalCommands: appSettingsPatchField(terminalCommandLibrarySchema),
     pet: appSettingsPatchField(petSettingsSchema),
     updates: appSettingsPatchField(updateSettingsSchema),
-    ai: appSettingsPatchField(aiSettingsSchema)
+    ai: appSettingsPatchField(aiSettingsSchema),
+    remoteServers: appSettingsPatchField(remoteServerSettingsSchema)
   })
   .transform((patch) => Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)))
 

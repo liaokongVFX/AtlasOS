@@ -23,7 +23,7 @@ export function createFileComponentFromSource(type: ComponentType): (file: Canva
 
 export function builtInNodeMeta(type: BuiltInComponentType): Pick<
   HostRendererPluginNodeDefinition,
-  'creatable' | 'defaultFrame' | 'id' | 'permissions' | 'title' | 'titleKey'
+  'category' | 'categoryKey' | 'creatable' | 'defaultFrame' | 'id' | 'permissions' | 'title' | 'titleKey'
 > {
   const definition = COMPONENT_DEFINITIONS[type]
 
@@ -31,6 +31,8 @@ export function builtInNodeMeta(type: BuiltInComponentType): Pick<
     id: definition.type,
     title: definition.title,
     titleKey: definition.titleKey,
+    category: definition.category,
+    categoryKey: definition.categoryKey,
     defaultFrame: definition.defaultFrame,
     permissions: definition.permissions,
     creatable: definition.creatable

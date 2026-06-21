@@ -29,7 +29,15 @@ export type HostRendererPluginNodeDefinition = AtlasRendererPluginNodeDefinition
   Partial<
     Pick<
       AtlasComponentDefinition,
-      'acceptsFile' | 'canDragFromSelectedBody' | 'chrome' | 'createFromFile' | 'dispose' | 'getResizeBehavior' | 'titleKey' | 'usesCanvasZoom'
+      | 'acceptsFile'
+      | 'canDragFromSelectedBody'
+      | 'categoryKey'
+      | 'chrome'
+      | 'createFromFile'
+      | 'dispose'
+      | 'getResizeBehavior'
+      | 'titleKey'
+      | 'usesCanvasZoom'
     >
   >
 
@@ -92,6 +100,7 @@ export function createRendererPluginApi(
         defaultFrame: definition.defaultFrame ?? manifestNode.defaultFrame,
         permissions: uniquePermissions(plugin.manifest.permissions, manifestNode.permissions, definition.permissions),
         creatable: definition.creatable ?? manifestNode.creatable,
+        category: definition.category,
         icon: definition.icon ?? Puzzle,
         Renderer,
         pluginId: plugin.id,
@@ -104,6 +113,7 @@ export function createRendererPluginApi(
 
       if (options.includeHostHooks) {
         componentDefinition.acceptsFile = hostDefinition.acceptsFile
+        componentDefinition.categoryKey = hostDefinition.categoryKey
         componentDefinition.chrome = hostDefinition.chrome
         componentDefinition.canDragFromSelectedBody = hostDefinition.canDragFromSelectedBody
         componentDefinition.createFromFile = hostDefinition.createFromFile

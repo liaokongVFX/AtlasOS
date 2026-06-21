@@ -6,6 +6,7 @@ import { translateShared } from '@shared/locale-text'
 import { CanvasPersistence } from './services/canvas-persistence'
 import { FileSystemService } from './services/ipc-filesystem'
 import { PtyService } from './services/pty-service'
+import { RemoteServerService } from './services/remote-server-service'
 import { BrowserService } from './services/browser-service'
 import { AppSettingsService } from './services/app-settings-service'
 import { AiTranslationService } from './services/ai-translation-service'
@@ -32,6 +33,7 @@ let browserService: BrowserService | null = null
 let fileSystemService: FileSystemService | null = null
 let pluginService: PluginService | null = null
 let ptyService: PtyService | null = null
+let remoteServerService: RemoteServerService | null = null
 let appSettingsService: AppSettingsService | null = null
 let aiTranslationService: AiTranslationService | null = null
 let appDatabaseService: AppDatabaseService | null = null
@@ -81,6 +83,7 @@ function disposeWindowServices(): void {
   fileSystemService?.dispose()
   pluginService?.dispose()
   ptyService?.dispose()
+  remoteServerService?.dispose()
   aiTranslationService?.dispose()
   appDatabaseService?.close()
   petService?.dispose()
@@ -90,6 +93,7 @@ function disposeWindowServices(): void {
   fileSystemService = null
   pluginService = null
   ptyService = null
+  remoteServerService = null
   aiTranslationService = null
   appDatabaseService = null
   petService = null
@@ -380,6 +384,8 @@ async function createWindow(): Promise<void> {
     onSessionClosed: (sessionId) => petService?.removeAgentSession(sessionId)
   })
   ptyService.registerIpc()
+  remoteServerService = new RemoteServerService({ appSettingsService })
+  remoteServerService.registerIpc()
   browserService = new BrowserService(window, {
     onGuestTranslationRequest: (text) => {
       void aiTranslationService?.openTranslator(text, 'browser')

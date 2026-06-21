@@ -19,7 +19,8 @@ export const BUILTIN_COMPONENT_TYPES = [
   'git-manager',
   'claude-history',
   'codex-history',
-  'agent-usage-calendar'
+  'agent-usage-calendar',
+  'remote-server'
 ] as const
 export const COMPONENT_TYPES = BUILTIN_COMPONENT_TYPES
 export type BuiltInComponentType = (typeof BUILTIN_COMPONENT_TYPES)[number]

@@ -4,7 +4,13 @@ import type { AgentUsageDayDetail, AgentUsageIndexStatus, AgentUsageYearResult }
 import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } from '@shared/plugins'
 import type { GitDiffInput, LauncherChooseFileResult, LauncherOpenInput } from '@shared/ipc'
 import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
-import type { AppSettings, AppSettingsPatch, AtlasAppState, CanvasDocument } from '@shared/schema'
+import type { AppSettings, AppSettingsPatch, AtlasAppState, CanvasDocument, FileEntry } from '@shared/schema'
+import type {
+  RemoteServerConnectResult,
+  RemoteServerProfileDraft,
+  RemoteServerSettings,
+  RemoteServerStatusSnapshot
+} from '@shared/remote-servers'
 import type { SystemMetricsSnapshot } from '@shared/system-metrics'
 import type { TerminalAgentCommandEvent, TerminalAgentSessionEndedEvent } from '@shared/terminal-agent'
 import type { AtlasUpdateState } from '@shared/updates'
@@ -141,6 +147,56 @@ const atlasApi = {
     onAgentSessionEnded: (sessionId: string, listener: Listener<TerminalAgentSessionEndedEvent>) =>
       on<TerminalAgentSessionEndedEvent>('terminal:agent-session-ended', (payload) => {
         if (payload.sessionId === sessionId) listener(payload)
+      })
+  },
+  remoteServers: {
+    listProfiles: () => ipcRenderer.invoke('remote-servers:list-profiles', {}) as Promise<RemoteServerSettings>,
+    saveProfile: (profile: RemoteServerProfileDraft) =>
+      ipcRenderer.invoke('remote-servers:save-profile', { profile }) as Promise<RemoteServerSettings>,
+    deleteProfile: (profileId: string) => ipcRenderer.invoke('remote-servers:delete-profile', { profileId }) as Promise<{ ok: true }>,
+    testConnection: (profile: RemoteServerProfileDraft) => ipcRenderer.invoke('remote-servers:test-connection', { profile }),
+    connect: (input: {
+      componentId: string
+      canvasId?: string
+      profileId: string
+      cols?: number
+      rows?: number
+      acceptHostKey?: boolean
+      expectedHostKeyFingerprint?: string
+    }) => ipcRenderer.invoke('remote-servers:connect', input) as Promise<RemoteServerConnectResult>,
+    closeSession: (sessionId: string) => ipcRenderer.invoke('remote-servers:close-session', { sessionId }) as Promise<{ ok: true }>,
+    closeComponent: (componentId: string) => ipcRenderer.invoke('remote-servers:close-component', { componentId }) as Promise<{ ok: true }>,
+    write: (sessionId: string, data: string) => ipcRenderer.invoke('remote-servers:shell-write', { sessionId, data }),
+    resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('remote-servers:shell-resize', { sessionId, cols, rows }),
+    status: (sessionId: string) => ipcRenderer.invoke('remote-servers:status', { sessionId }) as Promise<RemoteServerStatusSnapshot>,
+    listTree: (sessionId: string, rootPath: string, targetPathOrMaxDepth: string | number = rootPath, maxDepth = 1) => {
+      const targetPath = typeof targetPathOrMaxDepth === 'number' ? rootPath : targetPathOrMaxDepth
+      const depth = typeof targetPathOrMaxDepth === 'number' ? targetPathOrMaxDepth : maxDepth
+      return ipcRenderer.invoke('remote-servers:list-tree', { sessionId, rootPath, targetPath, maxDepth: depth }) as Promise<FileEntry>
+    },
+    readFile: (sessionId: string, rootPath: string, targetPath: string) =>
+      ipcRenderer.invoke('remote-servers:read-file', { sessionId, rootPath, targetPath }) as Promise<string>,
+    writeFile: (sessionId: string, rootPath: string, targetPath: string, contents: string) =>
+      ipcRenderer.invoke('remote-servers:write-file', { sessionId, rootPath, targetPath, contents }) as Promise<{ ok: true }>,
+    createFile: (sessionId: string, rootPath: string, targetPath: string, name: string, contents = '') =>
+      ipcRenderer.invoke('remote-servers:create-file', { sessionId, rootPath, targetPath, name, contents }) as Promise<FileEntry>,
+    createFolder: (sessionId: string, rootPath: string, targetPath: string, name: string) =>
+      ipcRenderer.invoke('remote-servers:create-folder', { sessionId, rootPath, targetPath, name }) as Promise<FileEntry>,
+    rename: (sessionId: string, rootPath: string, targetPath: string, name: string) =>
+      ipcRenderer.invoke('remote-servers:rename', { sessionId, rootPath, targetPath, name }) as Promise<FileEntry>,
+    deletePath: (sessionId: string, rootPath: string, targetPath: string, recursive = true) =>
+      ipcRenderer.invoke('remote-servers:delete', { sessionId, rootPath, targetPath, recursive }) as Promise<{ ok: true }>,
+    upload: (sessionId: string, rootPath: string, targetPath: string, localPath: string, name?: string) =>
+      ipcRenderer.invoke('remote-servers:upload', { sessionId, rootPath, targetPath, localPath, name }) as Promise<FileEntry>,
+    download: (sessionId: string, rootPath: string, targetPath: string, localDirectory: string) =>
+      ipcRenderer.invoke('remote-servers:download', { sessionId, rootPath, targetPath, localDirectory }) as Promise<{ path: string }>,
+    onShellData: (sessionId: string, listener: Listener<string>) =>
+      on<{ sessionId: string; data: string }>('remote-servers:shell-data', (payload) => {
+        if (payload.sessionId === sessionId) listener(payload.data)
+      }),
+    onShellExit: (sessionId: string, listener: Listener<void>) =>
+      on<{ sessionId: string }>('remote-servers:shell-exit', (payload) => {
+        if (payload.sessionId === sessionId) listener()
       })
   },
   clipboard: {
