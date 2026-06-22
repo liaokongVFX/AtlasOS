@@ -70,6 +70,9 @@ jobs:
       - name: Build app
         run: ${{ matrix.npm }} run build
 
+      - name: Rebuild native modules
+        run: ${{ matrix.npm }} run rebuild
+
       - name: Package Windows installer
         if: matrix.platform == 'windows'
         run: npx electron-builder --win nsis --publish never

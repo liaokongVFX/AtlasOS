@@ -30,7 +30,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { nanoid } from 'nanoid'
 import { Check, ChevronDown, CornerDownRight, GripVertical, Pencil, Play, Plus, Trash2 } from 'lucide-react'
 import { createPortal } from 'react-dom'
-import { useCallback, useState, type CSSProperties, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react'
 import {
   createTerminalCommand,
   createTerminalCommandCategory,
@@ -346,7 +346,9 @@ function SortableCommandRow({
   onDelete,
   onEdit,
   onExecute,
-  onInsert
+  onInsert,
+  onSelect,
+  selected = false
 }: {
   compact: boolean
   command: TerminalCommandEntry
@@ -355,6 +357,8 @@ function SortableCommandRow({
   onEdit: () => void
   onExecute?: () => void
   onInsert?: () => void
+  onSelect?: () => void
+  selected?: boolean
 }): JSX.Element {
   const { t } = useI18n()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -377,7 +381,12 @@ function SortableCommandRow({
   return (
     <article
       ref={setNodeRef}
-      className={cn('terminal-command-row', compact && 'terminal-command-row--compact', isDragging && 'terminal-command-row--dragging')}
+      className={cn(
+        'terminal-command-row',
+        compact && 'terminal-command-row--compact',
+        compact && selected && 'terminal-command-row--selected',
+        isDragging && 'terminal-command-row--dragging'
+      )}
       style={style}
     >
       {compact ? null : (
@@ -395,10 +404,11 @@ function SortableCommandRow({
       <button
         type="button"
         className="terminal-command-row__main"
-        onClick={compact ? undefined : onEdit}
+        onClick={compact ? onSelect : onEdit}
         onDoubleClick={compact ? runCompactCommand : undefined}
         title={compact ? t('terminalCommands.doubleClickExecute') : undefined}
         aria-disabled={compact && commandActionsDisabled ? 'true' : undefined}
+        aria-pressed={compact ? selected : undefined}
         {...compactDragProps}
       >
         <strong>{command.name}</strong>
@@ -524,6 +534,7 @@ export function TerminalCommandLibraryManager({
   const [saving, setSaving] = useState(false)
   const [activeCategoryDragId, setActiveCategoryDragId] = useState<string | null>(null)
   const [activeCommandDragId, setActiveCommandDragId] = useState<string | null>(null)
+  const [selectedCommandId, setSelectedCommandId] = useState<string | null>(null)
   const [commandDragPlaceholderIndex, setCommandDragPlaceholderIndex] = useState<number | null>(null)
   const [commandDragSize, setCommandDragSize] = useState<DragItemSize | null>(null)
   const sensors = useSensors(
@@ -540,6 +551,8 @@ export function TerminalCommandLibraryManager({
   const commandPlaceholderStyle: CSSProperties | undefined = commandDragSize ? { width: commandDragSize.width, height: commandDragSize.height } : undefined
   const activeDragCategory = activeCategoryDragId ? library.categories.find((category) => category.id === activeCategoryDragId) ?? null : null
   const activeDragCommand = activeCommandDragId ? library.commands[activeCommandDragId] ?? null : null
+  const selectedCommand =
+    selectedCommandId && selectedCategoryCommandIds.includes(selectedCommandId) ? library.commands[selectedCommandId] ?? null : null
   const showCommandActions = Boolean(onInsertCommand || onExecuteCommand)
   const currentDeleteCategory = deleteCategoryId ? library.categories.find((category) => category.id === deleteCategoryId) ?? null : null
   const collisionDetection = useCallback<CollisionDetection>((args) => {
@@ -604,6 +617,16 @@ export function TerminalCommandLibraryManager({
     },
     [library]
   )
+
+  const openEditSelectedCommand = useCallback(() => {
+    if (!selectedCommand) return
+
+    openEditCommand(selectedCommand.id)
+  }, [openEditCommand, selectedCommand])
+
+  useEffect(() => {
+    if (selectedCommandId && !selectedCommand) setSelectedCommandId(null)
+  }, [selectedCommand, selectedCommandId])
 
   const submitCategoryDialog = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -801,6 +824,21 @@ export function TerminalCommandLibraryManager({
             >
               <Trash2 size={14} />
             </button>
+            {compactCommands ? (
+              <>
+                <span className="terminal-command-toolbar-separator" aria-hidden="true" />
+                <button
+                  type="button"
+                  className="icon-button terminal-command-toolbar-button"
+                  onClick={openEditSelectedCommand}
+                  disabled={saving || !selectedCommand}
+                  title={t('terminalCommands.editCommand')}
+                  aria-label={t('terminalCommands.editCommand')}
+                >
+                  <Pencil size={14} />
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               className="icon-button primary terminal-command-toolbar-button"
@@ -845,6 +883,8 @@ export function TerminalCommandLibraryManager({
                       onEdit={() => openEditCommand(command.id)}
                       onExecute={onExecuteCommand ? () => onExecuteCommand(command.command) : undefined}
                       onInsert={onInsertCommand ? () => onInsertCommand(command.command) : undefined}
+                      onSelect={() => setSelectedCommandId(command.id)}
+                      selected={selectedCommandId === command.id}
                     />
                   )
                 })}

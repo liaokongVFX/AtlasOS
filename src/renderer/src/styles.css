@@ -3337,7 +3337,7 @@ svg {
 
 .terminal-command-library--dragging-command,
 .terminal-command-library--dragging-command * {
-  cursor: grabbing !important;
+  cursor: default !important;
 }
 
 .terminal-command-library__toolbar {
@@ -3383,7 +3383,7 @@ svg {
   font: inherit;
   font-size: 12px;
   font-weight: 600;
-  cursor: grab;
+  cursor: default;
   box-shadow: var(--edge-highlight);
   touch-action: none;
   transition:
@@ -3443,6 +3443,13 @@ svg {
   flex: 0 0 auto;
   align-items: center;
   gap: 3px;
+}
+
+.terminal-command-toolbar-separator {
+  width: 1px;
+  height: 18px;
+  margin-inline: 3px;
+  background: var(--color-hairline);
 }
 
 .terminal-command-toolbar-button,
@@ -3518,12 +3525,12 @@ svg {
   padding: 0;
   background: transparent;
   color: var(--color-ink-tertiary);
-  cursor: grab;
+  cursor: default;
   touch-action: none;
 }
 
 .terminal-command-row__drag:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .terminal-command-row__main {
@@ -3673,6 +3680,12 @@ svg {
 .terminal-command-row--compact:hover,
 .terminal-command-row--compact:focus-within {
   background: var(--color-surface-2);
+}
+
+.terminal-command-row--compact.terminal-command-row--selected {
+  border-color: rgb(130 143 255 / 54%);
+  background: var(--color-surface-3);
+  color: var(--color-ink);
 }
 
 .terminal-command-row--compact.terminal-command-row--overlay {

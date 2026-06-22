@@ -15,11 +15,11 @@
     "verify:no-tests": "node scripts/verify-no-committed-tests.cjs",
     "verify:assets": "node scripts/verify-build-assets.cjs && node scripts/verify-windows-update-artifact-name.cjs",
     "release:guard": "node scripts/verify-release-tag.cjs",
-    "package:win": "npm run ensure:electron && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --win nsis --publish never",
-    "package:win:publish": "npm run ensure:electron && npm run release:guard && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --win nsis --publish always",
-    "package:mac": "npm run ensure:electron && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --mac dmg zip --x64 --arm64 --publish never",
-    "package:mac:publish": "npm run ensure:electron && npm run release:guard && cross-env npm_config_devdir=.electron-gyp npm run build && cross-env npm_config_devdir=.electron-gyp electron-builder --mac dmg zip --x64 --arm64 --publish always",
-    "rebuild": "cross-env npm_config_devdir=.electron-gyp electron-rebuild -f -w node-pty,sharp"
+    "package:win": "npm run ensure:electron && cross-env npm_config_devdir=.electron-gyp npm run build && npm run rebuild && cross-env npm_config_devdir=.electron-gyp electron-builder --win nsis --publish never",
+    "package:win:publish": "npm run ensure:electron && npm run release:guard && cross-env npm_config_devdir=.electron-gyp npm run build && npm run rebuild && cross-env npm_config_devdir=.electron-gyp electron-builder --win nsis --publish always",
+    "package:mac": "npm run ensure:electron && cross-env npm_config_devdir=.electron-gyp npm run build && npm run rebuild && cross-env npm_config_devdir=.electron-gyp electron-builder --mac dmg zip --x64 --arm64 --publish never",
+    "package:mac:publish": "npm run ensure:electron && npm run release:guard && cross-env npm_config_devdir=.electron-gyp npm run build && npm run rebuild && cross-env npm_config_devdir=.electron-gyp electron-builder --mac dmg zip --x64 --arm64 --publish always",
+    "rebuild": "cross-env npm_config_devdir=.electron-gyp electron-rebuild -f --only node-pty"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.3.2",
@@ -114,7 +114,7 @@
       "build/icon-32.png",
       "package.json"
     ],
-    "npmRebuild": true,
+    "npmRebuild": false,
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico",
