@@ -26,7 +26,7 @@ export const COMPONENT_TYPES = BUILTIN_COMPONENT_TYPES
 export type BuiltInComponentType = (typeof BUILTIN_COMPONENT_TYPES)[number]
 
 export const DEFAULT_CANVAS_BACKGROUND = {
-  color: '#010102',
+  color: '#5e6ad2',
   image: {
     src: '',
     blur: 0,
