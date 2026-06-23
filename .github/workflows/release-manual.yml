@@ -10,7 +10,7 @@ on:
         required: true
         type: string
       release_notes:
-        description: 'Optional release notes. Leave empty to preserve an existing GitHub Release description for this tag.'
+        description: 'Optional release notes. Leave empty to preserve an existing GitHub Release description for this tag, or to create the release without notes on first publish.'
         required: false
         type: string
 
@@ -215,8 +215,10 @@ jobs:
           fi
 
           notes_file="$(mktemp)"
+          release_create_notes_args=(--notes "")
           if [ -n "$(printf '%s' "$RELEASE_NOTES" | tr -d '[:space:]')" ]; then
             printf '%s\n' "$RELEASE_NOTES" > "$notes_file"
+            release_create_notes_args=(--notes-file "$notes_file")
           fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
@@ -225,13 +227,7 @@ jobs:
             fi
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
-            if [ ! -s "$notes_file" ]; then
-              echo "release_notes was not provided and GitHub Release $RELEASE_TAG does not exist."
-              echo "Create the release with a Description first, or rerun this workflow with release_notes."
-              exit 1
-            fi
-
-            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "AtlasOS $RELEASE_TAG" --notes-file "$notes_file"
+            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "AtlasOS $RELEASE_TAG" "${release_create_notes_args[@]}"
           fi
 
   cleanup:
