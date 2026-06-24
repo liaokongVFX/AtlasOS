@@ -244,7 +244,7 @@ async function waitForRendererDevServer(url: string, timeoutMs = 10_000): Promis
   throw new Error(`Timed out waiting for renderer dev server: ${url}`)
 }
 
-type RendererView = 'pet' | 'translation' | 'update'
+type RendererView = 'pet' | 'translation' | 'capture' | 'update'
 
 async function loadRenderer(window: BrowserWindow, view?: RendererView): Promise<void> {
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -371,7 +371,8 @@ async function createWindow(): Promise<void> {
   aiTranslationService = new AiTranslationService({
     appSettingsService,
     getMainWindow: () => mainWindow,
-    loadTranslationRenderer: (targetWindow) => loadRenderer(targetWindow, 'translation')
+    loadTranslationRenderer: (targetWindow) => loadRenderer(targetWindow, 'translation'),
+    loadCaptureRenderer: (targetWindow) => loadRenderer(targetWindow, 'capture')
   })
   aiTranslationService.registerIpc()
 
@@ -389,6 +390,9 @@ async function createWindow(): Promise<void> {
   browserService = new BrowserService(window, {
     onGuestTranslationRequest: (text) => {
       void aiTranslationService?.openTranslator(text, 'browser')
+    },
+    onGuestScreenshotCaptureRequest: () => {
+      void aiTranslationService?.startScreenshotCapture('browser')
     }
   })
   browserService.registerIpc()

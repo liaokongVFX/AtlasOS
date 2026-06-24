@@ -1,5 +1,6 @@
 export const BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL = 'atlas-browser:zoom-request'
 export const BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL = 'atlas-browser:translation-request'
+export const BROWSER_WEBVIEW_SCREENSHOT_CAPTURE_REQUEST_CHANNEL = 'atlas-browser:screenshot-capture-request'
 export const BROWSER_ZOOM_DEFAULT_FACTOR = 1
 export const BROWSER_ZOOM_MIN_FACTOR = 0.5
 export const BROWSER_ZOOM_MAX_FACTOR = 3

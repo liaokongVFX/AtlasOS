@@ -15,6 +15,8 @@ export const AI_TARGET_LANGUAGE_OPTIONS = [
 export const AI_AUTO_TARGET_LANGUAGE = AI_TARGET_LANGUAGE_OPTIONS[0]
 export const DEFAULT_AI_TARGET_LANGUAGE = 'Simplified Chinese'
 export const AI_DOUBLE_CTRL_INTERVAL_MS = 450
+export const MAX_AI_SCREENSHOT_IMAGE_DATA_URL_CHARS = 10 * 1024 * 1024
+export const AI_SCREENSHOT_CAPTURE_SESSION_CHANNEL = 'ai:screenshot-capture-session'
 
 export function isAiAutoTargetLanguage(targetLanguage: string): boolean {
   const normalized = targetLanguage.trim().toLowerCase()
@@ -108,9 +110,18 @@ const aiDailySummarySettingsObjectSchema = z.object({
 })
 
 export const aiTranslationSettingsSchema = z.preprocess((value) => value ?? {}, aiTranslationSettingsObjectSchema)
-export const aiTranslationSettingsPatchSchema = aiTranslationSettingsObjectSchema.partial()
+export const aiTranslationSettingsPatchSchema = z.object({
+  profileId: z.string().trim().min(1).max(120).nullable().optional(),
+  model: aiModelSchema.nullable().optional(),
+  targetLanguage: z.string().trim().min(1).max(80).optional(),
+  appDoubleCtrlEnabled: z.boolean().optional(),
+  systemDoubleCtrlEnabled: z.boolean().optional()
+})
 export const aiDailySummarySettingsSchema = z.preprocess((value) => value ?? {}, aiDailySummarySettingsObjectSchema)
-export const aiDailySummarySettingsPatchSchema = aiDailySummarySettingsObjectSchema.partial()
+export const aiDailySummarySettingsPatchSchema = z.object({
+  profileId: z.string().trim().min(1).max(120).nullable().optional(),
+  model: aiModelSchema.nullable().optional()
+})
 
 const aiSettingsObjectSchema = z
   .object({
@@ -194,6 +205,46 @@ export type AiTranslationRequest = {
   model: string | null
   error?: string
   createdAt: string
+}
+
+export type AiScreenshotCaptureSource = AiTranslationSource
+
+export type AiScreenshotCaptureBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export type AiScreenshotCaptureDisplay = {
+  id: string
+  bounds: AiScreenshotCaptureBounds
+  scaleFactor: number
+  imageDataUrl: string
+  imageSize: {
+    width: number
+    height: number
+  }
+}
+
+export type AiScreenshotCaptureSession = {
+  id: string
+  source: AiScreenshotCaptureSource
+  targetLanguage: string
+  profileId: string | null
+  model: string | null
+  virtualBounds: AiScreenshotCaptureBounds
+  displays: AiScreenshotCaptureDisplay[]
+  createdAt: string
+}
+
+export type AiScreenshotImageInput = {
+  sessionId: string
+  imageDataUrl: string
+}
+
+export type AiScreenshotTextResult = {
+  text: string
 }
 
 export const DEFAULT_AI_SETTINGS: AiSettings = aiSettingsSchema.parse({})

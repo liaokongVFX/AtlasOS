@@ -11,6 +11,7 @@ import {
   browserTypeInputSchema
 } from '@shared/ipc'
 import {
+  BROWSER_WEBVIEW_SCREENSHOT_CAPTURE_REQUEST_CHANNEL,
   BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL,
   BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL,
   BROWSER_ZOOM_DEFAULT_FACTOR,
@@ -32,6 +33,7 @@ type BrowserTab = {
 
 type BrowserServiceOptions = {
   onGuestTranslationRequest?: (text: string) => void
+  onGuestScreenshotCaptureRequest?: () => void
 }
 
 function jsString(value: string): string {
@@ -85,6 +87,7 @@ function isNavigationAbort(error: unknown): boolean {
 
 export class BrowserService {
   private readonly tabs = new Map<string, BrowserTab>()
+  private screenshotCaptureRequestHandler: ((event: IpcMainEvent, payload: unknown) => void) | null = null
   private translationRequestHandler: ((event: IpcMainEvent, payload: unknown) => void) | null = null
   private zoomRequestHandler: ((event: IpcMainEvent, payload: unknown) => void) | null = null
 
@@ -95,6 +98,8 @@ export class BrowserService {
     ipcMain.on(BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL, this.zoomRequestHandler)
     this.translationRequestHandler = (event, payload) => this.handleGuestTranslationRequest(event.sender, payload)
     ipcMain.on(BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL, this.translationRequestHandler)
+    this.screenshotCaptureRequestHandler = (event) => this.handleGuestScreenshotCaptureRequest(event.sender)
+    ipcMain.on(BROWSER_WEBVIEW_SCREENSHOT_CAPTURE_REQUEST_CHANNEL, this.screenshotCaptureRequestHandler)
 
     handleValidated('browser:create-tab', browserCreateTabInputSchema, async (_, input) => {
       const tabId = randomUUID()
@@ -236,6 +241,11 @@ export class BrowserService {
       this.zoomRequestHandler = null
     }
 
+    if (this.screenshotCaptureRequestHandler) {
+      ipcMain.removeListener(BROWSER_WEBVIEW_SCREENSHOT_CAPTURE_REQUEST_CHANNEL, this.screenshotCaptureRequestHandler)
+      this.screenshotCaptureRequestHandler = null
+    }
+
     for (const tabId of [...this.tabs.keys()]) {
       this.close(tabId)
     }
@@ -347,6 +357,14 @@ export class BrowserService {
     if (!isKnownNativeTab && !isDomWebview) return
 
     this.options.onGuestTranslationRequest?.(text)
+  }
+
+  private handleGuestScreenshotCaptureRequest(webContents: WebContents): void {
+    const isKnownNativeTab = Boolean(this.tabForWebContents(webContents))
+    const isDomWebview = webContents.getType() === 'webview'
+    if (!isKnownNativeTab && !isDomWebview) return
+
+    this.options.onGuestScreenshotCaptureRequest?.()
   }
 
   private setWebContentsZoom(webContents: WebContents, value: number): number | null {

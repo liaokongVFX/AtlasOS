@@ -1,10 +1,12 @@
 import { ipcRenderer, webFrame } from 'electron'
 import {
+  BROWSER_WEBVIEW_SCREENSHOT_CAPTURE_REQUEST_CHANNEL,
   BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL,
   BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL,
   browserZoomDirectionFromWheel
 } from '@shared/browser'
-import { AI_DOUBLE_CTRL_INTERVAL_MS } from '@shared/ai'
+
+const AI_DOUBLE_CTRL_INTERVAL_MS = 450
 
 const disableBrowserWebRtc = `
 (() => {
@@ -28,8 +30,19 @@ void webFrame.executeJavaScriptInIsolatedWorld(0, [{ code: disableBrowserWebRtc 
 
 let lastCtrlUpAt = 0
 
+function selectedInputText(element: Element | null): string {
+  if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return ''
+  if (element instanceof HTMLInputElement && element.type === 'password') return ''
+
+  const start = element.selectionStart ?? 0
+  const end = element.selectionEnd ?? 0
+  if (end <= start) return ''
+
+  return element.value.slice(start, end).trim()
+}
+
 function selectedText(): string {
-  return window.getSelection()?.toString().trim() ?? ''
+  return selectedInputText(document.activeElement) || window.getSelection()?.toString().trim() || ''
 }
 
 document.addEventListener(
@@ -63,7 +76,11 @@ document.addEventListener(
     if (lastCtrlUpAt > 0 && now - lastCtrlUpAt <= AI_DOUBLE_CTRL_INTERVAL_MS) {
       lastCtrlUpAt = 0
       const text = selectedText()
-      if (text) ipcRenderer.send(BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL, { text })
+      if (text) {
+        ipcRenderer.send(BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL, { text })
+      } else {
+        ipcRenderer.send(BROWSER_WEBVIEW_SCREENSHOT_CAPTURE_REQUEST_CHANNEL, {})
+      }
       return
     }
 
