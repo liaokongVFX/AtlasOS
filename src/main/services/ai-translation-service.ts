@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { BrowserWindow, clipboard, screen, shell } from 'electron'
+import { BrowserWindow, clipboard, desktopCapturer, nativeImage, screen, shell, type DesktopCapturerSource } from 'electron'
 import { z } from 'zod'
 import {
+  aiScreenshotImageInputSchema,
   aiOpenTranslatorInputSchema,
+  aiStartScreenshotCaptureInputSchema,
   aiUpdateDailySummarySettingsInputSchema,
   aiProfileApiKeyInputSchema,
   aiProfileIdInputSchema,
@@ -15,6 +17,7 @@ import {
   aiProfileDraftSchema,
   aiProfileSchema,
   aiDailySummarySettingsSchema,
+  AI_SCREENSHOT_CAPTURE_SESSION_CHANNEL,
   aiSettingsSchema,
   aiTranslationSettingsSchema,
   DEFAULT_AI_TARGET_LANGUAGE,
@@ -23,6 +26,12 @@ import {
   type AiProfile,
   type AiDailySummarySettings,
   type AiSettings,
+  type AiScreenshotCaptureBounds,
+  type AiScreenshotCaptureDisplay,
+  type AiScreenshotCaptureSession,
+  type AiScreenshotCaptureSource,
+  type AiScreenshotImageInput,
+  type AiScreenshotTextResult,
   type AiTranslationRequest,
   type AiTranslationSettings
 } from '@shared/ai'
@@ -36,6 +45,7 @@ type AiTranslationServiceOptions = {
   appSettingsService: AppSettingsService
   getMainWindow: () => BrowserWindow | null
   loadTranslationRenderer: (targetWindow: BrowserWindow) => Promise<void>
+  loadCaptureRenderer: (targetWindow: BrowserWindow) => Promise<void>
   keyStore?: AiKeyStore
 }
 
@@ -46,6 +56,19 @@ type TranslationApiResult = {
 type AiModelSelection = {
   profileId: string | null
   model: string | null
+}
+
+type ResolvedAiModelRequest = {
+  profile: AiProfile
+  model: string
+  apiKey: string
+  targetLanguage: string
+}
+
+type ParsedScreenshotImage = {
+  dataUrl: string
+  mediaType: 'image/png' | 'image/jpeg'
+  base64: string
 }
 
 const TRANSLATION_WINDOW_WIDTH = 640
@@ -91,6 +114,24 @@ function parseAnthropicTranslation(value: unknown): string {
   return text.trim()
 }
 
+function parseOpenAiImageText(value: unknown): string {
+  const record = asRecord(value)
+  const choices = Array.isArray(record?.choices) ? record.choices : []
+  const firstChoice = asRecord(choices[0])
+  const message = asRecord(firstChoice?.message)
+  const content = typeof message?.content === 'string' ? message.content : null
+  if (content === null) throw new Error('OpenAI response did not include screenshot text')
+  return content.trim()
+}
+
+function parseAnthropicImageText(value: unknown): string {
+  const record = asRecord(value)
+  const content = Array.isArray(record?.content) ? record.content : []
+  const parts = content.map(firstTextContent).filter((part): part is string => part !== null)
+  if (parts.length === 0) throw new Error('Anthropic response did not include screenshot text')
+  return parts.join('').trim()
+}
+
 function translationSystemPrompt(targetLanguage: string): string {
   if (isAiAutoTargetLanguage(targetLanguage)) {
     return [
@@ -110,6 +151,86 @@ function translationSystemPrompt(targetLanguage: string): string {
     'Preserve line breaks and formatting when useful.',
     'Do not add commentary, labels, or explanations.'
   ].join(' ')
+}
+
+function screenshotOcrSystemPrompt(): string {
+  return [
+    'Extract all readable text visible in the screenshot.',
+    'Return only the extracted text.',
+    'Preserve line breaks and reading order when useful.',
+    'Do not add labels, commentary, or explanations.',
+    'If there is no readable text, return an empty response.'
+  ].join(' ')
+}
+
+function screenshotTranslationSystemPrompt(targetLanguage: string): string {
+  if (isAiAutoTargetLanguage(targetLanguage)) {
+    return [
+      'Read the text visible in the screenshot and translate it.',
+      "If the visible text is primarily Chinese, translate it into English.",
+      'If the visible text is primarily English, translate it into Simplified Chinese.',
+      'For mixed Chinese and English text, translate the dominant source language into the other language while preserving names, code, URLs, and terms that should remain unchanged.',
+      'Return only the translation.',
+      'Preserve line breaks and formatting when useful.',
+      'Do not add commentary, labels, or explanations.'
+    ].join(' ')
+  }
+
+  return [
+    `Read the text visible in the screenshot and translate it into ${targetLanguage}.`,
+    'Return only the translation.',
+    'Preserve line breaks and formatting when useful.',
+    'Do not add commentary, labels, or explanations.'
+  ].join(' ')
+}
+
+function screenshotTranslationUserPrompt(targetLanguage: string): string {
+  if (isAiAutoTargetLanguage(targetLanguage)) {
+    return 'Translate the readable text visible in this screenshot using the automatic Chinese-English target-language rules.'
+  }
+
+  return `Translate the readable text visible in this screenshot into ${targetLanguage}.`
+}
+
+function parseScreenshotImageDataUrl(dataUrl: string): ParsedScreenshotImage {
+  const match = dataUrl.match(/^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/)
+  if (!match) throw new Error('Screenshot image must be a PNG or JPEG data URL')
+
+  return {
+    dataUrl,
+    mediaType: match[1] as ParsedScreenshotImage['mediaType'],
+    base64: match[2]
+  }
+}
+
+function captureBoundsFromRectangle(rectangle: Electron.Rectangle): AiScreenshotCaptureBounds {
+  return {
+    x: Math.round(rectangle.x),
+    y: Math.round(rectangle.y),
+    width: Math.round(rectangle.width),
+    height: Math.round(rectangle.height)
+  }
+}
+
+function virtualBoundsForDisplays(displays: Electron.Display[]): AiScreenshotCaptureBounds {
+  const minX = Math.min(...displays.map((display) => display.bounds.x))
+  const minY = Math.min(...displays.map((display) => display.bounds.y))
+  const maxX = Math.max(...displays.map((display) => display.bounds.x + display.bounds.width))
+  const maxY = Math.max(...displays.map((display) => display.bounds.y + display.bounds.height))
+
+  return captureBoundsFromRectangle({
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY
+  })
+}
+
+function thumbnailSizeForDisplays(displays: Electron.Display[]): Electron.Size {
+  return {
+    width: Math.max(1, ...displays.map((display) => Math.round(display.bounds.width * display.scaleFactor))),
+    height: Math.max(1, ...displays.map((display) => Math.round(display.bounds.height * display.scaleFactor)))
+  }
 }
 
 function modelSelection(profile: AiProfile | undefined): AiModelSelection {
@@ -147,7 +268,9 @@ async function requestJson(url: string, init: RequestInit): Promise<unknown> {
 export class AiTranslationService {
   private readonly keyStore: AiKeyStore
   private translationWindow: BrowserWindow | null = null
+  private captureWindow: BrowserWindow | null = null
   private activeRequest: AiTranslationRequest | null = null
+  private activeScreenshotSession: AiScreenshotCaptureSession | null = null
   private systemHook: WindowsDoubleCtrlHookHandle | null = null
   private systemCaptureInFlight = false
 
@@ -174,6 +297,15 @@ export class AiTranslationService {
       this.closeTranslator()
       return { ok: true }
     })
+    handleValidated('ai:start-screenshot-capture', aiStartScreenshotCaptureInputSchema, (_, input) => this.startScreenshotCapture(input.source))
+    handleValidated('ai:get-active-screenshot-capture', z.object({}), () => this.activeScreenshotSession)
+    handleValidated('ai:ocr-screenshot', aiScreenshotImageInputSchema, (_, input) => this.ocrScreenshot(input))
+    handleValidated('ai:translate-screenshot', aiScreenshotImageInputSchema, (_, input) => this.translateScreenshot(input))
+    handleValidated('ai:copy-screenshot-image', aiScreenshotImageInputSchema, (_, input) => this.copyScreenshotImage(input))
+    handleValidated('ai:close-screenshot-capture', z.object({}), () => {
+      this.closeScreenshotCapture()
+      return { ok: true }
+    })
 
     void this.refreshSystemHook()
   }
@@ -185,6 +317,7 @@ export class AiTranslationService {
       this.translationWindow.close()
     }
     this.translationWindow = null
+    this.destroyScreenshotCaptureWindow()
   }
 
   async refreshSystemHook(): Promise<void> {
@@ -287,9 +420,115 @@ export class AiTranslationService {
   }
 
   async translate(text: string, profileIdInput?: string, modelInput?: string, targetLanguageInput?: string): Promise<TranslationApiResult> {
+    const { profile, model, apiKey, targetLanguage } = await this.resolveAiModelRequest(profileIdInput, modelInput, targetLanguageInput)
+
+    if (profile.format === 'anthropic') {
+      return { text: await this.translateWithAnthropic(profile, model, apiKey, text, targetLanguage) }
+    }
+
+    return { text: await this.translateWithOpenAi(profile, model, apiKey, text, targetLanguage) }
+  }
+
+  async startScreenshotCapture(source: AiScreenshotCaptureSource): Promise<AiScreenshotCaptureSession> {
+    this.closeScreenshotCapture()
+
+    const settings = (await this.options.appSettingsService.getSettings()).ai
+    if (!this.isScreenshotCaptureEnabled(settings, source)) {
+      throw new Error('Screenshot capture is disabled in AI translation settings')
+    }
+
+    const displays = screen.getAllDisplays()
+    if (displays.length === 0) throw new Error('No displays are available for screenshot capture')
+
+    const virtualBounds = virtualBoundsForDisplays(displays)
+    const windowPromise = this.ensureScreenshotCaptureWindow()
+    const captureDisplays = await this.captureDisplays(displays)
+    const session: AiScreenshotCaptureSession = {
+      id: randomUUID(),
+      source,
+      targetLanguage: settings.translation.targetLanguage,
+      profileId: settings.translation.profileId,
+      model: settings.translation.model,
+      virtualBounds,
+      displays: captureDisplays,
+      createdAt: new Date().toISOString()
+    }
+
+    this.activeScreenshotSession = session
+    try {
+      const window = await windowPromise
+      this.positionScreenshotCaptureWindow(window, session.virtualBounds)
+      this.emitScreenshotCaptureSession(session)
+      if (window.isMinimized()) window.restore()
+      window.show()
+      window.focus()
+      return session
+    } catch (error) {
+      this.activeScreenshotSession = null
+      throw error
+    }
+  }
+
+  async ocrScreenshot(input: AiScreenshotImageInput): Promise<AiScreenshotTextResult> {
+    const session = this.requireActiveScreenshotSession(input.sessionId)
+    const { profile, model, apiKey } = await this.resolveAiModelRequest(session.profileId, session.model, session.targetLanguage)
+    const image = parseScreenshotImageDataUrl(input.imageDataUrl)
+    const prompt = screenshotOcrSystemPrompt()
+    const text =
+      profile.format === 'anthropic'
+        ? await this.requestAnthropicImageText(profile, model, apiKey, image, prompt, 'Extract the readable text from this screenshot.')
+        : await this.requestOpenAiImageText(profile, model, apiKey, image, prompt, 'Extract the readable text from this screenshot.')
+
+    return { text }
+  }
+
+  async translateScreenshot(input: AiScreenshotImageInput): Promise<AiScreenshotTextResult> {
+    const session = this.requireActiveScreenshotSession(input.sessionId)
+    const { profile, model, apiKey, targetLanguage } = await this.resolveAiModelRequest(session.profileId, session.model, session.targetLanguage)
+    const image = parseScreenshotImageDataUrl(input.imageDataUrl)
+    const prompt = screenshotTranslationSystemPrompt(targetLanguage)
+    const userPrompt = screenshotTranslationUserPrompt(targetLanguage)
+    const text =
+      profile.format === 'anthropic'
+        ? await this.requestAnthropicImageText(profile, model, apiKey, image, prompt, userPrompt)
+        : await this.requestOpenAiImageText(profile, model, apiKey, image, prompt, userPrompt)
+
+    return { text }
+  }
+
+  copyScreenshotImage(input: AiScreenshotImageInput): { ok: true } {
+    this.requireActiveScreenshotSession(input.sessionId)
+    const image = nativeImage.createFromDataURL(input.imageDataUrl)
+    if (image.isEmpty()) throw new Error('Screenshot image is empty')
+
+    clipboard.writeImage(image, 'clipboard')
+    return { ok: true }
+  }
+
+  closeTranslator(): void {
+    if (this.translationWindow && !this.translationWindow.isDestroyed()) {
+      this.translationWindow.hide()
+    }
+  }
+
+  closeScreenshotCapture(): void {
+    this.activeScreenshotSession = null
+    const window = this.captureWindow
+
+    if (window && !window.isDestroyed()) {
+      this.emitScreenshotCaptureSession(null)
+      window.hide()
+    }
+  }
+
+  private async resolveAiModelRequest(
+    profileIdInput?: string | null,
+    modelInput?: string | null,
+    targetLanguageInput?: string
+  ): Promise<ResolvedAiModelRequest> {
     const settings = await this.getSettings()
-    const profileId = profileIdInput ?? settings.translation.profileId
-    const model = modelInput?.trim() || settings.translation.model
+    const profileId = profileIdInput === undefined ? settings.translation.profileId : profileIdInput
+    const model = modelInput === undefined ? settings.translation.model : modelInput?.trim() || null
     const targetLanguage = targetLanguageInput?.trim() || settings.translation.targetLanguage || DEFAULT_AI_TARGET_LANGUAGE
     if (!profileId) throw new Error('Choose a translation provider in AI settings first')
     if (!model) throw new Error('Choose a translation model in AI settings first')
@@ -301,17 +540,124 @@ export class AiTranslationService {
     const apiKey = await this.keyStore.readKey(profile.id)
     if (!apiKey) throw new Error(`API key is not configured for ${profile.name}`)
 
-    if (profile.format === 'anthropic') {
-      return { text: await this.translateWithAnthropic(profile, model, apiKey, text, targetLanguage) }
-    }
-
-    return { text: await this.translateWithOpenAi(profile, model, apiKey, text, targetLanguage) }
+    return { profile, model, apiKey, targetLanguage }
   }
 
-  closeTranslator(): void {
-    if (this.translationWindow && !this.translationWindow.isDestroyed()) {
-      this.translationWindow.hide()
+  private isScreenshotCaptureEnabled(settings: AiSettings, source: AiScreenshotCaptureSource): boolean {
+    return source === 'system' ? settings.translation.systemDoubleCtrlEnabled : settings.translation.appDoubleCtrlEnabled
+  }
+
+  private requireActiveScreenshotSession(sessionId: string): AiScreenshotCaptureSession {
+    if (!this.activeScreenshotSession || this.activeScreenshotSession.id !== sessionId) {
+      throw new Error('Screenshot capture session is no longer active')
     }
+
+    return this.activeScreenshotSession
+  }
+
+  private async captureDisplays(displays: Electron.Display[]): Promise<AiScreenshotCaptureDisplay[]> {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: thumbnailSizeForDisplays(displays),
+      fetchWindowIcons: false
+    })
+    return displays.map((display, index) => this.captureDisplay(display, index, sources))
+  }
+
+  private captureDisplay(
+    display: Electron.Display,
+    displayIndex: number,
+    sources: DesktopCapturerSource[]
+  ): AiScreenshotCaptureDisplay {
+    const source = sources.find((candidate) => candidate.display_id === String(display.id)) ?? sources[displayIndex] ?? sources[0]
+    if (!source || source.thumbnail.isEmpty()) throw new Error(`Unable to capture display ${display.id}`)
+
+    const imageSize = source.thumbnail.getSize()
+    return {
+      id: String(display.id),
+      bounds: captureBoundsFromRectangle(display.bounds),
+      scaleFactor: display.scaleFactor,
+      imageDataUrl: source.thumbnail.toDataURL(),
+      imageSize: {
+        width: imageSize.width,
+        height: imageSize.height
+      }
+    }
+  }
+
+  private async requestOpenAiImageText(
+    profile: AiProfile,
+    model: string,
+    apiKey: string,
+    image: ParsedScreenshotImage,
+    systemPrompt: string,
+    userPrompt: string
+  ): Promise<string> {
+    const payload = await requestJson(endpointUrl(profile.baseUrl, '/chat/completions'), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: userPrompt },
+              { type: 'image_url', image_url: { url: image.dataUrl } }
+            ]
+          }
+        ]
+      })
+    })
+
+    return parseOpenAiImageText(payload)
+  }
+
+  private async requestAnthropicImageText(
+    profile: AiProfile,
+    model: string,
+    apiKey: string,
+    image: ParsedScreenshotImage,
+    systemPrompt: string,
+    userPrompt: string
+  ): Promise<string> {
+    const payload = await requestJson(endpointUrl(profile.baseUrl, '/messages'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': ANTHROPIC_VERSION
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 2048,
+        temperature: 0,
+        system: systemPrompt,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: image.mediaType,
+                  data: image.base64
+                }
+              },
+              { type: 'text', text: userPrompt }
+            ]
+          }
+        ]
+      })
+    })
+
+    return parseAnthropicImageText(payload)
   }
 
   private async translateWithOpenAi(profile: AiProfile, model: string, apiKey: string, text: string, targetLanguage: string): Promise<string> {
@@ -392,19 +738,24 @@ export class AiTranslationService {
 
     this.systemCaptureInFlight = true
     try {
-      const text = await captureWindowsSelectedText({ clipboard })
+      const text = await captureWindowsSelectedText({ clipboard, copyCommand: this.systemHook?.sendCopyCommand })
       await this.openTranslator(text, 'system')
     } catch (error) {
-      await this.openTranslationRequest({
-        id: randomUUID(),
-        text: '',
-        source: 'system',
-        targetLanguage: settings.translation.targetLanguage,
-        profileId: settings.translation.profileId,
-        model: settings.translation.model,
-        error: error instanceof Error ? error.message : String(error),
-        createdAt: new Date().toISOString()
-      })
+      try {
+        await this.startScreenshotCapture('system')
+      } catch (captureError) {
+        const message = captureError instanceof Error ? captureError.message : String(captureError)
+        await this.openTranslationRequest({
+          id: randomUUID(),
+          text: '',
+          source: 'system',
+          targetLanguage: settings.translation.targetLanguage,
+          profileId: settings.translation.profileId,
+          model: settings.translation.model,
+          error: message || (error instanceof Error ? error.message : String(error)),
+          createdAt: new Date().toISOString()
+        })
+      }
     } finally {
       this.systemCaptureInFlight = false
     }
@@ -414,7 +765,8 @@ export class AiTranslationService {
     const mainWindow = this.options.getMainWindow()
     return Boolean(
       (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) ||
-        (this.translationWindow && !this.translationWindow.isDestroyed() && this.translationWindow.isFocused())
+        (this.translationWindow && !this.translationWindow.isDestroyed() && this.translationWindow.isFocused()) ||
+        (this.captureWindow && !this.captureWindow.isDestroyed() && this.captureWindow.isFocused())
     )
   }
 
@@ -468,6 +820,57 @@ export class AiTranslationService {
     return window
   }
 
+  private async ensureScreenshotCaptureWindow(): Promise<BrowserWindow> {
+    if (this.captureWindow && !this.captureWindow.isDestroyed()) return this.captureWindow
+
+    const session = this.activeScreenshotSession
+    const bounds = session?.virtualBounds ?? { x: 0, y: 0, width: 1200, height: 800 }
+    const window = new BrowserWindow({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      minWidth: 320,
+      minHeight: 240,
+      title: 'AtlasOS Screenshot Capture',
+      frame: false,
+      thickFrame: false,
+      useContentSize: true,
+      resizable: false,
+      movable: false,
+      maximizable: false,
+      minimizable: false,
+      fullscreenable: false,
+      show: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      backgroundColor: '#010102',
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true
+      }
+    })
+
+    this.captureWindow = window
+    window.setAlwaysOnTop(true, 'screen-saver')
+    window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    window.once('closed', () => {
+      if (this.captureWindow === window) {
+        this.captureWindow = null
+        this.activeScreenshotSession = null
+      }
+    })
+
+    await this.options.loadCaptureRenderer(window)
+    return window
+  }
+
   private positionTranslationWindow(window: BrowserWindow): void {
     const cursor = screen.getCursorScreenPoint()
     const display = screen.getDisplayNearestPoint(cursor)
@@ -477,12 +880,35 @@ export class AiTranslationService {
     window.setBounds({ x, y, width: TRANSLATION_WINDOW_WIDTH, height: TRANSLATION_WINDOW_HEIGHT })
   }
 
+  private positionScreenshotCaptureWindow(window: BrowserWindow, bounds: AiScreenshotCaptureBounds): void {
+    window.setContentBounds(bounds)
+  }
+
   private emitTranslationRequest(): void {
     if (!this.activeRequest || !this.translationWindow || this.translationWindow.isDestroyed()) return
 
     const webContents = this.translationWindow.webContents
     if (!webContents.isDestroyed()) {
       webContents.send('ai:translation-request', this.activeRequest)
+    }
+  }
+
+  private emitScreenshotCaptureSession(session: AiScreenshotCaptureSession | null): void {
+    if (!this.captureWindow || this.captureWindow.isDestroyed()) return
+
+    const webContents = this.captureWindow.webContents
+    if (!webContents.isDestroyed()) {
+      webContents.send(AI_SCREENSHOT_CAPTURE_SESSION_CHANNEL, session)
+    }
+  }
+
+  private destroyScreenshotCaptureWindow(): void {
+    this.activeScreenshotSession = null
+    const window = this.captureWindow
+    this.captureWindow = null
+
+    if (window && !window.isDestroyed()) {
+      window.close()
     }
   }
 

@@ -1,5 +1,13 @@
 import { clipboard, contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AiProfileDraft, AiSettings, AiTranslationRequest } from '@shared/ai'
+import type {
+  AiProfileDraft,
+  AiScreenshotCaptureSession,
+  AiScreenshotCaptureSource,
+  AiScreenshotImageInput,
+  AiScreenshotTextResult,
+  AiSettings,
+  AiTranslationRequest
+} from '@shared/ai'
 import type { AgentUsageDayDetail, AgentUsageIndexStatus, AgentUsageYearResult } from '@shared/agent-usage'
 import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } from '@shared/plugins'
 import type { GitDiffInput, LauncherChooseFileResult, LauncherOpenInput } from '@shared/ipc'
@@ -19,6 +27,8 @@ import type { CodexHistoryListResult, CodexHistorySessionDetail } from '@shared/
 import type { GitBranchSummary, GitCommitSummary, GitDiffResult, GitOperationResult, GitStashEntry, GitStatusSnapshot, GitSummary } from '@shared/git'
 
 type Listener<T> = (payload: T) => void
+
+const AI_SCREENSHOT_CAPTURE_SESSION_CHANNEL = 'ai:screenshot-capture-session'
 
 type OpenSettingsRequest = {
   sectionId?: string
@@ -78,7 +88,15 @@ const atlasApi = {
       ipcRenderer.invoke('ai:translate', input) as Promise<{ text: string }>,
     getActiveTranslationRequest: () => ipcRenderer.invoke('ai:get-active-translation-request', {}) as Promise<AiTranslationRequest | null>,
     closeTranslator: () => ipcRenderer.invoke('ai:close-translator', {}) as Promise<{ ok: true }>,
-    onTranslationRequest: (listener: Listener<AiTranslationRequest>) => on('ai:translation-request', listener)
+    startScreenshotCapture: (input: { source: AiScreenshotCaptureSource }) =>
+      ipcRenderer.invoke('ai:start-screenshot-capture', input) as Promise<AiScreenshotCaptureSession>,
+    getActiveScreenshotCapture: () => ipcRenderer.invoke('ai:get-active-screenshot-capture', {}) as Promise<AiScreenshotCaptureSession | null>,
+    ocrScreenshot: (input: AiScreenshotImageInput) => ipcRenderer.invoke('ai:ocr-screenshot', input) as Promise<AiScreenshotTextResult>,
+    translateScreenshot: (input: AiScreenshotImageInput) => ipcRenderer.invoke('ai:translate-screenshot', input) as Promise<AiScreenshotTextResult>,
+    copyScreenshotImage: (input: AiScreenshotImageInput) => ipcRenderer.invoke('ai:copy-screenshot-image', input) as Promise<{ ok: true }>,
+    closeScreenshotCapture: () => ipcRenderer.invoke('ai:close-screenshot-capture', {}) as Promise<{ ok: true }>,
+    onTranslationRequest: (listener: Listener<AiTranslationRequest>) => on('ai:translation-request', listener),
+    onScreenshotCaptureSession: (listener: Listener<AiScreenshotCaptureSession | null>) => on(AI_SCREENSHOT_CAPTURE_SESSION_CHANNEL, listener)
   },
   canvas: {
     list: () => ipcRenderer.invoke('canvas:list', {}) as Promise<CanvasDocument[]>,

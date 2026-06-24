@@ -11,6 +11,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App'
 import { PetApp } from './PetApp'
+import { ScreenshotCaptureApp } from './ScreenshotCaptureApp'
 import { TranslationPanelApp } from './TranslationPanelApp'
 import { UpdateApp } from './UpdateApp'
 import { I18nProvider } from './i18n'
@@ -20,8 +21,9 @@ const queryClient = new QueryClient()
 const rendererView = new URLSearchParams(window.location.search).get('view')
 const isPetView = rendererView === 'pet'
 const isTranslationView = rendererView === 'translation'
+const isCaptureView = rendererView === 'capture'
 const isUpdateView = rendererView === 'update'
-document.documentElement.dataset.atlasView = isPetView ? 'pet' : isTranslationView ? 'translation' : isUpdateView ? 'update' : 'app'
+document.documentElement.dataset.atlasView = isPetView ? 'pet' : isTranslationView ? 'translation' : isCaptureView ? 'capture' : isUpdateView ? 'update' : 'app'
 
 registerBuiltInComponentDefinitions()
 
@@ -32,6 +34,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     ) : isTranslationView ? (
       <I18nProvider>
         <TranslationPanelApp />
+      </I18nProvider>
+    ) : isCaptureView ? (
+      <I18nProvider>
+        <ScreenshotCaptureApp />
       </I18nProvider>
     ) : isUpdateView ? (
       <I18nProvider>

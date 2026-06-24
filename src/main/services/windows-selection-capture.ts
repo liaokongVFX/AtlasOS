@@ -16,6 +16,7 @@ type TextClipboard = {
 
 type CaptureOptions = {
   clipboard: TextClipboard
+  copyCommand?: () => Promise<void>
   execFileImpl?: ExecFileLike
   platform?: NodeJS.Platform
   pollIntervalMs?: number
@@ -84,6 +85,7 @@ async function sendCopyCommand(execFileImpl: ExecFileLike): Promise<void> {
 
 export async function captureWindowsSelectedText({
   clipboard,
+  copyCommand,
   execFileImpl = execFile,
   platform = process.platform,
   pollIntervalMs = COPY_CAPTURE_POLL_INTERVAL_MS,
@@ -98,7 +100,11 @@ export async function captureWindowsSelectedText({
   clipboard.writeText(sentinel, 'clipboard')
 
   try {
-    await sendCopyCommand(execFileImpl)
+    if (copyCommand) {
+      await copyCommand()
+    } else {
+      await sendCopyCommand(execFileImpl)
+    }
 
     const startedAt = Date.now()
     while (Date.now() - startedAt <= timeoutMs) {

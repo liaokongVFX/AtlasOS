@@ -19,7 +19,11 @@ export function TranslationHotkeys(): null {
       if (lastCtrlUpAtRef.current > 0 && now - lastCtrlUpAtRef.current <= AI_DOUBLE_CTRL_INTERVAL_MS) {
         lastCtrlUpAtRef.current = 0
         const text = selectedAppText()
-        if (text) void window.atlas.ai.openTranslator({ text, source: 'app' })
+        if (text) {
+          void window.atlas.ai.openTranslator({ text, source: 'app' })
+        } else {
+          void window.atlas.ai.startScreenshotCapture({ source: 'app' })
+        }
         return
       }
 

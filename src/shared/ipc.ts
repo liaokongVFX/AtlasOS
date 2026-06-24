@@ -1,5 +1,10 @@
 import { z } from 'zod'
-import { aiDailySummarySettingsPatchSchema, aiProfileDraftSchema, aiTranslationSettingsPatchSchema } from './ai'
+import {
+  aiDailySummarySettingsPatchSchema,
+  aiProfileDraftSchema,
+  aiTranslationSettingsPatchSchema,
+  MAX_AI_SCREENSHOT_IMAGE_DATA_URL_CHARS as MAX_AI_SCREENSHOT_IMAGE_DATA_URL_CHARS_VALUE
+} from './ai'
 import { agentUsageDaySchema } from './agent-usage'
 import { pluginConfigSchema, pluginIdSchema } from './plugins'
 import { petAlertTargetSchema, petSettingsSchema } from './pet'
@@ -21,8 +26,17 @@ import {
 import { appSettingsPatchSchema, appSettingsSchema, browserBoundsSchema, canvasDocumentSchema, terminalCreateSchema } from './schema'
 
 export const MAX_TERMINAL_PASTED_ASSET_BASE64_CHARS = 14 * 1024 * 1024
+export const MAX_AI_SCREENSHOT_IMAGE_DATA_URL_CHARS = MAX_AI_SCREENSHOT_IMAGE_DATA_URL_CHARS_VALUE
 
 const base64PayloadPattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+const aiScreenshotImageDataUrlPattern = /^data:image\/(?:png|jpeg);base64,/
+
+function isAiScreenshotImageDataUrl(value: string): boolean {
+  if (!aiScreenshotImageDataUrlPattern.test(value)) return false
+
+  const base64 = value.slice(value.indexOf(',') + 1)
+  return base64PayloadPattern.test(base64)
+}
 
 export const createCanvasInputSchema = z.object({
   name: z.string().min(1).max(80).optional()
@@ -79,6 +93,22 @@ export const aiTranslateInputSchema = z.object({
   profileId: z.string().trim().min(1).max(120).optional(),
   model: z.string().trim().min(1).max(200).optional(),
   targetLanguage: z.string().trim().min(1).max(80).optional()
+})
+
+export const aiScreenshotCaptureSourceSchema = z.enum(['app', 'browser', 'system'])
+
+export const aiStartScreenshotCaptureInputSchema = z.object({
+  source: aiScreenshotCaptureSourceSchema
+})
+
+export const aiScreenshotImageInputSchema = z.object({
+  sessionId: z.string().trim().min(1).max(120),
+  imageDataUrl: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_AI_SCREENSHOT_IMAGE_DATA_URL_CHARS)
+    .refine(isAiScreenshotImageDataUrl, 'Screenshot image must be a PNG or JPEG data URL')
 })
 
 export const chooseDirectoryInputSchema = z.object({

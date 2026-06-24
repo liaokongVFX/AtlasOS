@@ -21,6 +21,7 @@ type StartHookOptions = {
 
 export type WindowsDoubleCtrlHookHandle = {
   dispose: () => void
+  sendCopyCommand?: () => Promise<void>
 }
 
 const DOUBLE_CTRL_INTERVAL_MS = 450
@@ -33,6 +34,7 @@ Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @"
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 
 public static class AtlasDoubleCtrlHookRunner {
@@ -40,13 +42,16 @@ public static class AtlasDoubleCtrlHookRunner {
   private const int WM_KEYUP = 0x0101;
   private const int WM_SYSKEYUP = 0x0105;
   private const int VK_CONTROL = 0x11;
+  private const int VK_C = 0x43;
   private const int VK_LCONTROL = 0xA2;
   private const int VK_RCONTROL = 0xA3;
+  private const uint KEYEVENTF_KEYUP = 0x0002;
   private const double DOUBLE_CTRL_INTERVAL_MS = 450;
 
   private static LowLevelKeyboardProc proc = HookCallback;
   private static IntPtr hookId = IntPtr.Zero;
   private static DateTime lastCtrlUp = DateTime.MinValue;
+  private static volatile bool suppressKeyboardEvents = false;
 
   public static void Run() {
     hookId = SetHook(proc);
@@ -54,8 +59,36 @@ public static class AtlasDoubleCtrlHookRunner {
       throw new InvalidOperationException("Failed to install AtlasOS double Ctrl keyboard hook.");
     }
 
+    Thread inputThread = new Thread(ReadCommands);
+    inputThread.IsBackground = true;
+    inputThread.Start();
+
     Application.Run();
     UnhookWindowsHookEx(hookId);
+  }
+
+  private static void ReadCommands() {
+    string line;
+    while ((line = Console.In.ReadLine()) != null) {
+      if (line.Trim() == "copy") {
+        SendCopyCommand();
+      }
+    }
+  }
+
+  private static void SendCopyCommand() {
+    suppressKeyboardEvents = true;
+    try {
+      lastCtrlUp = DateTime.MinValue;
+      keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero);
+      keybd_event(VK_C, 0, 0, UIntPtr.Zero);
+      keybd_event(VK_C, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+      keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+      Thread.Sleep(30);
+      lastCtrlUp = DateTime.MinValue;
+    } finally {
+      suppressKeyboardEvents = false;
+    }
   }
 
   private static IntPtr SetHook(LowLevelKeyboardProc proc) {
@@ -66,6 +99,10 @@ public static class AtlasDoubleCtrlHookRunner {
   }
 
   private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+    if (suppressKeyboardEvents) {
+      return CallNextHookEx(hookId, nCode, wParam, lParam);
+    }
+
     if (nCode >= 0 && (wParam == (IntPtr) WM_KEYUP || wParam == (IntPtr) WM_SYSKEYUP)) {
       int vkCode = Marshal.ReadInt32(lParam);
       bool isCtrl = vkCode == VK_CONTROL || vkCode == VK_LCONTROL || vkCode == VK_RCONTROL;
@@ -101,6 +138,9 @@ public static class AtlasDoubleCtrlHookRunner {
 
   [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
   private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+  [DllImport("user32.dll")]
+  private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 }
 "@
 
@@ -134,7 +174,7 @@ export function startWindowsDoubleCtrlHook(
     ['-NoProfile', '-NonInteractive', '-Sta', '-ExecutionPolicy', 'Bypass', '-Command', WINDOWS_DOUBLE_CTRL_HOOK_SCRIPT],
     {
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe']
     }
   )
 
@@ -162,6 +202,18 @@ export function startWindowsDoubleCtrlHook(
   })
 
   return {
+    sendCopyCommand: () =>
+      new Promise((resolve, reject) => {
+        if (child.killed || !child.stdin.writable) {
+          reject(new Error('AtlasOS double Ctrl hook is not available'))
+          return
+        }
+
+        child.stdin.write('copy\n', (error) => {
+          if (error) reject(error)
+          else resolve()
+        })
+      }),
     dispose: () => {
       if (!child.killed) child.kill()
     }
