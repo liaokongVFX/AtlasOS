@@ -1,12 +1,15 @@
 const { existsSync, statSync } = require('node:fs')
 const { join } = require('node:path')
 
-const WINDOWS_NODE_PTY_ASSETS = [
+const WINDOWS_NODE_PTY_REQUIRED_ASSETS = [
   'conpty.node',
   'conpty_console_list.node',
   'pty.node',
   'winpty-agent.exe',
-  'winpty.dll',
+  'winpty.dll'
+]
+
+const WINDOWS_NODE_PTY_OPTIONAL_CONPTY_DLL_ASSETS = [
   'conpty/conpty.dll',
   'conpty/OpenConsole.exe'
 ]
@@ -38,8 +41,14 @@ function verifyWindowsNodePtyAssets(appOutDir, arch) {
 
   const selectedDir = candidateDirs.find((candidateDir) => isFile(join(candidateDir, 'conpty.node')))
   if (selectedDir) {
-    const missing = missingFiles(selectedDir, WINDOWS_NODE_PTY_ASSETS)
+    const missing = missingFiles(selectedDir, WINDOWS_NODE_PTY_REQUIRED_ASSETS)
     if (missing.length === 0) {
+      // Rebuilt node-pty uses the system ConPTY API by default; bundled conpty.dll is only used with useConptyDll=true.
+      const missingOptionalConptyDll = missingFiles(selectedDir, WINDOWS_NODE_PTY_OPTIONAL_CONPTY_DLL_ASSETS)
+      if (missingOptionalConptyDll.length > 0 && missingOptionalConptyDll.length < WINDOWS_NODE_PTY_OPTIONAL_CONPTY_DLL_ASSETS.length) {
+        throw new Error(`node-pty optional bundled ConPTY DLL assets are incomplete in ${selectedDir}.\n${missingOptionalConptyDll.map((relativePath) => `  - ${relativePath}`).join('\n')}`)
+      }
+
       console.log(`node-pty Windows runtime assets verified for win32-${arch}.`)
       return
     }
