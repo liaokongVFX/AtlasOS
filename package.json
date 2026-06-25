@@ -107,6 +107,10 @@
     "directories": {
       "output": "release"
     },
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
+    "afterPack": "scripts/verify-node-pty-after-pack.cjs",
     "files": [
       "out/**/*",
       "build/icon.png",
