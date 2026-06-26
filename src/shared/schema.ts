@@ -5,6 +5,7 @@ import { normalizeKeyboardShortcut } from './keyboard-shortcuts'
 import { petSettingsSchema } from './pet'
 import { remoteServerSettingsSchema } from './remote-servers'
 import { terminalCommandLibrarySchema } from './terminal-commands'
+import { terminalEnvironmentSchema } from './terminal-environment'
 import { updateSettingsSchema } from './updates'
 
 export const componentTypeSchema = z.string().min(1)
@@ -122,6 +123,7 @@ export const appSettingsSchema = z.object({
   locale: z.enum(LOCALES).default(DEFAULT_LOCALE),
   shortcuts: appShortcutSettingsSchema,
   terminalCommands: terminalCommandLibrarySchema,
+  terminalEnvironment: terminalEnvironmentSchema,
   pet: petSettingsSchema,
   updates: updateSettingsSchema,
   ai: aiSettingsSchema,
@@ -137,6 +139,7 @@ export const appSettingsPatchSchema = z
     locale: z.enum(LOCALES).optional(),
     shortcuts: appSettingsPatchField(appShortcutSettingsSchema),
     terminalCommands: appSettingsPatchField(terminalCommandLibrarySchema),
+    terminalEnvironment: appSettingsPatchField(terminalEnvironmentSchema),
     pet: appSettingsPatchField(petSettingsSchema),
     updates: appSettingsPatchField(updateSettingsSchema),
     ai: appSettingsPatchField(aiSettingsSchema),
@@ -187,6 +190,7 @@ export const terminalCreateSchema = z.object({
   cwd: z.string().optional(),
   shell: z.string().optional(),
   initialCommand: z.string().trim().min(1).max(8192).optional(),
+  environment: terminalEnvironmentSchema,
   autoConfirmWorkspaceTrust: z.boolean().default(false),
   cols: z.number().int().min(10).default(100),
   rows: z.number().int().min(4).default(30)

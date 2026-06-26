@@ -19,6 +19,7 @@ import { AiSettingsPanel } from './ai-settings-panel'
 import { ApplicationsSettingsPanel } from './applications-settings-panel'
 import { PluginSettingsPanel } from './plugin-settings-panel'
 import { TerminalCommandLibraryManager } from './terminal-command-library-manager'
+import { TerminalEnvironmentEditor } from './terminal-environment-editor'
 
 type SettingsSectionPanelProps = {
   active: boolean
@@ -599,6 +600,33 @@ function TerminalCommandsSettingsPanel(): JSX.Element {
   )
 }
 
+function TerminalEnvironmentSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
+  const { t } = useI18n()
+  const settings = useAppSettingsStore((state) => state.settings)
+  const isLoaded = useAppSettingsStore((state) => state.isLoaded)
+  const loadSettings = useAppSettingsStore((state) => state.load)
+  const patchSettings = useAppSettingsStore((state) => state.patch)
+
+  useEffect(() => {
+    if (active && !isLoaded) void loadSettings()
+  }, [active, isLoaded, loadSettings])
+
+  return (
+    <section className="settings-panel terminal-environment-settings" aria-labelledby="settings-terminal-environment-title">
+      <div className="settings-panel__header">
+        <h2 id="settings-terminal-environment-title">{t('settings.terminalEnvironment')}</h2>
+        <p>{t('settings.terminalEnvironmentDescription')}</p>
+      </div>
+      <TerminalEnvironmentEditor
+        initialEnvironment={settings.terminalEnvironment}
+        onSave={async ({ environment }) => {
+          await patchSettings({ terminalEnvironment: environment })
+        }}
+      />
+    </section>
+  )
+}
+
 function PetSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Element {
   const { t } = useI18n()
   const [runtimeState, setRuntimeState] = useState<PetRuntimeState | null>(null)
@@ -1150,6 +1178,12 @@ const SETTINGS_SECTIONS = [
     titleKey: 'settings.terminalCommands',
     icon: TerminalSquare,
     Panel: TerminalCommandsSettingsPanel
+  },
+  {
+    id: 'terminal-environment',
+    titleKey: 'settings.terminalEnvironment',
+    icon: TerminalSquare,
+    Panel: TerminalEnvironmentSettingsPanel
   },
   {
     id: 'pet',

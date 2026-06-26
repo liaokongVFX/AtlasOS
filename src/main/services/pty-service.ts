@@ -24,6 +24,7 @@ import {
   terminalAgentSessionEndedEventSchema,
   type TerminalAgentSource
 } from '@shared/terminal-agent'
+import type { TerminalEnvironment } from '@shared/terminal-environment'
 import { parseFileUriListPaths, readClipboardFilePathsFromNativeFormats } from './clipboard-files'
 import { handleValidated } from './ipc-helpers'
 import { buildPowerShellBootstrapScript, extractCwdMarkers } from './pty-cwd'
@@ -101,6 +102,16 @@ const STALE_PASTED_ASSET_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7
 const MAX_PASTED_ASSET_BYTES = 10 * 1024 * 1024
 const MAX_TERMINAL_INPUT_BUFFER_CHARS = 4096
 const TERMINAL_ENV_BLOCKLIST = ['CODEX_THREAD_ID', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE', 'CODEX_SHELL'] as const
+const TERMINAL_USER_ENV_BLOCKLIST = [
+  ...TERMINAL_ENV_BLOCKLIST,
+  'ATLAS_CANVAS_ID',
+  'ATLAS_PET_BRIDGE_CONFIG',
+  'ATLAS_PET_HOOK_FORWARDER',
+  'ATLAS_TERMINAL_COMPONENT_ID',
+  'ATLAS_TERMINAL_CWD',
+  'ATLAS_TERMINAL_SESSION_ID',
+  'ATLAS_TERMINAL_TITLE'
+] as const
 const PASTED_IMAGE_EXTENSIONS_BY_MIME_TYPE = new Map([
   ['image/png', '.png'],
   ['image/x-png', '.png'],
@@ -187,9 +198,37 @@ function normalizeTerminalOutputForMatching(value: string): string {
 
 function terminalBaseEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env }
-  for (const name of TERMINAL_ENV_BLOCKLIST) {
-    delete env[name]
+  removeEnvironmentVariables(env, TERMINAL_USER_ENV_BLOCKLIST)
+  return env
+}
+
+function removeEnvironmentVariables(env: NodeJS.ProcessEnv, names: readonly string[]): void {
+  const blocklist = new Set(names.map((name) => name.toUpperCase()))
+  for (const name of Object.keys(env)) {
+    if (blocklist.has(name.toUpperCase())) delete env[name]
   }
+}
+
+function userTerminalEnvironment(input: TerminalEnvironment): NodeJS.ProcessEnv {
+  const env = { ...input }
+  removeEnvironmentVariables(env, TERMINAL_USER_ENV_BLOCKLIST)
+  return env
+}
+
+function applyEnvironmentVariables(env: NodeJS.ProcessEnv, values: NodeJS.ProcessEnv | undefined): void {
+  for (const [name, value] of Object.entries(values ?? {})) {
+    removeEnvironmentVariables(env, [name])
+    env[name] = value
+  }
+}
+
+function terminalEnvironment(
+  userEnvironment: TerminalEnvironment,
+  hookEnvironment: NodeJS.ProcessEnv | undefined
+): NodeJS.ProcessEnv {
+  const env = terminalBaseEnvironment()
+  applyEnvironmentVariables(env, userTerminalEnvironment(userEnvironment))
+  applyEnvironmentVariables(env, hookEnvironment)
   return env
 }
 
@@ -212,6 +251,7 @@ export class PtyService {
         input.cwd,
         input.shell,
         input.initialCommand,
+        input.environment,
         input.autoConfirmWorkspaceTrust,
         input.cols,
         input.rows
@@ -304,6 +344,7 @@ export class PtyService {
     cwdInput: string | undefined,
     shellInput: string | undefined,
     initialCommand: string | undefined,
+    environmentInput: TerminalEnvironment,
     autoConfirmWorkspaceTrust: boolean,
     cols: number,
     rows: number
@@ -343,10 +384,10 @@ export class PtyService {
         cols,
         rows,
         cwd,
-        env: {
-          ...terminalBaseEnvironment(),
-          ...this.options.getAgentHookEnvironment?.({ sessionId, canvasId, componentId, title, cwd })
-        }
+        env: terminalEnvironment(
+          environmentInput,
+          this.options.getAgentHookEnvironment?.({ sessionId, canvasId, componentId, title, cwd })
+        )
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

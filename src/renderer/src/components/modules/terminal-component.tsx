@@ -2,7 +2,8 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
-import { Lock, PanelBottomClose, PanelBottomOpen, Unlock } from 'lucide-react'
+import * as Dialog from '@radix-ui/react-dialog'
+import { Lock, PanelBottomClose, PanelBottomOpen, Settings2, Unlock, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -15,13 +16,22 @@ import {
   type PointerEvent as ReactPointerEvent
 } from 'react'
 import { createTerminalAgentRestore, terminalAgentRestoreSchema, type TerminalAgentRestore, type TerminalAgentSessionEndedEvent } from '@shared/terminal-agent'
+import {
+  mergeTerminalEnvironments,
+  normalizeTerminalEnvironment,
+  normalizeTerminalEnvironmentNames,
+  pickTerminalEnvironment,
+  type TerminalEnvironment
+} from '@shared/terminal-environment'
 import { fileExtension, fileName } from '../../lib/file-types'
 import { useI18n, type TFunction } from '../../i18n'
 import { writeClipboardText } from '../../lib/clipboard'
 import { TERMINAL_LOCKED_STATE_KEY, isTerminalComponentLocked } from '../../lib/terminal-lock'
 import { registerTranslationSelectionProvider } from '../../lib/translation-selection'
 import { asBoolean, asString, cn } from '../../lib/utils'
+import { useAppSettingsStore } from '../../store/app-settings-store'
 import { TerminalCommandLibraryManager } from '../terminal-command-library-manager'
+import { TerminalEnvironmentEditor } from '../terminal-environment-editor'
 import type { AtlasComponentRendererProps } from '../registry'
 
 type Disposable = {
@@ -69,7 +79,13 @@ type NativeClipboardImageSaveResult = Awaited<ReturnType<(typeof window)['atlas'
 type NativeClipboardFilesResult = Awaited<ReturnType<(typeof window)['atlas']['terminal']['readClipboardFiles']>>
 
 type TerminalClipboardShortcutHandlers = {
-  onCopySelection: () => void
+  getSelectionText: () => string
+  onClearSelection: () => void
+  onCopySelection: (text: string) => void
+}
+
+type TerminalSelectionSnapshot = {
+  text: string
 }
 
 type CommandPanelResizeSession = {
@@ -263,16 +279,26 @@ function installTerminalClipboardShortcuts(terminal: Terminal, handlers: Termina
       return false
     }
 
-    if (hasPrimaryModifier && key === 'c' && terminal.hasSelection()) {
+    if (hasPrimaryModifier && key === 'c') {
+      const selectedText = handlers.getSelectionText()
+      if (!selectedText) return true
+
       event.preventDefault()
       event.stopPropagation()
-      handlers.onCopySelection()
+      handlers.onCopySelection(selectedText)
       terminal.clearSelection()
+      handlers.onClearSelection()
       return false
     }
 
     return true
   })
+}
+
+function terminalSelectionText(terminal: Terminal): string {
+  if (!terminal.hasSelection()) return ''
+
+  return terminal.getSelection()
 }
 
 function dataTransferFiles(dataTransfer: DataTransfer | null | undefined): File[] {
@@ -411,6 +437,7 @@ export function TerminalComponent({
   canvasId,
   canvasZoom,
   component,
+  updateConfig,
   updateState,
   setHeaderActions,
   isNodeSelected = false
@@ -433,6 +460,8 @@ export function TerminalComponent({
   const focusFrameRef = useRef<number | null>(null)
   const feedbackTimerRef = useRef<number | null>(null)
   const isNodeSelectedRef = useRef(isNodeSelected)
+  const selectionSnapshotRef = useRef<TerminalSelectionSnapshot | null>(null)
+  const suppressedExitSessionIdsRef = useRef(new Set<string>())
   const tRef = useRef(t)
   const isLocked = isTerminalComponentLocked(component)
   const commandPanelExpanded = asBoolean(component.state.commandPanelExpanded)
@@ -440,8 +469,24 @@ export function TerminalComponent({
   const commandPanelResizeSessionRef = useRef<CommandPanelResizeSession | null>(null)
   const [commandPanelHeight, setCommandPanelHeight] = useState<number | null>(persistedCommandPanelHeight)
   const [isDropActive, setIsDropActive] = useState(false)
+  const [environmentDialogOpen, setEnvironmentDialogOpen] = useState(false)
   const [pasteFeedback, setPasteFeedback] = useState<TerminalPasteFeedback | null>(null)
   const [sessionReady, setSessionReady] = useState(false)
+  const appSettingsLoaded = useAppSettingsStore((state) => state.isLoaded)
+  const globalEnvironment = useAppSettingsStore((state) => state.settings.terminalEnvironment)
+  const nodeEnvironment = useMemo(() => normalizeTerminalEnvironment(component.config.environment), [component.config.environment])
+  const selectedGlobalEnvironmentNames = useMemo(
+    () => normalizeTerminalEnvironmentNames(component.config.environmentGlobalNames),
+    [component.config.environmentGlobalNames]
+  )
+  const selectedGlobalEnvironment = useMemo(
+    () => pickTerminalEnvironment(globalEnvironment, selectedGlobalEnvironmentNames),
+    [globalEnvironment, selectedGlobalEnvironmentNames]
+  )
+  const sessionEnvironment = useMemo<TerminalEnvironment>(
+    () => mergeTerminalEnvironments(selectedGlobalEnvironment, nodeEnvironment),
+    [selectedGlobalEnvironment, nodeEnvironment]
+  )
   const canvasScale = safeScale(canvasZoom)
 
   isNodeSelectedRef.current = isNodeSelected
@@ -504,6 +549,34 @@ export function TerminalComponent({
     [clearPasteFeedback]
   )
 
+  const selectedTerminalText = useCallback(() => {
+    const instance = terminalRef.current
+    if (!instance) return ''
+
+    const text = terminalSelectionText(instance)
+    if (text) {
+      selectionSnapshotRef.current = { text }
+      return text
+    }
+
+    return selectionSnapshotRef.current?.text ?? ''
+  }, [])
+
+  const refreshTerminalSelectionSnapshot = useCallback(() => {
+    const instance = terminalRef.current
+    if (!instance) {
+      selectionSnapshotRef.current = null
+      return
+    }
+
+    const text = terminalSelectionText(instance)
+    selectionSnapshotRef.current = text ? { text } : null
+  }, [])
+
+  const clearTerminalSelectionSnapshot = useCallback(() => {
+    selectionSnapshotRef.current = null
+  }, [])
+
   const toggleLocked = useCallback(() => {
     updateState({ [TERMINAL_LOCKED_STATE_KEY]: !isLocked }, true)
   }, [isLocked, updateState])
@@ -511,6 +584,21 @@ export function TerminalComponent({
   const toggleCommandPanel = useCallback(() => {
     updateState({ commandPanelExpanded: !commandPanelExpanded }, true)
   }, [commandPanelExpanded, updateState])
+
+  const saveNodeEnvironment = useCallback(
+    async ({ environment, selectedGlobalNames }: { environment: TerminalEnvironment; selectedGlobalNames?: string[] }) => {
+      const sessionId = sessionIdRef.current
+      if (sessionId) {
+        sessionIdRef.current = null
+        suppressedExitSessionIdsRef.current.add(sessionId)
+        setSessionReady(false)
+        await window.atlas.terminal.close(sessionId)
+      }
+      updateConfig({ environment, environmentGlobalNames: selectedGlobalNames ?? [] }, true)
+      setEnvironmentDialogOpen(false)
+    },
+    [updateConfig]
+  )
 
   const panelModuleHeight = useCallback((): number | null => {
     const height = elementLayoutHeight(moduleRef.current, canvasScale)
@@ -643,6 +731,15 @@ export function TerminalComponent({
           aria-pressed={commandPanelExpanded ? 'true' : 'false'}
         >
           {commandPanelExpanded ? <PanelBottomClose size={14} /> : <PanelBottomOpen size={14} />}
+        </button>
+        <button
+          type="button"
+          className="icon-button component-node__header-action-button"
+          onClick={() => setEnvironmentDialogOpen(true)}
+          title={t('terminal.configureEnvironment')}
+          aria-label={t('terminal.configureEnvironment')}
+        >
+          <Settings2 size={14} />
         </button>
         <button
           type="button"
@@ -915,6 +1012,8 @@ export function TerminalComponent({
   }, [clearPasteFeedback])
 
   useEffect(() => {
+    if (!appSettingsLoaded) return undefined
+
     const container = containerRef.current
     if (!container) return
 
@@ -925,6 +1024,7 @@ export function TerminalComponent({
     let fitAddon: FitAddon | null = null
     let resizeObserver: ResizeObserver | null = null
     let dataDisposable: Disposable | null = null
+    let selectionDisposable: Disposable | null = null
     let transformedCanvasMouseFix: Disposable | null = null
     let disposeData: () => void = () => undefined
     let disposeExit: () => void = () => undefined
@@ -1002,13 +1102,16 @@ export function TerminalComponent({
       instance.loadAddon(new WebLinksAddon(openTerminalWebLink))
       instance.open(container)
       transformedCanvasMouseFix = installTransformedCanvasMouseFix(instance)
+      selectionDisposable = instance.onSelectionChange(refreshTerminalSelectionSnapshot)
       unregisterTranslationSelectionProvider = registerTranslationSelectionProvider(() => {
-        if (!container.isConnected || !container.contains(document.activeElement) || !instance.hasSelection()) return ''
-        return instance.getSelection()
+        if (!container.isConnected || terminalRef.current !== instance || !isNodeSelectedRef.current) return ''
+        return selectedTerminalText()
       })
       installTerminalClipboardShortcuts(instance, {
-        onCopySelection: () => {
-          void writeClipboardText(instance.getSelection()).catch(() => undefined)
+        getSelectionText: selectedTerminalText,
+        onClearSelection: clearTerminalSelectionSnapshot,
+        onCopySelection: (text) => {
+          void writeClipboardText(text).catch(() => undefined)
         }
       })
       instance.attachCustomWheelEventHandler((event) => {
@@ -1093,13 +1196,14 @@ export function TerminalComponent({
           cwd: cwdRef.current,
           shell: asString(component.config.shell),
           initialCommand: startupCommand,
+          environment: sessionEnvironment,
           autoConfirmWorkspaceTrust,
           cols: initialSize.cols,
           rows: initialSize.rows
         })
         .then((session) => {
           if (disposed) {
-            void window.atlas.terminal.close(session.sessionId)
+            // The PTY is owned by componentId and may already be reused by a newer view.
             return
           }
 
@@ -1146,6 +1250,7 @@ export function TerminalComponent({
             if (disposed) return
             sessionIdRef.current = null
             setSessionReady(false)
+            if (suppressedExitSessionIdsRef.current.delete(session.sessionId)) return
             instance.writeln(`\r\n${tRef.current('terminal.processExited', { code: exitCode })}`)
           })
           const previousDisposeExit = disposeExit
@@ -1177,10 +1282,12 @@ export function TerminalComponent({
       disposeData()
       disposeExit()
       dataDisposable?.dispose()
+      selectionDisposable?.dispose()
       transformedCanvasMouseFix?.dispose()
       resizeObserver?.disconnect()
       sessionIdRef.current = null
       terminalRef.current = null
+      clearTerminalSelectionSnapshot()
       setSessionReady(false)
 
       const instance = terminal
@@ -1189,12 +1296,16 @@ export function TerminalComponent({
       }
     }
   }, [
+    appSettingsLoaded,
     clearActiveAgentRestore,
     clearScheduledFocus,
+    clearTerminalSelectionSnapshot,
     canvasId,
     component.id,
     component.title,
     component.config.cwd,
+    component.config.environment,
+    component.config.environmentGlobalNames,
     component.config.initialCommand,
     component.config.shell,
     pasteClipboardIntoTerminal,
@@ -1203,6 +1314,8 @@ export function TerminalComponent({
     pasteNativeClipboardImageIntoTerminal,
     persistActiveAgentRestore,
     requestFocus,
+    refreshTerminalSelectionSnapshot,
+    selectedTerminalText,
     updateState
   ])
 
@@ -1216,6 +1329,33 @@ export function TerminalComponent({
 
   return (
     <div ref={moduleRef} className={cn('terminal-module', commandPanelExpanded && 'terminal-module--commands-open')} style={commandPanelStyle}>
+      <Dialog.Root open={environmentDialogOpen} onOpenChange={setEnvironmentDialogOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="dialog-content terminal-environment-dialog">
+            <div className="terminal-environment-dialog__header">
+              <div>
+                <Dialog.Title className="dialog-title">{t('terminal.configureEnvironment')}</Dialog.Title>
+                <Dialog.Description className="dialog-description">{t('terminalEnvironment.nodeDescription')}</Dialog.Description>
+              </div>
+              <Dialog.Close asChild>
+                <button type="button" className="icon-button" aria-label={t('common.close')}>
+                  <X size={16} />
+                </button>
+              </Dialog.Close>
+            </div>
+            <TerminalEnvironmentEditor
+              globalEnvironment={globalEnvironment}
+              initialEnvironment={nodeEnvironment}
+              initialSelectedGlobalNames={selectedGlobalEnvironmentNames}
+              description={t('terminalEnvironment.nodeRestartDescription')}
+              onSave={saveNodeEnvironment}
+              saveLabel={t('terminalEnvironment.saveAndRestart')}
+              showGlobalSelection
+            />
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
       <div ref={containerRef} className="terminal-module__screen" />
       {commandPanelExpanded ? (
         <div ref={commandPanelRef} className="terminal-module__commands">

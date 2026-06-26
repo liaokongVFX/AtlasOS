@@ -71,10 +71,15 @@ type ParsedScreenshotImage = {
   base64: string
 }
 
+type TranslationPromptMode = 'standard' | 'retry-unchanged'
+type TranslationTargetKind = 'auto' | 'chinese' | 'english' | 'other'
+
 const TRANSLATION_WINDOW_WIDTH = 640
 const TRANSLATION_WINDOW_HEIGHT = 440
 const TRANSLATION_WINDOW_MARGIN = 16
 const ANTHROPIC_VERSION = '2023-06-01'
+const CJK_TEXT_PATTERN = /[\u3400-\u9fff\uf900-\ufaff]/
+const LATIN_WORD_PATTERN = /[A-Za-z][A-Za-z'-]*/g
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/g, '')
@@ -132,21 +137,100 @@ function parseAnthropicImageText(value: unknown): string {
   return parts.join('').trim()
 }
 
-function translationSystemPrompt(targetLanguage: string): string {
+function normalizedTargetLanguageInstruction(targetLanguage: string): string {
+  const trimmed = targetLanguage.trim()
+  const normalized = trimmed.toLowerCase()
+  if (
+    ['simplified chinese', 'chinese', 'zh', 'zh-cn', 'zh-hans'].includes(normalized) ||
+    ['\u4e2d\u6587', '\u7b80\u4f53\u4e2d\u6587', '\u7b80\u4f53'].includes(trimmed)
+  ) {
+    return 'Simplified Chinese (\u7b80\u4f53\u4e2d\u6587)'
+  }
+  if (
+    ['traditional chinese', 'zh-tw', 'zh-hk', 'zh-hant'].includes(normalized) ||
+    ['\u7e41\u4f53\u4e2d\u6587', '\u7e41\u9ad4\u4e2d\u6587', '\u7e41\u4f53', '\u7e41\u9ad4'].includes(trimmed)
+  ) {
+    return 'Traditional Chinese (\u7e41\u9ad4\u4e2d\u6587)'
+  }
+
+  return trimmed
+}
+
+function translationTargetKind(targetLanguage: string): TranslationTargetKind {
+  if (isAiAutoTargetLanguage(targetLanguage)) return 'auto'
+
+  const normalized = targetLanguage.trim().toLowerCase()
+  if (
+    ['simplified chinese', 'traditional chinese', 'chinese', 'zh', 'zh-cn', 'zh-hans', 'zh-tw', 'zh-hk', 'zh-hant'].includes(normalized) ||
+    ['\u4e2d\u6587', '\u7b80\u4f53\u4e2d\u6587', '\u7b80\u4f53', '\u7e41\u4f53\u4e2d\u6587', '\u7e41\u9ad4\u4e2d\u6587', '\u7e41\u4f53', '\u7e41\u9ad4'].includes(targetLanguage.trim())
+  ) {
+    return 'chinese'
+  }
+  if (['english', 'en', 'en-us', 'en-gb'].includes(normalized)) return 'english'
+
+  return 'other'
+}
+
+function hasCjkText(text: string): boolean {
+  return CJK_TEXT_PATTERN.test(text)
+}
+
+function hasSentenceLikeLatinText(text: string): boolean {
+  const words = text.match(LATIN_WORD_PATTERN) ?? []
+  const letterCount = words.join('').length
+  return letterCount >= 8 && (words.length >= 2 || /[.!?]/.test(text))
+}
+
+function comparableTranslationText(text: string): string {
+  return text
+    .normalize('NFKC')
+    .trim()
+    .replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+}
+
+function shouldRetryUnchangedTranslation(sourceText: string, translatedText: string, targetLanguage: string): boolean {
+  if (!sourceText.trim() || !translatedText.trim()) return false
+  if (comparableTranslationText(sourceText) !== comparableTranslationText(translatedText)) return false
+
+  const targetKind = translationTargetKind(targetLanguage)
+  if (targetKind === 'chinese') return hasSentenceLikeLatinText(sourceText)
+  if (targetKind === 'english') return hasCjkText(sourceText)
+  if (targetKind !== 'auto') return false
+
+  return hasCjkText(sourceText) || (hasSentenceLikeLatinText(sourceText) && !hasCjkText(sourceText))
+}
+
+function translationSystemPrompt(targetLanguage: string, mode: TranslationPromptMode = 'standard'): string {
+  const retryPrefix =
+    mode === 'retry-unchanged'
+      ? ['Your previous response copied the source text unchanged. Correct that mistake now.']
+      : []
+
   if (isAiAutoTargetLanguage(targetLanguage)) {
     return [
+      ...retryPrefix,
       "Detect whether the user's text is primarily Chinese or English.",
       'If it is primarily Chinese, translate it into English.',
       'If it is primarily English, translate it into Simplified Chinese.',
       'For mixed Chinese and English text, translate the dominant source language into the other language while preserving names, code, URLs, and terms that should remain unchanged.',
+      'Do not return the source text unchanged when it is not already in the target language.',
+      'For English sentences translated into Simplified Chinese, the output must contain Chinese characters.',
       'Return only the translation.',
       'Preserve line breaks and formatting when useful.',
       'Do not add commentary, labels, or explanations.'
     ].join(' ')
   }
 
+  const target = normalizedTargetLanguageInstruction(targetLanguage)
+  const targetKind = translationTargetKind(targetLanguage)
   return [
-    `Translate the user's text into ${targetLanguage}.`,
+    ...retryPrefix,
+    `Translate the user's text into ${target}.`,
+    `If the source text is not already in ${target}, you must translate it and must not return the source text unchanged.`,
+    'Preserve only proper nouns, product names, code, commands, URLs, file paths, and identifiers that should remain unchanged.',
+    ...(targetKind === 'chinese' ? ['For English sentences or phrases, the output must use Chinese characters rather than English wording.'] : []),
     'Return only the translation.',
     'Preserve line breaks and formatting when useful.',
     'Do not add commentary, labels, or explanations.'
@@ -161,35 +245,6 @@ function screenshotOcrSystemPrompt(): string {
     'Do not add labels, commentary, or explanations.',
     'If there is no readable text, return an empty response.'
   ].join(' ')
-}
-
-function screenshotTranslationSystemPrompt(targetLanguage: string): string {
-  if (isAiAutoTargetLanguage(targetLanguage)) {
-    return [
-      'Read the text visible in the screenshot and translate it.',
-      "If the visible text is primarily Chinese, translate it into English.",
-      'If the visible text is primarily English, translate it into Simplified Chinese.',
-      'For mixed Chinese and English text, translate the dominant source language into the other language while preserving names, code, URLs, and terms that should remain unchanged.',
-      'Return only the translation.',
-      'Preserve line breaks and formatting when useful.',
-      'Do not add commentary, labels, or explanations.'
-    ].join(' ')
-  }
-
-  return [
-    `Read the text visible in the screenshot and translate it into ${targetLanguage}.`,
-    'Return only the translation.',
-    'Preserve line breaks and formatting when useful.',
-    'Do not add commentary, labels, or explanations.'
-  ].join(' ')
-}
-
-function screenshotTranslationUserPrompt(targetLanguage: string): string {
-  if (isAiAutoTargetLanguage(targetLanguage)) {
-    return 'Translate the readable text visible in this screenshot using the automatic Chinese-English target-language rules.'
-  }
-
-  return `Translate the readable text visible in this screenshot into ${targetLanguage}.`
 }
 
 function parseScreenshotImageDataUrl(dataUrl: string): ParsedScreenshotImage {
@@ -486,12 +541,17 @@ export class AiTranslationService {
     const session = this.requireActiveScreenshotSession(input.sessionId)
     const { profile, model, apiKey, targetLanguage } = await this.resolveAiModelRequest(session.profileId, session.model, session.targetLanguage)
     const image = parseScreenshotImageDataUrl(input.imageDataUrl)
-    const prompt = screenshotTranslationSystemPrompt(targetLanguage)
-    const userPrompt = screenshotTranslationUserPrompt(targetLanguage)
+    const extractedText =
+      profile.format === 'anthropic'
+        ? await this.requestAnthropicImageText(profile, model, apiKey, image, screenshotOcrSystemPrompt(), 'Extract the readable text from this screenshot.')
+        : await this.requestOpenAiImageText(profile, model, apiKey, image, screenshotOcrSystemPrompt(), 'Extract the readable text from this screenshot.')
+
+    if (!extractedText) return { text: '' }
+
     const text =
       profile.format === 'anthropic'
-        ? await this.requestAnthropicImageText(profile, model, apiKey, image, prompt, userPrompt)
-        : await this.requestOpenAiImageText(profile, model, apiKey, image, prompt, userPrompt)
+        ? await this.translateWithAnthropic(profile, model, apiKey, extractedText, targetLanguage)
+        : await this.translateWithOpenAi(profile, model, apiKey, extractedText, targetLanguage)
 
     return { text }
   }
@@ -660,7 +720,14 @@ export class AiTranslationService {
     return parseAnthropicImageText(payload)
   }
 
-  private async translateWithOpenAi(profile: AiProfile, model: string, apiKey: string, text: string, targetLanguage: string): Promise<string> {
+  private async translateWithOpenAi(
+    profile: AiProfile,
+    model: string,
+    apiKey: string,
+    text: string,
+    targetLanguage: string,
+    mode: TranslationPromptMode = 'standard'
+  ): Promise<string> {
     const payload = await requestJson(endpointUrl(profile.baseUrl, '/chat/completions'), {
       method: 'POST',
       headers: {
@@ -671,16 +738,28 @@ export class AiTranslationService {
         model,
         temperature: 0,
         messages: [
-          { role: 'system', content: translationSystemPrompt(targetLanguage) },
+          { role: 'system', content: translationSystemPrompt(targetLanguage, mode) },
           { role: 'user', content: text }
         ]
       })
     })
 
-    return parseOpenAiTranslation(payload)
+    const translatedText = parseOpenAiTranslation(payload)
+    if (mode === 'standard' && shouldRetryUnchangedTranslation(text, translatedText, targetLanguage)) {
+      return this.translateWithOpenAi(profile, model, apiKey, text, targetLanguage, 'retry-unchanged')
+    }
+
+    return translatedText
   }
 
-  private async translateWithAnthropic(profile: AiProfile, model: string, apiKey: string, text: string, targetLanguage: string): Promise<string> {
+  private async translateWithAnthropic(
+    profile: AiProfile,
+    model: string,
+    apiKey: string,
+    text: string,
+    targetLanguage: string,
+    mode: TranslationPromptMode = 'standard'
+  ): Promise<string> {
     const payload = await requestJson(endpointUrl(profile.baseUrl, '/messages'), {
       method: 'POST',
       headers: {
@@ -692,12 +771,17 @@ export class AiTranslationService {
         model,
         max_tokens: 2048,
         temperature: 0,
-        system: translationSystemPrompt(targetLanguage),
+        system: translationSystemPrompt(targetLanguage, mode),
         messages: [{ role: 'user', content: text }]
       })
     })
 
-    return parseAnthropicTranslation(payload)
+    const translatedText = parseAnthropicTranslation(payload)
+    if (mode === 'standard' && shouldRetryUnchangedTranslation(text, translatedText, targetLanguage)) {
+      return this.translateWithAnthropic(profile, model, apiKey, text, targetLanguage, 'retry-unchanged')
+    }
+
+    return translatedText
   }
 
   private async requireProfile(profileId: string): Promise<AiProfile> {

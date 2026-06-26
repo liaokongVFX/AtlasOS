@@ -4,6 +4,7 @@ import { DEFAULT_AI_SETTINGS } from '@shared/ai'
 import { DEFAULT_PET_SETTINGS } from '@shared/pet'
 import { DEFAULT_REMOTE_SERVER_SETTINGS } from '@shared/remote-servers'
 import { createDefaultTerminalCommandLibrary } from '@shared/terminal-commands'
+import { DEFAULT_TERMINAL_ENVIRONMENT } from '@shared/terminal-environment'
 import { DEFAULT_UPDATE_SETTINGS } from '@shared/updates'
 import type { AppSettings, AppSettingsPatch } from '@shared/schema'
 
@@ -12,6 +13,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   locale: DEFAULT_LOCALE,
   shortcuts: { ...DEFAULT_APP_SHORTCUTS },
   terminalCommands: createDefaultTerminalCommandLibrary(),
+  terminalEnvironment: { ...DEFAULT_TERMINAL_ENVIRONMENT },
   pet: { ...DEFAULT_PET_SETTINGS },
   updates: { ...DEFAULT_UPDATE_SETTINGS },
   ai: DEFAULT_AI_SETTINGS,

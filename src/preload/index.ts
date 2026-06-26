@@ -13,6 +13,7 @@ import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } 
 import type { GitDiffInput, LauncherChooseFileResult, LauncherOpenInput } from '@shared/ipc'
 import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
 import type { AppSettings, AppSettingsPatch, AtlasAppState, CanvasDocument, FileEntry } from '@shared/schema'
+import type { TerminalEnvironment } from '@shared/terminal-environment'
 import type {
   RemoteServerConnectResult,
   RemoteServerProfileDraft,
@@ -136,7 +137,7 @@ const atlasApi = {
     onWatchEvent: (listener: Listener<{ watchId: string; eventName: string; path: string }>) => on('filesystem:watch-event', listener)
   },
   terminal: {
-    create: (input: { componentId: string; canvasId?: string; title?: string; cwd?: string; shell?: string; initialCommand?: string; autoConfirmWorkspaceTrust?: boolean; cols?: number; rows?: number }) =>
+    create: (input: { componentId: string; canvasId?: string; title?: string; cwd?: string; shell?: string; initialCommand?: string; environment?: TerminalEnvironment; autoConfirmWorkspaceTrust?: boolean; cols?: number; rows?: number }) =>
       ipcRenderer.invoke('terminal:create', input) as Promise<{ sessionId: string; cwd: string; shell: string; didRunInitialCommand?: boolean }>,
     write: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', { sessionId, data }),
     resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { sessionId, cols, rows }),

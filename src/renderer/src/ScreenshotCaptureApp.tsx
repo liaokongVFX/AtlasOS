@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Copy, FileText, Image as ImageIcon, Languages, Loader2, X } from 'lucide-react'
 import { MAX_AI_SCREENSHOT_IMAGE_DATA_URL_CHARS, type AiScreenshotCaptureDisplay, type AiScreenshotCaptureSession } from '@shared/ai'
 import { useI18n } from './i18n'
@@ -164,24 +164,52 @@ function emptyTextActionState(): TextActionState {
 
 export function ScreenshotCaptureApp(): JSX.Element {
   const { t } = useI18n()
+  const panelRef = useRef<HTMLElement | null>(null)
+  const activeSessionIdRef = useRef<string | null>(null)
+  const ocrRequestIdRef = useRef(0)
+  const translationRequestIdRef = useRef(0)
   const [session, setSession] = useState<AiScreenshotCaptureSession | null>(null)
   const [selection, setSelection] = useState<CaptureRect | null>(null)
   const [dragStart, setDragStart] = useState<Point | null>(null)
   const [ocr, setOcr] = useState<TextActionState>(() => emptyTextActionState())
   const [translation, setTranslation] = useState<TextActionState>(() => emptyTextActionState())
   const [error, setError] = useState<string | null>(null)
+  const [panelHeight, setPanelHeight] = useState(PANEL_HEIGHT)
 
   const usableSelection = hasUsableSelection(selection)
   const toolbarStyle = useMemo(() => (usableSelection ? clampFloatingPosition(selection, TOOLBAR_WIDTH, 40) : undefined), [selection, usableSelection])
-  const panelStyle = useMemo(() => (usableSelection ? clampFloatingPosition(selection, PANEL_WIDTH, PANEL_HEIGHT, 56) : undefined), [selection, usableSelection])
+  const panelStyle = useMemo(() => (usableSelection ? clampFloatingPosition(selection, PANEL_WIDTH, panelHeight, 56) : undefined), [panelHeight, selection, usableSelection])
+  const showPanel = ocr.status !== 'idle' || translation.status !== 'idle' || Boolean(error)
+
+  useLayoutEffect(() => {
+    if (!showPanel) {
+      setPanelHeight(PANEL_HEIGHT)
+      return undefined
+    }
+
+    const panel = panelRef.current
+    if (!panel) return undefined
+
+    const updatePanelHeight = () => setPanelHeight(Math.min(PANEL_HEIGHT, Math.ceil(panel.getBoundingClientRect().height || PANEL_HEIGHT)))
+    updatePanelHeight()
+
+    if (typeof ResizeObserver === 'undefined') return undefined
+
+    const observer = new ResizeObserver(updatePanelHeight)
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [showPanel, ocr.status, ocr.text, ocr.error, translation.status, translation.text, translation.error, error])
 
   const resetResults = useCallback(() => {
+    ocrRequestIdRef.current += 1
+    translationRequestIdRef.current += 1
     setOcr(emptyTextActionState())
     setTranslation(emptyTextActionState())
     setError(null)
   }, [])
 
   const applySession = useCallback((nextSession: AiScreenshotCaptureSession | null) => {
+    activeSessionIdRef.current = nextSession?.id ?? null
     setSession(nextSession)
     setSelection(null)
     setDragStart(null)
@@ -248,13 +276,21 @@ export function ScreenshotCaptureApp(): JSX.Element {
   const runOcr = async () => {
     if (!session || !usableSelection) return
 
+    const sessionId = session.id
+    const requestId = ocrRequestIdRef.current + 1
+    ocrRequestIdRef.current = requestId
     setOcr({ status: 'loading', text: '', error: null })
     setError(null)
     try {
       const imageDataUrl = await croppedImageDataUrl()
-      const result = await window.atlas.ai.ocrScreenshot({ sessionId: session.id, imageDataUrl })
+      if (activeSessionIdRef.current !== sessionId || ocrRequestIdRef.current !== requestId) return
+
+      const result = await window.atlas.ai.ocrScreenshot({ sessionId, imageDataUrl })
+      if (activeSessionIdRef.current !== sessionId || ocrRequestIdRef.current !== requestId) return
+
       setOcr({ status: 'ready', text: result.text, error: null })
     } catch (nextError) {
+      if (activeSessionIdRef.current !== sessionId || ocrRequestIdRef.current !== requestId) return
       setOcr({ status: 'error', text: '', error: nextError instanceof Error ? nextError.message : String(nextError) })
     }
   }
@@ -262,13 +298,21 @@ export function ScreenshotCaptureApp(): JSX.Element {
   const runTranslation = async () => {
     if (!session || !usableSelection) return
 
+    const sessionId = session.id
+    const requestId = translationRequestIdRef.current + 1
+    translationRequestIdRef.current = requestId
     setTranslation({ status: 'loading', text: '', error: null })
     setError(null)
     try {
       const imageDataUrl = await croppedImageDataUrl()
-      const result = await window.atlas.ai.translateScreenshot({ sessionId: session.id, imageDataUrl })
+      if (activeSessionIdRef.current !== sessionId || translationRequestIdRef.current !== requestId) return
+
+      const result = await window.atlas.ai.translateScreenshot({ sessionId, imageDataUrl })
+      if (activeSessionIdRef.current !== sessionId || translationRequestIdRef.current !== requestId) return
+
       setTranslation({ status: 'ready', text: result.text, error: null })
     } catch (nextError) {
+      if (activeSessionIdRef.current !== sessionId || translationRequestIdRef.current !== requestId) return
       setTranslation({ status: 'error', text: '', error: nextError instanceof Error ? nextError.message : String(nextError) })
     }
   }
@@ -381,8 +425,8 @@ export function ScreenshotCaptureApp(): JSX.Element {
             </button>
           </div>
 
-          {(ocr.status !== 'idle' || translation.status !== 'idle' || error) ? (
-            <section className="screenshot-capture__panel" style={panelStyle} onPointerDown={(event) => event.stopPropagation()}>
+          {showPanel ? (
+            <section ref={panelRef} className="screenshot-capture__panel" style={panelStyle} onPointerDown={(event) => event.stopPropagation()}>
               {error ? <div className="screenshot-capture__error">{error}</div> : null}
               {ocr.status !== 'idle' ? (
                 <article className="screenshot-capture__result">
