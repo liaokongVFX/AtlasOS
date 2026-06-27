@@ -1,4 +1,3 @@
-import type { ExcalidrawElementSkeleton } from '@excalidraw/excalidraw/data/transform'
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types'
 import type { AppState, BinaryFiles, ExcalidrawInitialDataState } from '@excalidraw/excalidraw/types'
 
@@ -52,16 +51,6 @@ export type SketchScene = {
   elements: readonly ExcalidrawElement[]
   appState: Partial<AppState>
   files: BinaryFiles
-}
-
-export type MindMapTemplateText = {
-  center: string
-  branches: readonly [string, string, string, string]
-}
-
-export const DEFAULT_MIND_MAP_TEMPLATE_TEXT: MindMapTemplateText = {
-  center: 'Central idea',
-  branches: ['Context', 'Plan', 'Risks', 'Next steps']
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -171,91 +160,5 @@ export function getSketchSearchTokens(scene: SketchScene): string[] {
     .map((element) => ('text' in element && typeof element.text === 'string' ? element.text : null))
     .filter((text): text is string => Boolean(text?.trim()))
 
-  return ['sketch', 'drawing', 'whiteboard', 'mind map', ...textTokens]
-}
-
-export function getMindMapTemplateOrigin(elements: readonly ExcalidrawElement[]): { x: number; y: number } {
-  if (elements.length === 0) return { x: -320, y: -180 }
-
-  const visibleElements = elements.filter((element) => !('isDeleted' in element) || !element.isDeleted)
-  if (visibleElements.length === 0) return { x: -320, y: -180 }
-
-  const right = Math.max(...visibleElements.map((element) => element.x + element.width))
-  const top = Math.min(...visibleElements.map((element) => element.y))
-
-  return {
-    x: Math.round(right + 120),
-    y: Math.round(top)
-  }
-}
-
-export function createMindMapTemplateSkeletons(
-  text: MindMapTemplateText = DEFAULT_MIND_MAP_TEMPLATE_TEXT,
-  origin: { x: number; y: number } = { x: -320, y: -180 }
-): ExcalidrawElementSkeleton[] {
-  const centerId = 'atlas-mind-map-center'
-  const branchIds = ['atlas-mind-map-branch-1', 'atlas-mind-map-branch-2', 'atlas-mind-map-branch-3', 'atlas-mind-map-branch-4'] as const
-  const branches = [
-    { id: branchIds[0], label: text.branches[0], x: origin.x + 460, y: origin.y, width: 220, height: 74 },
-    { id: branchIds[1], label: text.branches[1], x: origin.x + 460, y: origin.y + 170, width: 220, height: 74 },
-    { id: branchIds[2], label: text.branches[2], x: origin.x, y: origin.y, width: 220, height: 74 },
-    { id: branchIds[3], label: text.branches[3], x: origin.x, y: origin.y + 170, width: 220, height: 74 }
-  ]
-
-  const nodeStyle = {
-    type: 'rectangle',
-    strokeColor: '#828fff',
-    backgroundColor: '#11141b',
-    fillStyle: 'solid',
-    strokeWidth: 1,
-    roughness: 1
-  } as const
-
-  const arrowStyle = {
-    type: 'arrow',
-    strokeColor: '#5e6ad2',
-    backgroundColor: 'transparent',
-    endArrowhead: 'arrow',
-    roughness: 1
-  } as const
-
-  return [
-    {
-      ...nodeStyle,
-      id: centerId,
-      x: origin.x + 250,
-      y: origin.y + 78,
-      width: 180,
-      height: 88,
-      label: {
-        text: text.center,
-        fontSize: 24,
-        strokeColor: '#f7f8f8',
-        textAlign: 'center',
-        verticalAlign: 'middle'
-      }
-    },
-    ...branches.map((branch) => ({
-      ...nodeStyle,
-      id: branch.id,
-      x: branch.x,
-      y: branch.y,
-      width: branch.width,
-      height: branch.height,
-      label: {
-        text: branch.label,
-        fontSize: 18,
-        strokeColor: '#d0d6e0',
-        textAlign: 'center' as const,
-        verticalAlign: 'middle' as const
-      }
-    })),
-    ...branches.map((branch) => ({
-      ...arrowStyle,
-      x: origin.x + 340,
-      y: origin.y + 122,
-      start: { id: centerId, type: 'rectangle' as const },
-      end: { id: branch.id, type: 'rectangle' as const }
-    }))
-  ]
+  return ['sketch', 'drawing', 'whiteboard', ...textTokens]
 }

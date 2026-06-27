@@ -1,5 +1,5 @@
 import './excalidraw-assets'
 
-import { CaptureUpdateAction, Excalidraw, convertToExcalidrawElements } from '@excalidraw/excalidraw'
+import { CaptureUpdateAction, Excalidraw } from '@excalidraw/excalidraw'
 
-export { CaptureUpdateAction, Excalidraw, convertToExcalidrawElements }
+export { CaptureUpdateAction, Excalidraw }
