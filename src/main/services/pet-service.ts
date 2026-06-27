@@ -806,8 +806,54 @@ function isTerminalAgentStatus(status: PetAgentSession['status'] | undefined): b
   return status === 'completed' || status === 'error'
 }
 
+const AGENT_SESSION_STATUS_PRIORITY: Record<PetAgentStatus, number> = {
+  waiting_for_confirmation: 5,
+  error: 4,
+  running: 3,
+  idle_unknown: 2,
+  completed: 1
+}
+
+function agentSessionTargetKey(session: PetAgentSession): string {
+  if (session.canvasId !== 'unknown-canvas') return `component:${session.canvasId}:${session.componentId}`
+  if (session.terminalSessionId) return `terminal:${session.terminalSessionId}`
+  return `component:${session.componentId}`
+}
+
+function agentSessionActivityTime(session: PetAgentSession): number {
+  const time = Date.parse(session.lastActivityAt)
+  return Number.isFinite(time) ? time : 0
+}
+
+function shouldReplaceVisibleAgentSession(current: PetAgentSession, candidate: PetAgentSession): boolean {
+  const priorityDifference = AGENT_SESSION_STATUS_PRIORITY[candidate.status] - AGENT_SESSION_STATUS_PRIORITY[current.status]
+  if (priorityDifference !== 0) return priorityDifference > 0
+
+  const activityDifference = agentSessionActivityTime(candidate) - agentSessionActivityTime(current)
+  if (activityDifference !== 0) return activityDifference > 0
+
+  return true
+}
+
+function compareVisibleAgentSessions(a: PetAgentSession, b: PetAgentSession): number {
+  const priorityDifference = AGENT_SESSION_STATUS_PRIORITY[b.status] - AGENT_SESSION_STATUS_PRIORITY[a.status]
+  if (priorityDifference !== 0) return priorityDifference
+
+  return agentSessionActivityTime(b) - agentSessionActivityTime(a)
+}
+
 function visibleAgentSessions(agentSessions: Map<string, PetAgentSession>): PetAgentSession[] {
-  return [...agentSessions.values()]
+  const sessionsByTarget = new Map<string, PetAgentSession>()
+
+  for (const session of agentSessions.values()) {
+    const key = agentSessionTargetKey(session)
+    const current = sessionsByTarget.get(key)
+    if (!current || shouldReplaceVisibleAgentSession(current, session)) {
+      sessionsByTarget.set(key, session)
+    }
+  }
+
+  return [...sessionsByTarget.values()].sort(compareVisibleAgentSessions)
 }
 
 function componentTitleKey(canvasId: string, componentId: string): string {

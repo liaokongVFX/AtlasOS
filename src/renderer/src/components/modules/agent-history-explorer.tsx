@@ -232,7 +232,7 @@ function AgentHistoryExplorerBase({
     [history, selectedProjectId]
   )
   const sessions = useMemo(
-    () => history?.sessions.filter((session) => session.projectId === selectedProject?.id) ?? [],
+    () => history?.sessions.filter((session) => session.projectId === selectedProject?.id && !session.isSidechain) ?? [],
     [history, selectedProject?.id]
   )
   const projectListLabel = t(labels.projectListKey)

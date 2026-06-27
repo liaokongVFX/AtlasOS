@@ -1,5 +1,9 @@
 # AtlasOS
 
+<p align="center">
+  <img src="docs/assets/readme/atlasos-logo.png" alt="AtlasOS logo" width="96" />
+</p>
+
 AtlasOS is a local-first infinite canvas workbench for developer workflows. Each top-level tab is a canvas document, and components such as terminals, file trees, browsers, and Markdown notes bind to their own resources instead of forcing the whole canvas to map to one folder.
 
 ## Preview

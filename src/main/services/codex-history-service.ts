@@ -47,6 +47,7 @@ type ParsedRollout = {
   firstPrompt?: string
   createdAt?: string
   updatedAt?: string
+  isSidechain: boolean
   messages: CodexHistoryTranscriptEntry[]
 }
 
@@ -267,6 +268,18 @@ function sessionIdFromRolloutPath(path: string): string | undefined {
   return match?.[1]
 }
 
+function isSidechainPath(path: string): boolean {
+  return path
+    .replace(/\\/g, '/')
+    .toLowerCase()
+    .split('/')
+    .includes('subagents')
+}
+
+function isSidechainRecord(record: JsonRecord): boolean {
+  return record.isSidechain === true || (isRecord(record.payload) && record.payload.isSidechain === true)
+}
+
 function createMutableSession(input: { id: string; sessionId: string; projectPath: string }): MutableSession {
   return {
     id: input.id,
@@ -410,6 +423,8 @@ export class CodexHistoryService {
       if (!sessionId) continue
 
       const parsed = await this.parseRolloutFile(file, sessionId)
+      if (parsed.isSidechain) continue
+
       const session = this.upsertSession(sessions, {
         id: parsed.id,
         sessionId: parsed.sessionId,
@@ -441,8 +456,11 @@ export class CodexHistoryService {
     let hasFallbackConversation = false
     const eventEntries: CodexHistoryTranscriptEntry[] = []
     const fallbackEntries: CodexHistoryTranscriptEntry[] = []
+    let isSidechain = isSidechainPath(path)
 
     records.forEach((record, index) => {
+      if (isSidechainRecord(record)) isSidechain = true
+
       const timestamp = isoFromTimestamp(record.timestamp)
       createdAt = earliestIso(createdAt, timestamp)
       updatedAt = latestIso(updatedAt, timestamp)
@@ -530,6 +548,7 @@ export class CodexHistoryService {
       firstPrompt,
       createdAt: createdAt ?? fallbackMtime,
       updatedAt: updatedAt ?? fallbackMtime,
+      isSidechain,
       messages
     }
   }
