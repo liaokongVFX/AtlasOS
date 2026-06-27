@@ -294,12 +294,6 @@ const zhCN = {
   'stickyNote.toolbarLabel': '便签工具',
   'stickyNote.underline': '下划线',
 
-  'sketch.insertMindMap': '插入思维导图',
-  'sketch.mindMap.center': '中心想法',
-  'sketch.mindMap.context': '背景',
-  'sketch.mindMap.plan': '计划',
-  'sketch.mindMap.risks': '风险',
-  'sketch.mindMap.nextSteps': '下一步',
   'sketch.stats': '{elements} 个元素',
 
   'quickLauncher.addItem': '新增快捷项',
@@ -982,12 +976,6 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'stickyNote.toolbarLabel': 'Sticky note tools',
   'stickyNote.underline': 'Underline',
 
-  'sketch.insertMindMap': 'Insert mind map',
-  'sketch.mindMap.center': 'Central idea',
-  'sketch.mindMap.context': 'Context',
-  'sketch.mindMap.plan': 'Plan',
-  'sketch.mindMap.risks': 'Risks',
-  'sketch.mindMap.nextSteps': 'Next steps',
   'sketch.stats': '{elements} elements',
 
   'quickLauncher.addItem': 'Add shortcut',

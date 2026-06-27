@@ -59,7 +59,7 @@ AtlasOS 是一个基于 Electron + React 的桌面工作台。它不是把整个
 | 开发 | **Remote Server** | SSH/SFTP 远程服务器 | 管理 SSH profile、host key 确认、远程 shell、远程文件树、上传/下载、新建、重命名、删除、文本编辑和远程状态采样；凭据使用 `safeStorage` 加密。 |
 | 规划 | **Markdown Note** | Markdown 笔记 | 编辑/预览模式，支持 GFM、数学公式/KaTeX、代码高亮；拖入 Markdown 文件可初始化为笔记节点。 |
 | 规划 | **Sticky Note** | 便签 | TipTap 富文本编辑，支持粗体、斜体、下划线、对齐、背景色、字号预设、自动字号和从内容自动派生标题。 |
-| 规划 | **Sketch** | 手绘白板 | 基于 Excalidraw，保存元素、appState 和文件；内置一键思维导图模板，文本元素可进入节点搜索。 |
+| 规划 | **Sketch** | 手绘白板 | 基于 Excalidraw，保存元素、appState 和文件；文本元素可进入节点搜索。 |
 | 规划 | **Kanban** | 看板任务 | 列和卡片拖拽、列 WIP 限制、标题/描述/标签/优先级/负责人/截止日期、标签/负责人/优先级筛选；到期/逾期卡片可触发浮球提醒并跳回目标卡片。 |
 | 规划 | **Calendar** | 日历与时间 | 当前时间、时区、本月日历、本地化周起始日和紧凑模式。 |
 | 工具 | **Quick Launcher** | 快捷启动器 | 分页管理 app/file/folder/url/command 快捷入口，支持图标、拖拽排序、PowerShell/cmd 命令和启动防抖。 |

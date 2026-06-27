@@ -59,7 +59,7 @@ Each top-level tab is an independent local canvas document. The canvas persists 
 | Development | **Remote Server** | SSH/SFTP remote server | SSH profile management, host key confirmation, remote shell, remote file tree, upload/download, create, rename, delete, text editing, and remote status sampling. Credentials are encrypted with `safeStorage`. |
 | Planning | **Markdown Note** | Markdown note | Edit/preview modes with GFM, math/KaTeX, and code highlighting. Dropped Markdown files can initialize note nodes. |
 | Planning | **Sticky Note** | Sticky note | TipTap rich text editing with bold, italic, underline, alignment, background colors, font size presets, automatic font sizing, and title derivation from content. |
-| Planning | **Sketch** | Whiteboard | Excalidraw-based sketch surface that saves elements, appState, and files. Includes a one-click mind map template, and text elements can be searched by the node finder. |
+| Planning | **Sketch** | Whiteboard | Excalidraw-based sketch surface that saves elements, appState, and files. Text elements can be searched by the node finder. |
 | Planning | **Kanban** | Task board | Drag/drop columns and cards, column WIP limits, card title/description/labels/priority/assignee/due date, filters by label/assignee/priority, and due/overdue reminders through the floating Pet. |
 | Planning | **Calendar** | Calendar and clock | Current time, timezone, month calendar, localized week start, and compact mode. |
 | Utilities | **Quick Launcher** | Shortcut launcher | Tabbed shortcuts for app/file/folder/url/command entries, with icons, drag sorting, PowerShell/cmd commands, and launch debounce. |

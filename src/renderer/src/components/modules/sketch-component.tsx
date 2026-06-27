@@ -1,21 +1,16 @@
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types'
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI, UIOptions } from '@excalidraw/excalidraw/types'
-import { Network } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type FocusEvent } from 'react'
-import { useI18n, type TFunction } from '../../i18n'
 import { subscribeCanvasViewportSync } from '../../lib/canvas-viewport-sync'
-import { CaptureUpdateAction, Excalidraw, convertToExcalidrawElements } from '../../lib/excalidraw'
+import { CaptureUpdateAction, Excalidraw } from '../../lib/excalidraw'
 import type { AtlasComponentRendererProps } from '../registry'
 import {
-  createMindMapTemplateSkeletons,
   createSketchScene,
-  getMindMapTemplateOrigin,
   normalizeSketchScene,
   sketchSceneFingerprint,
   sketchSceneToInitialData,
   SKETCH_THEME,
   SKETCH_VIEW_BACKGROUND,
-  type MindMapTemplateText,
   type SketchScene
 } from './sketch-model'
 
@@ -102,20 +97,7 @@ function syncSketchSvgLayerOffset(editor: HTMLElement, runtimeViewport: SketchRu
   editor.style.setProperty(SKETCH_SVG_LAYER_OFFSET_Y_PROPERTY, `${-runtimeViewport.offsetTop}px`)
 }
 
-function createMindMapText(t: TFunction): MindMapTemplateText {
-  return {
-    center: t('sketch.mindMap.center'),
-    branches: [
-      t('sketch.mindMap.context'),
-      t('sketch.mindMap.plan'),
-      t('sketch.mindMap.risks'),
-      t('sketch.mindMap.nextSteps')
-    ]
-  }
-}
-
 export function SketchComponent({ canvasZoom = 1, component, updateState }: AtlasComponentRendererProps): JSX.Element {
-  const { t } = useI18n()
   const scene = useMemo(() => normalizeSketchScene(component.state.sketchScene), [component.state.sketchScene])
   const initialData = useMemo(() => sketchSceneToInitialData(scene), [scene])
   const editorRef = useRef<HTMLDivElement | null>(null)
@@ -305,36 +287,8 @@ export function SketchComponent({ canvasZoom = 1, component, updateState }: Atla
     [flushScene]
   )
 
-  const insertMindMapTemplate = useCallback(() => {
-    const api = apiRef.current
-    const existingElements = api?.getSceneElementsIncludingDeleted() ?? pendingSceneRef.current.elements
-    const files = api?.getFiles() ?? pendingSceneRef.current.files
-    const appState = api?.getAppState() ?? pendingSceneRef.current.appState
-    const templateElements = convertToExcalidrawElements(
-      createMindMapTemplateSkeletons(createMindMapText(t), getMindMapTemplateOrigin(existingElements)),
-      { regenerateIds: true }
-    )
-    const nextElements = [...existingElements, ...templateElements]
-    const sceneAppState: Pick<AppState, 'theme' | 'viewBackgroundColor'> = {
-      theme: SKETCH_THEME,
-      viewBackgroundColor: SKETCH_VIEW_BACKGROUND
-    }
-
-    api?.updateScene({
-      elements: nextElements,
-      appState: sceneAppState
-    })
-    queueSceneSave(createSketchScene(nextElements, appState, files), true)
-  }, [queueSceneSave, t])
-
   return (
     <div className="sketch-module nodrag nowheel nopan" onBlurCapture={handleBlur}>
-      <div className="sketch-toolbar">
-        <button type="button" className="tool-button" onClick={insertMindMapTemplate} aria-label={t('sketch.insertMindMap')} title={t('sketch.insertMindMap')}>
-          <Network size={14} />
-          {t('sketch.insertMindMap')}
-        </button>
-      </div>
       <div ref={editorRef} className="sketch-editor">
         <Excalidraw
           initialData={initialData}
