@@ -297,6 +297,7 @@ function EmptySettingsPanel({ id, titleKey, messageKey }: EmptySettingsPanelProp
 }
 
 type ShortcutErrors = Partial<Record<keyof AppShortcutSettings, I18nKey>>
+const SHORTCUT_DESCRIPTION_ID = 'settings-shortcuts-description'
 
 const SHORTCUT_FIELDS = [
   { key: 'canvasDeselect', labelKey: 'settings.shortcutDeselectNodes' },
@@ -411,11 +412,21 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
   }
 
   const captureShortcut = (event: ReactKeyboardEvent<HTMLInputElement>, key: keyof AppShortcutSettings): void => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (event.key === 'Escape') {
+      event.currentTarget.blur()
+      return
+    }
+
+    if (event.nativeEvent.isComposing) return
+
     const shortcut = keyboardShortcutFromEvent(event.nativeEvent)
     if (!shortcut) return
 
-    event.preventDefault()
     updateShortcutDraft(key, formatKeyboardShortcut(shortcut))
+    event.currentTarget.select()
   }
 
   const saveShortcuts = async (): Promise<void> => {
@@ -552,22 +563,31 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
       </div>
 
       <div className="general-settings__section" aria-labelledby="settings-shortcuts-title">
-        <h3 id="settings-shortcuts-title">{t('settings.keyboardShortcuts')}</h3>
+        <div className="general-settings__section-header">
+          <h3 id="settings-shortcuts-title">{t('settings.keyboardShortcuts')}</h3>
+          <p id={SHORTCUT_DESCRIPTION_ID}>{t('settings.shortcutCaptureDescription')}</p>
+        </div>
         <div className="general-settings__fields">
           {SHORTCUT_FIELDS.map((field) => {
             const error = errors[field.key]
             const errorId = `settings-shortcut-${field.key}-error`
+            const describedBy = [SHORTCUT_DESCRIPTION_ID, error ? errorId : null].filter(Boolean).join(' ')
 
             return (
               <label key={field.key} className="general-settings__field">
                 <span>{t(field.labelKey)}</span>
                 <input
                   type="text"
+                  className="general-settings__shortcut-input"
                   value={draft[field.key]}
-                  onKeyDown={(event) => captureShortcut(event, field.key)}
-                  onChange={(event) => updateShortcutDraft(field.key, event.target.value)}
+                  readOnly
+                  inputMode="none"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onFocus={(event) => event.currentTarget.select()}
+                  onKeyDownCapture={(event) => captureShortcut(event, field.key)}
                   aria-invalid={error ? 'true' : undefined}
-                  aria-describedby={error ? errorId : undefined}
+                  aria-describedby={describedBy}
                 />
                 {error ? <small id={errorId}>{t(error)}</small> : null}
               </label>

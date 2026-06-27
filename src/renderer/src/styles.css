@@ -1570,6 +1570,16 @@ svg {
   line-height: 1.4;
 }
 
+.general-settings__shortcut-input {
+  cursor: default;
+  user-select: all;
+}
+
+.general-settings__shortcut-input:focus {
+  border-color: var(--color-primary-focus);
+  background: var(--color-surface-2);
+}
+
 .general-settings__field-hint {
   color: var(--color-ink-tertiary);
 }

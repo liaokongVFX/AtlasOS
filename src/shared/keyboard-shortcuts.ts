@@ -27,6 +27,8 @@ const KEY_ALIASES: Record<string, string> = {
   left: 'ArrowLeft',
   pagedown: 'PageDown',
   pageup: 'PageUp',
+  '+': 'Plus',
+  plus: 'Plus',
   right: 'ArrowRight',
   space: 'Space',
   spacebar: 'Space',
