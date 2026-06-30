@@ -8,6 +8,7 @@ import {
   BROWSER_ZOOM_STEP
 } from '@shared/browser'
 import { useI18n } from '../../i18n'
+import { dispatchBrowserWebviewCanvasZoom, webviewCanvasZoomInputFromRequest } from '../../lib/browser-webview-canvas-zoom'
 import { asString, normalizeUrl } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
 
@@ -76,6 +77,17 @@ function applyWebviewZoom(webview: BrowserWebviewElement, zoomFactor: number): v
     webview.setZoomFactor(zoomFactor)
   } catch {
     // The webview can briefly reject commands before its guest WebContents is attached.
+  }
+}
+
+function readWebviewContentsId(webview: BrowserWebviewElement): number | null {
+  if (typeof webview.getWebContentsId !== 'function') return null
+
+  try {
+    const contentsId = webview.getWebContentsId()
+    return Number.isFinite(contentsId) && contentsId > 0 ? contentsId : null
+  } catch {
+    return null
   }
 }
 
@@ -151,14 +163,17 @@ function BrowserWebview({
     const webview = webviewRef.current
     if (!webview) return undefined
 
+    const refreshRegistration = () => registerWebview(tab.localId, webview)
     const applyCurrentZoom = () => applyWebviewZoom(webview, zoomFactor)
     applyCurrentZoom()
     webview.addEventListener('dom-ready', applyCurrentZoom)
+    webview.addEventListener('dom-ready', refreshRegistration)
 
     return () => {
       webview.removeEventListener('dom-ready', applyCurrentZoom)
+      webview.removeEventListener('dom-ready', refreshRegistration)
     }
-  }, [zoomFactor])
+  }, [registerWebview, tab.localId, zoomFactor])
 
   return createElement('webview', {
     allowpopups: '',
@@ -179,6 +194,7 @@ export function BrowserComponent({
 }: AtlasComponentRendererProps): JSX.Element {
   const { t } = useI18n()
   const webviewsRef = useRef(new Map<string, BrowserWebviewElement>())
+  const webviewContentsIdsRef = useRef(new Map<number, string>())
   const [address, setAddress] = useState('')
   const [snapshot, setSnapshot] = useState<string | null>(null)
 
@@ -226,8 +242,14 @@ export function BrowserComponent({
   }, [activeTab])
 
   const registerWebview = useCallback((localId: string, webview: BrowserWebviewElement | null) => {
+    for (const [contentsId, mappedLocalId] of webviewContentsIdsRef.current) {
+      if (mappedLocalId === localId) webviewContentsIdsRef.current.delete(contentsId)
+    }
+
     if (webview) {
       webviewsRef.current.set(localId, webview)
+      const contentsId = readWebviewContentsId(webview)
+      if (contentsId !== null) webviewContentsIdsRef.current.set(contentsId, localId)
     } else {
       webviewsRef.current.delete(localId)
     }
@@ -237,13 +259,14 @@ export function BrowserComponent({
   const handleUrlChange = useCallback((localId: string, url: string) => patchTab(localId, { url }), [patchTab])
 
   const webviewLocalIdForContents = useCallback((sourceWebContentsId: number): string | null => {
-    for (const [localId, webview] of webviewsRef.current) {
-      if (typeof webview.getWebContentsId !== 'function') continue
+    const mappedLocalId = webviewContentsIdsRef.current.get(sourceWebContentsId)
+    if (mappedLocalId && webviewsRef.current.has(mappedLocalId)) return mappedLocalId
 
-      try {
-        if (webview.getWebContentsId() === sourceWebContentsId) return localId
-      } catch {
-        continue
+    for (const [localId, webview] of webviewsRef.current) {
+      const contentsId = readWebviewContentsId(webview)
+      if (contentsId !== null) {
+        webviewContentsIdsRef.current.set(contentsId, localId)
+        if (contentsId === sourceWebContentsId) return localId
       }
     }
 
@@ -292,6 +315,22 @@ export function BrowserComponent({
 
     return dispose
   }, [patchTab, webviewLocalIdForContents])
+
+  useEffect(() => {
+    const subscribe = window.atlas.browser?.onWebviewCanvasZoomRequested
+    if (typeof subscribe !== 'function') return undefined
+
+    return subscribe((request) => {
+      const localId = webviewLocalIdForContents(request.sourceWebContentsId)
+      const webview = localId ? webviewsRef.current.get(localId) ?? null : null
+      if (!webview) return
+
+      const input = webviewCanvasZoomInputFromRequest(webview, request)
+      if (!input) return
+
+      dispatchBrowserWebviewCanvasZoom(input)
+    })
+  }, [webviewLocalIdForContents])
 
   useEffect(() => {
     setAddress(activeTab?.url ?? '')

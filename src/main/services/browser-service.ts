@@ -11,13 +11,15 @@ import {
   browserTypeInputSchema
 } from '@shared/ipc'
 import {
+  BROWSER_WEBVIEW_CANVAS_ZOOM_REQUESTED_CHANNEL,
   BROWSER_WEBVIEW_SCREENSHOT_CAPTURE_REQUEST_CHANNEL,
   BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL,
   BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL,
   BROWSER_ZOOM_DEFAULT_FACTOR,
   BROWSER_ZOOM_MAX_FACTOR,
   BROWSER_ZOOM_MIN_FACTOR,
-  BROWSER_ZOOM_STEP
+  BROWSER_ZOOM_STEP,
+  type BrowserWebviewCanvasZoomRequest
 } from '@shared/browser'
 import { applyAtlasBrowserNetworkPolicy, applyAtlasBrowserWebPreferences } from './browser-network-policy'
 import { handleValidated } from './ipc-helpers'
@@ -76,6 +78,33 @@ function readZoomDirection(value: unknown): -1 | 1 | null {
 
   const direction = (value as { direction?: unknown }).direction
   return direction === -1 || direction === 1 ? direction : null
+}
+
+function readFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function readWebviewCanvasZoomRequest(value: unknown): Omit<BrowserWebviewCanvasZoomRequest, 'sourceWebContentsId'> | null {
+  if (!value || typeof value !== 'object') return null
+
+  const input = value as Record<string, unknown>
+  const clientX = readFiniteNumber(input.clientX)
+  const clientY = readFiniteNumber(input.clientY)
+  const deltaMode = readFiniteNumber(input.deltaMode)
+  const deltaX = readFiniteNumber(input.deltaX) ?? 0
+  const deltaY = readFiniteNumber(input.deltaY) ?? 0
+
+  if (clientX === null || clientY === null || deltaMode === null) return null
+  if (deltaMode !== 0 && deltaMode !== 1 && deltaMode !== 2) return null
+  if (deltaX === 0 && deltaY === 0) return null
+
+  return {
+    clientX,
+    clientY,
+    deltaX,
+    deltaY,
+    deltaMode
+  }
 }
 
 function isNavigationAbort(error: unknown): boolean {
@@ -339,6 +368,15 @@ export class BrowserService {
 
     if (webContents.getType() !== 'webview') return
 
+    const canvasZoomRequest = readWebviewCanvasZoomRequest(payload)
+    if (canvasZoomRequest) {
+      this.emitWebviewCanvasZoomRequested({
+        sourceWebContentsId: webContents.id,
+        ...canvasZoomRequest
+      })
+      return
+    }
+
     const zoomFactor = this.setWebContentsZoom(webContents, nextZoomFactor(this.getCurrentZoomFactor(webContents), direction))
     if (zoomFactor !== null) {
       this.emitWebviewZoomUpdated({
@@ -377,6 +415,15 @@ export class BrowserService {
     }
 
     return zoomFactor
+  }
+
+  private emitWebviewCanvasZoomRequested(payload: BrowserWebviewCanvasZoomRequest): void {
+    if (this.window.isDestroyed()) return
+
+    const webContents = this.window.webContents
+    if (!webContents.isDestroyed()) {
+      webContents.send(BROWSER_WEBVIEW_CANVAS_ZOOM_REQUESTED_CHANNEL, payload)
+    }
   }
 
   private setTabZoom(tab: BrowserTab, value: number): void {

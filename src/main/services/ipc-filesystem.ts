@@ -1,6 +1,7 @@
 import { watch as watchFileSystem, type Dirent, type FSWatcher } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { dialog, shell, type WebContents } from 'electron'
 import fg from 'fast-glob'
@@ -21,23 +22,24 @@ import { handleValidated } from './ipc-helpers'
 
 const FILESYSTEM_SCAN_DEPTH = 64
 
-let asarDisabledDepth = 0
-let previousNoAsar = false
+type NodeFileSystem = typeof import('node:fs')
 
-async function withAsarDisabled<T>(operation: () => Promise<T>): Promise<T> {
-  if (asarDisabledDepth === 0) {
-    previousNoAsar = Boolean(process.noAsar)
-    process.noAsar = true
-  }
-  asarDisabledDepth += 1
+const requireFromHere = createRequire(import.meta.url)
+const realFileSystem = loadRealFileSystem()
+const realFileSystemAdapter: fg.FileSystemAdapter = {
+  lstat: realFileSystem.lstat,
+  lstatSync: realFileSystem.lstatSync,
+  stat: realFileSystem.stat,
+  statSync: realFileSystem.statSync,
+  readdir: realFileSystem.readdir,
+  readdirSync: realFileSystem.readdirSync
+}
 
+function loadRealFileSystem(): NodeFileSystem {
   try {
-    return await operation()
-  } finally {
-    asarDisabledDepth -= 1
-    if (asarDisabledDepth === 0) {
-      process.noAsar = previousNoAsar
-    }
+    return requireFromHere('original-fs') as NodeFileSystem
+  } catch {
+    return requireFromHere('node:fs') as NodeFileSystem
   }
 }
 
@@ -69,7 +71,7 @@ export class FileSystemService {
     handleValidated('filesystem:list-tree', listTreeInputSchema, async (_, input) => {
       const rootPath = assertInsideRoot(input.rootPath, input.rootPath)
       const targetPath = assertInsideRoot(rootPath, input.targetPath ?? rootPath)
-      return withAsarDisabled(() => this.readTree(rootPath, targetPath, input.maxDepth))
+      return this.readTree(rootPath, targetPath, input.maxDepth)
     })
 
     handleValidated('filesystem:create-file', fileOperationInputSchema, async (_, input) => {
@@ -127,15 +129,14 @@ export class FileSystemService {
 
     handleValidated('filesystem:search', searchFilesInputSchema, async (_, input) => {
       const rootPath = assertInsideRoot(input.rootPath, input.rootPath)
-      const results = await withAsarDisabled(() =>
-        fg('**/*', {
-          cwd: rootPath,
-          dot: true,
-          onlyFiles: false,
-          deep: FILESYSTEM_SCAN_DEPTH,
-          unique: true
-        })
-      )
+      const results = await fg('**/*', {
+        cwd: rootPath,
+        dot: true,
+        onlyFiles: false,
+        deep: FILESYSTEM_SCAN_DEPTH,
+        unique: true,
+        fs: realFileSystemAdapter
+      })
       const lowerQuery = input.query.toLowerCase()
       return results
         .filter((item) => item.toLowerCase().includes(lowerQuery))
@@ -234,7 +235,7 @@ export class FileSystemService {
 
   private async entryFor(rootPath: string, targetPath: string, depth: number, dirent?: Dirent): Promise<FileEntry> {
     const safePath = assertInsideRoot(rootPath, targetPath)
-    const info = dirent ? null : await lstat(safePath)
+    const info = dirent ? null : await realFileSystem.promises.lstat(safePath)
     const kind = dirent ? (dirent.isDirectory() ? 'directory' : 'file') : info?.isDirectory() ? 'directory' : 'file'
     const entry: FileEntry = {
       id: safePath,
@@ -247,7 +248,7 @@ export class FileSystemService {
 
     if (kind === 'directory' && depth > 0) {
       entry.childrenLoaded = true
-      const dirents = await readdir(safePath, { withFileTypes: true })
+      const dirents = await realFileSystem.promises.readdir(safePath, { withFileTypes: true })
       entry.children = await Promise.all(
         dirents
           .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))

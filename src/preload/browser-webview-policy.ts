@@ -3,7 +3,7 @@ import {
   BROWSER_WEBVIEW_SCREENSHOT_CAPTURE_REQUEST_CHANNEL,
   BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL,
   BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL,
-  browserZoomDirectionFromWheel
+  browserZoomRequestFromWheel
 } from '@shared/browser'
 
 const AI_DOUBLE_CTRL_INTERVAL_MS = 450
@@ -48,13 +48,13 @@ function selectedText(): string {
 document.addEventListener(
   'wheel',
   (event) => {
-    const direction = browserZoomDirectionFromWheel(event)
-    if (!direction) return
+    const request = browserZoomRequestFromWheel(event)
+    if (!request) return
 
     event.preventDefault()
     event.stopPropagation()
     event.stopImmediatePropagation?.()
-    ipcRenderer.send(BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL, { direction })
+    ipcRenderer.send(BROWSER_WEBVIEW_ZOOM_REQUEST_CHANNEL, request)
   },
   { capture: true, passive: false }
 )

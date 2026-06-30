@@ -26,10 +26,12 @@ import type { AtlasUpdateState } from '@shared/updates'
 import type { ClaudeHistoryListResult, ClaudeHistorySessionDetail } from '@shared/claude-history'
 import type { CodexHistoryListResult, CodexHistorySessionDetail } from '@shared/codex-history'
 import type { GitBranchSummary, GitCommitSummary, GitDiffResult, GitOperationResult, GitStashEntry, GitStatusSnapshot, GitSummary } from '@shared/git'
+import type { BrowserWebviewCanvasZoomRequest } from '@shared/browser'
 
 type Listener<T> = (payload: T) => void
 
 const AI_SCREENSHOT_CAPTURE_SESSION_CHANNEL = 'ai:screenshot-capture-session'
+const BROWSER_WEBVIEW_CANVAS_ZOOM_REQUESTED_CHANNEL = 'browser:webview-canvas-zoom-requested'
 
 type OpenSettingsRequest = {
   sectionId?: string
@@ -319,7 +321,9 @@ const atlasApi = {
     onWebviewOpenTabRequested: (listener: Listener<{ sourceWebContentsId: number; url: string }>) =>
       on('browser:webview-open-tab-requested', listener),
     onWebviewZoomUpdated: (listener: Listener<{ sourceWebContentsId: number; zoomFactor: number }>) =>
-      on('browser:webview-zoom-updated', listener)
+      on('browser:webview-zoom-updated', listener),
+    onWebviewCanvasZoomRequested: (listener: Listener<BrowserWebviewCanvasZoomRequest>) =>
+      on(BROWSER_WEBVIEW_CANVAS_ZOOM_REQUESTED_CHANNEL, listener)
   },
   plugins: {
     getSettings: () => ipcRenderer.invoke('plugins:get-settings', {}) as Promise<PluginSettings>,

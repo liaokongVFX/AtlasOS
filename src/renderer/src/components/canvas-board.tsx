@@ -19,6 +19,7 @@ import type { Measurable } from '@radix-ui/rect'
 import type { CanvasComponent, CanvasDocument, CanvasGroup, ComponentType, FileEntry, Frame } from '@shared/schema'
 import type { PetAlertTarget } from '@shared/pet'
 import { keyboardEventMatchesShortcut } from '@shared/keyboard-shortcuts'
+import { subscribeBrowserWebviewCanvasZoom } from '../lib/browser-webview-canvas-zoom'
 import { notifyCanvasViewportSync } from '../lib/canvas-viewport-sync'
 import { stackedFileComponentPosition, type CanvasFileSource } from '../lib/file-component-factory'
 import { fileName, getFilePreviewKind } from '../lib/file-types'
@@ -64,6 +65,14 @@ function componentCanvasZoom(component: CanvasComponent, canvasZoom: number): nu
 type ScreenPosition = {
   x: number
   y: number
+}
+
+type CanvasWheelZoomInput = {
+  clientX: number
+  clientY: number
+  deltaMode: number
+  deltaX: number
+  deltaY: number
 }
 
 type PaneActivation = {
@@ -116,6 +125,10 @@ const CANVAS_DESELECT_SHORTCUT_BLOCKLIST_SELECTOR = [
 ].join(',')
 // Middle and right mouse buttons keep viewport panning; left drag is reserved for marquee selection.
 const CANVAS_PAN_MOUSE_BUTTONS = [1, 2]
+const CANVAS_MIN_ZOOM = 0.15
+const CANVAS_MAX_ZOOM = 2.4
+const CANVAS_CTRL_WHEEL_ZOOM_SPEED = 0.0015
+const CANVAS_WHEEL_LINE_HEIGHT_PX = 16
 const CANVAS_CREATE_DOUBLE_CLICK_INTERVAL_MS = 500
 const CANVAS_CREATE_DOUBLE_CLICK_DISTANCE_PX = 8
 
@@ -457,6 +470,29 @@ function frameCenter(frame: Frame): { x: number; y: number } {
     x: frame.x + frame.width / 2,
     y: frame.y + frame.height / 2
   }
+}
+
+function clampCanvasZoom(zoom: number): number {
+  return Math.min(Math.max(zoom, CANVAS_MIN_ZOOM), CANVAS_MAX_ZOOM)
+}
+
+function wheelDeltaYInPixels(event: CanvasWheelZoomInput, pageHeight: number): number {
+  const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX
+
+  if (event.deltaMode === globalThis.WheelEvent.DOM_DELTA_LINE) {
+    return delta * CANVAS_WHEEL_LINE_HEIGHT_PX
+  }
+
+  if (event.deltaMode === globalThis.WheelEvent.DOM_DELTA_PAGE) {
+    return delta * pageHeight
+  }
+
+  return delta
+}
+
+function ctrlWheelZoomFactor(event: CanvasWheelZoomInput, pageHeight: number): number {
+  const deltaY = wheelDeltaYInPixels(event, pageHeight)
+  return deltaY === 0 ? 1 : Math.exp(-deltaY * CANVAS_CTRL_WHEEL_ZOOM_SPEED)
 }
 
 function closestFlowNodeId(target: EventTarget | null): string | null {
@@ -1317,6 +1353,77 @@ export function CanvasBoard(): JSX.Element {
     lastPointerScreenPositionRef.current = null
   }, [])
 
+  const applyCanvasCtrlWheelZoom = useCallback(
+    (event: CanvasWheelZoomInput): boolean => {
+      if (!activeCanvasId) return false
+      const board = canvasBoardRef.current
+      if (!board) return false
+
+      const flowElement = board.querySelector<HTMLElement>('.react-flow')
+      if (!flowElement) return false
+
+      const flowBounds = flowElement.getBoundingClientRect()
+      if (flowBounds.width <= 0 || flowBounds.height <= 0) return false
+
+      const zoomFactor = ctrlWheelZoomFactor(event, flowBounds.height)
+      if (zoomFactor === 1) return false
+
+      closeCreateMenu()
+
+      const currentViewport = reactFlow.getViewport()
+      const nextZoom = clampCanvasZoom(currentViewport.zoom * zoomFactor)
+      if (nextZoom === currentViewport.zoom) return true
+
+      const flowPosition = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      const pointerX = event.clientX - flowBounds.left
+      const pointerY = event.clientY - flowBounds.top
+      const nextViewport = {
+        x: pointerX - flowPosition.x * nextZoom,
+        y: pointerY - flowPosition.y * nextZoom,
+        zoom: nextZoom
+      }
+
+      notifyCanvasViewportSync({ ...nextViewport, phase: 'move' })
+      void reactFlow
+        .setViewport(nextViewport, { duration: 0 })
+        .then(() => notifyCanvasViewportSync({ ...nextViewport, phase: 'end' }))
+        .catch(() => notifyCanvasViewportSync(typeof reactFlow.getViewport === 'function' ? reactFlow.getViewport() : nextViewport))
+
+      return true
+    },
+    [activeCanvasId, closeCreateMenu, reactFlow]
+  )
+
+  const handleCanvasCtrlWheel = useCallback(
+    (event: globalThis.WheelEvent) => {
+      if (!event.ctrlKey) return
+
+      const board = canvasBoardRef.current
+      const target = event.target
+      if (!board || !(target instanceof Node) || !board.contains(target)) return
+      if (!applyCanvasCtrlWheelZoom(event)) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+    },
+    [applyCanvasCtrlWheelZoom]
+  )
+
+  useEffect(() => {
+    const board = canvasBoardRef.current
+    if (!board) return undefined
+
+    board.addEventListener('wheel', handleCanvasCtrlWheel, { capture: true, passive: false })
+    return () => {
+      board.removeEventListener('wheel', handleCanvasCtrlWheel, { capture: true })
+    }
+  }, [handleCanvasCtrlWheel])
+
+  useEffect(() => {
+    return subscribeBrowserWebviewCanvasZoom(applyCanvasCtrlWheelZoom)
+  }, [applyCanvasCtrlWheelZoom])
+
   const openCreateMenuAtScreenPosition = useCallback(
     (screenPosition: ScreenPosition) => {
       const flowPosition = reactFlow.screenToFlowPosition(screenPosition)
@@ -2011,8 +2118,8 @@ export function CanvasBoard(): JSX.Element {
         onDragLeave={handleDragLeave}
         onDrop={dropFile}
         defaultViewport={canvas.viewport}
-        minZoom={0.15}
-        maxZoom={2.4}
+        minZoom={CANVAS_MIN_ZOOM}
+        maxZoom={CANVAS_MAX_ZOOM}
         deleteKeyCode={null}
         zoomOnDoubleClick={false}
         panOnDrag={CANVAS_PAN_MOUSE_BUTTONS}

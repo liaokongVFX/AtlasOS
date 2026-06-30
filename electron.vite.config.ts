@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import type { Plugin } from 'vite'
 import { createExcalidrawAssetPlugin } from './src/build/excalidraw-asset-plugin'
 
 const DEFAULT_RENDERER_DEV_PORT = 14200
@@ -12,6 +13,24 @@ const rendererDevPort =
   requestedRendererDevPort <= 65535
     ? requestedRendererDevPort
     : DEFAULT_RENDERER_DEV_PORT
+
+function sandboxedPreloadSingleFileGuard(): Plugin {
+  return {
+    name: 'atlas-sandboxed-preload-single-file-guard',
+    apply: 'build',
+    generateBundle(_, bundle) {
+      const chunkFiles = Object.values(bundle)
+        .filter((asset) => asset.type === 'chunk' && !asset.isEntry)
+        .map((asset) => asset.fileName)
+
+      if (chunkFiles.length === 0) return
+
+      this.error(
+        `Sandboxed Electron preload entries must be self-contained. Remove shared preload chunks: ${chunkFiles.join(', ')}`
+      )
+    }
+  }
+}
 
 export default defineConfig({
   main: {
@@ -30,7 +49,7 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin(), sandboxedPreloadSingleFileGuard()],
     resolve: {
       alias: {
         '@shared': resolve('src/shared')

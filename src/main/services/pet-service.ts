@@ -1619,7 +1619,9 @@ export class PetService {
   }
 
   private getAgentSessionsForRuntime(canvases: CanvasDocument[]): PetAgentSession[] {
-    const sessions = visibleAgentSessions(this.agentSessions)
+    const sessions = visibleAgentSessions(
+      new Map([...this.agentSessions].filter(([, session]) => session.status !== 'completed' && session.status !== 'error'))
+    )
     if (sessions.length === 0) return sessions
 
     return agentSessionsWithComponentTitles(sessions, canvases)
