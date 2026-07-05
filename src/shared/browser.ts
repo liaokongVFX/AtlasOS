@@ -9,15 +9,18 @@ export const BROWSER_ZOOM_STEP = 0.1
 
 export type BrowserWebviewCanvasZoomRequest = {
   sourceWebContentsId: number
-  clientX: number
-  clientY: number
+  clientX?: number
+  clientY?: number
   deltaX: number
   deltaY: number
   deltaMode: number
+  anchor?: 'center'
 }
 
-export type BrowserWebviewZoomRequest = Omit<BrowserWebviewCanvasZoomRequest, 'sourceWebContentsId'> & {
+export type BrowserWebviewZoomRequest = Omit<BrowserWebviewCanvasZoomRequest, 'sourceWebContentsId' | 'clientX' | 'clientY' | 'anchor'> & {
   direction: -1 | 1
+  clientX: number
+  clientY: number
 }
 
 export function browserZoomDirectionFromWheel(event: Pick<WheelEvent, 'ctrlKey' | 'deltaX' | 'deltaY'>): -1 | 1 | null {

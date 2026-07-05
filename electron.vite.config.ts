@@ -4,15 +4,9 @@ import react from '@vitejs/plugin-react'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import type { Plugin } from 'vite'
 import { createExcalidrawAssetPlugin } from './src/build/excalidraw-asset-plugin'
+import { resolveRendererDevPort } from './src/build/dev-server-port'
 
-const DEFAULT_RENDERER_DEV_PORT = 14200
-const requestedRendererDevPort = Number.parseInt(process.env.ATLAS_RENDERER_PORT ?? '', 10)
-const rendererDevPort =
-  Number.isInteger(requestedRendererDevPort) &&
-  requestedRendererDevPort > 0 &&
-  requestedRendererDevPort <= 65535
-    ? requestedRendererDevPort
-    : DEFAULT_RENDERER_DEV_PORT
+const rendererDevPort = resolveRendererDevPort(process.env.ATLAS_RENDERER_PORT)
 
 function sandboxedPreloadSingleFileGuard(): Plugin {
   return {

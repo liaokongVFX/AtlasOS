@@ -51,6 +51,7 @@ type BrowserBounds = {
 
 const HIDDEN_BOUNDS: BrowserBounds = { x: 0, y: 0, width: 0, height: 0 }
 const BROWSER_CONTENT_BACKGROUND = '#ffffff'
+const WEBVIEW_CANVAS_ZOOM_CHANGED_DELTA_PX = 100
 
 function childBoundsForClippedContainer(containerBounds: BrowserBounds, contentBounds: BrowserBounds): BrowserBounds {
   return {
@@ -121,6 +122,19 @@ export class BrowserService {
   private zoomRequestHandler: ((event: IpcMainEvent, payload: unknown) => void) | null = null
 
   constructor(private readonly window: BrowserWindow, private readonly options: BrowserServiceOptions = {}) {}
+
+  handleDomWebviewZoomChanged(webContents: WebContents, zoomDirection: 'in' | 'out'): boolean {
+    if (webContents.getType() !== 'webview') return false
+
+    this.emitWebviewCanvasZoomRequested({
+      sourceWebContentsId: webContents.id,
+      anchor: 'center',
+      deltaMode: 0,
+      deltaX: 0,
+      deltaY: zoomDirection === 'in' ? -WEBVIEW_CANVAS_ZOOM_CHANGED_DELTA_PX : WEBVIEW_CANVAS_ZOOM_CHANGED_DELTA_PX
+    })
+    return true
+  }
 
   registerIpc(): void {
     this.zoomRequestHandler = (event, payload) => this.handleGuestZoomRequest(event.sender, payload)

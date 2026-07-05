@@ -45,7 +45,7 @@ function selectedText(): string {
   return selectedInputText(document.activeElement) || window.getSelection()?.toString().trim() || ''
 }
 
-document.addEventListener(
+window.addEventListener(
   'wheel',
   (event) => {
     const request = browserZoomRequestFromWheel(event)

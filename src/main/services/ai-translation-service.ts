@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { BrowserWindow, clipboard, desktopCapturer, nativeImage, screen, shell, type DesktopCapturerSource } from 'electron'
+import { BrowserWindow, clipboard, nativeImage, screen, shell } from 'electron'
 import { z } from 'zod'
 import {
   aiScreenshotImageInputSchema,
@@ -40,12 +40,14 @@ import { AppSettingsService } from './app-settings-service'
 import { AiKeyStore } from './ai-key-store'
 import { captureWindowsSelectedText } from './windows-selection-capture'
 import { startWindowsDoubleCtrlHook, type WindowsDoubleCtrlHookHandle } from './windows-double-ctrl-hook'
+import { captureScreenshotDisplays } from './screenshot-capture-engine'
 
 type AiTranslationServiceOptions = {
   appSettingsService: AppSettingsService
   getMainWindow: () => BrowserWindow | null
   loadTranslationRenderer: (targetWindow: BrowserWindow) => Promise<void>
   loadCaptureRenderer: (targetWindow: BrowserWindow) => Promise<void>
+  captureDisplays?: (displays: Electron.Display[]) => Promise<AiScreenshotCaptureDisplay[]>
   keyStore?: AiKeyStore
 }
 
@@ -74,7 +76,7 @@ type ParsedScreenshotImage = {
 type TranslationPromptMode = 'standard' | 'retry-unchanged'
 type TranslationTargetKind = 'auto' | 'chinese' | 'english' | 'other'
 
-const TRANSLATION_WINDOW_WIDTH = 640
+const TRANSLATION_WINDOW_WIDTH = 800
 const TRANSLATION_WINDOW_HEIGHT = 440
 const TRANSLATION_WINDOW_MARGIN = 16
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -279,13 +281,6 @@ function virtualBoundsForDisplays(displays: Electron.Display[]): AiScreenshotCap
     width: maxX - minX,
     height: maxY - minY
   })
-}
-
-function thumbnailSizeForDisplays(displays: Electron.Display[]): Electron.Size {
-  return {
-    width: Math.max(1, ...displays.map((display) => Math.round(display.bounds.width * display.scaleFactor))),
-    height: Math.max(1, ...displays.map((display) => Math.round(display.bounds.height * display.scaleFactor)))
-  }
 }
 
 function modelSelection(profile: AiProfile | undefined): AiModelSelection {
@@ -497,7 +492,7 @@ export class AiTranslationService {
 
     const virtualBounds = virtualBoundsForDisplays(displays)
     const windowPromise = this.ensureScreenshotCaptureWindow()
-    const captureDisplays = await this.captureDisplays(displays)
+    const captureDisplays = await (this.options.captureDisplays ?? captureScreenshotDisplays)(displays)
     const session: AiScreenshotCaptureSession = {
       id: randomUUID(),
       source,
@@ -613,36 +608,6 @@ export class AiTranslationService {
     }
 
     return this.activeScreenshotSession
-  }
-
-  private async captureDisplays(displays: Electron.Display[]): Promise<AiScreenshotCaptureDisplay[]> {
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: thumbnailSizeForDisplays(displays),
-      fetchWindowIcons: false
-    })
-    return displays.map((display, index) => this.captureDisplay(display, index, sources))
-  }
-
-  private captureDisplay(
-    display: Electron.Display,
-    displayIndex: number,
-    sources: DesktopCapturerSource[]
-  ): AiScreenshotCaptureDisplay {
-    const source = sources.find((candidate) => candidate.display_id === String(display.id)) ?? sources[displayIndex] ?? sources[0]
-    if (!source || source.thumbnail.isEmpty()) throw new Error(`Unable to capture display ${display.id}`)
-
-    const imageSize = source.thumbnail.getSize()
-    return {
-      id: String(display.id),
-      bounds: captureBoundsFromRectangle(display.bounds),
-      scaleFactor: display.scaleFactor,
-      imageDataUrl: source.thumbnail.toDataURL(),
-      imageSize: {
-        width: imageSize.width,
-        height: imageSize.height
-      }
-    }
   }
 
   private async requestOpenAiImageText(

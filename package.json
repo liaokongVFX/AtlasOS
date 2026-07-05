@@ -64,6 +64,7 @@
     "lucide-react": "^0.553.0",
     "nanoid": "^5.1.6",
     "node-pty": "^1.0.0",
+    "node-screenshots": "^0.2.8",
     "react": "^19.2.0",
     "react-arborist": "^3.4.3",
     "react-diff-view": "^3.3.3",
@@ -108,7 +109,8 @@
       "output": "release"
     },
     "asarUnpack": [
-      "node_modules/node-pty/**/*"
+      "node_modules/node-pty/**/*",
+      "node_modules/node-screenshots*/**/*"
     ],
     "afterPack": "scripts/verify-node-pty-after-pack.cjs",
     "files": [

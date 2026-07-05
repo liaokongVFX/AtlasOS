@@ -61,6 +61,12 @@ app.on('web-contents-created', (_event, contents) => {
 
   applyAtlasBrowserNetworkPolicy(contents)
 
+  contents.on('zoom-changed', (event, zoomDirection) => {
+    if (!browserService?.handleDomWebviewZoomChanged(contents, zoomDirection)) return
+
+    event.preventDefault()
+  })
+
   contents.setWindowOpenHandler(({ url }) => {
     if (isBrowserNavigableUrl(url)) {
       const target = mainWindow?.webContents
