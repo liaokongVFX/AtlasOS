@@ -3325,6 +3325,18 @@ svg {
   background: var(--color-canvas);
 }
 
+/*
+ * Terminal nodes live under React Flow's CSS transform tree. Without an isolated
+ * paint layer, Chromium can leave a 1-cell-wide stale strip on the left edge
+ * after long scrollback scrolls (especially Claude Code output).
+ */
+.terminal-module__screen .xterm-screen,
+.terminal-module__screen .xterm-rows {
+  transform: translateZ(0);
+  isolation: isolate;
+  backface-visibility: hidden;
+}
+
 .terminal-module__commands {
   position: relative;
   min-width: 0;

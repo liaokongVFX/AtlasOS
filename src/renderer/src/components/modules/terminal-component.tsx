@@ -254,6 +254,81 @@ function installTransformedCanvasMouseFix(terminal: Terminal): Disposable {
   }
 }
 
+/**
+ * 开启 DECSET 1000/1002/1003（以及 1006 SGR）后，xterm 会通过 onData 发出完整鼠标上报。
+ * 在画布内嵌终端里，节点仍选中但 xterm textarea 并未真正持有键盘焦点时也会触发这些序列；
+ * Codex 会把它们当成普通输入，退格也很难干净清掉。
+ *
+ * 这里只匹配“整段都是鼠标上报”的 payload，普通按键和 DEC 焦点上报（CSI I / CSI O）继续放行。
+ */
+function isTerminalMouseReportData(data: string): boolean {
+  if (!data.startsWith('\x1b[')) return false
+  return /^(?:\x1b\[<\d+(?:;\d+){0,2}[Mm]|\x1b\[M[\s\S]{3})+$/.test(data)
+}
+
+function isTerminalTextareaFocused(container: HTMLElement | null | undefined): boolean {
+  if (!container || typeof document === 'undefined') return false
+  if (typeof document.hasFocus === 'function' && !document.hasFocus()) return false
+
+  const activeElement = document.activeElement
+  if (!(activeElement instanceof HTMLElement)) return false
+  return container.contains(activeElement)
+}
+
+function shouldWriteTerminalUserInput(data: string, container: HTMLElement | null | undefined): boolean {
+  if (!isTerminalMouseReportData(data)) return true
+  return isTerminalTextareaFocused(container)
+}
+
+function isWindowsHost(): boolean {
+  if (typeof navigator === 'undefined') return false
+
+  const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
+  if (typeof platform === 'string' && platform.trim()) {
+    return platform.toLowerCase() === 'windows'
+  }
+
+  return /windows/i.test(navigator.userAgent)
+}
+
+function createWindowsPtyOption(): { backend: 'conpty' } | undefined {
+  return isWindowsHost() ? { backend: 'conpty' } : undefined
+}
+
+function installTerminalScrollPaintFix(terminal: Terminal, container: HTMLElement): Disposable {
+  const viewport = container.querySelector<HTMLElement>('.xterm-viewport')
+  if (!viewport) return { dispose: () => undefined }
+
+  let repaintPending = false
+  let wasAtBottom = terminal.buffer.active.viewportY === terminal.buffer.active.baseY
+  const handleViewportScroll = (): void => {
+    const activeBuffer = terminal.buffer.active
+    const isAtBottom = activeBuffer.viewportY === activeBuffer.baseY
+
+    // Output-following scrollTop updates also emit DOM scroll events. Repaint only
+    // while viewing scrollback or once when returning from scrollback to the bottom.
+    if (!isAtBottom || !wasAtBottom) repaintPending = true
+    wasAtBottom = isAtBottom
+  }
+
+  viewport.addEventListener('scroll', handleViewportScroll, { passive: true })
+  const renderDisposable = terminal.onRender(() => {
+    if (!repaintPending) return
+
+    // xterm renders after the viewport scroll. Clear first so the forced refresh's
+    // own render event cannot schedule another refresh loop.
+    repaintPending = false
+    terminal.refresh(0, terminal.rows - 1)
+  })
+
+  return {
+    dispose: () => {
+      viewport.removeEventListener('scroll', handleViewportScroll)
+      renderDisposable.dispose()
+    }
+  }
+}
+
 function readNativeClipboardText(): string {
   const readText = window.atlas?.clipboard?.readText
   if (typeof readText !== 'function') return ''
@@ -425,9 +500,12 @@ function isTerminalPasteShortcut(event: KeyboardEvent): boolean {
   return (hasPrimaryModifier && key === 'v') || (event.shiftKey && key === 'insert')
 }
 
-function openTerminalWebLink(event: MouseEvent, uri: string): void {
+function openTerminalWebLink(event: MouseEvent, uri: string, terminal?: Terminal): void {
+  // Prevent default navigation only. Do not stopPropagation: xterm SelectionService
+  // registers document-level mouseup during mousedown; blocking bubble leaves the
+  // terminal stuck in drag-selection mode after the link opens in an external browser.
   event.preventDefault()
-  event.stopPropagation()
+  terminal?.clearSelection()
   void window.atlas.launcher.open({ kind: 'url', url: uri }).catch((error) => {
     console.warn('Failed to open terminal link', error)
   })
@@ -783,7 +861,15 @@ export function TerminalComponent({
       if (!pendingFocusRef.current || !isNodeSelectedRef.current) return
 
       const currentInstance = terminalRef.current
-      if (!currentInstance || !containerRef.current?.isConnected) return
+      const currentContainer = containerRef.current
+      if (!currentInstance || !currentContainer?.isConnected) return
+
+      // textarea 已持有焦点时不要再次 focus()，否则会重复触发 DEC 焦点上报（CSI I），
+      // 在 Codex 一类应用里表现为 [I 被当输入写进去。
+      if (isTerminalTextareaFocused(currentContainer)) {
+        pendingFocusRef.current = false
+        return
+      }
 
       currentInstance.focus()
       pendingFocusRef.current = false
@@ -1026,6 +1112,7 @@ export function TerminalComponent({
     let dataDisposable: Disposable | null = null
     let selectionDisposable: Disposable | null = null
     let transformedCanvasMouseFix: Disposable | null = null
+    let scrollPaintFix: Disposable | null = null
     let disposeData: () => void = () => undefined
     let disposeExit: () => void = () => undefined
     let unregisterTranslationSelectionProvider: () => void = () => undefined
@@ -1077,6 +1164,7 @@ export function TerminalComponent({
     const initializeTerminal = (): void => {
       if (disposed) return
 
+      const windowsPty = createWindowsPtyOption()
       const instance = new Terminal({
         cursorBlink: true,
         cursorStyle: 'bar',
@@ -1090,7 +1178,8 @@ export function TerminalComponent({
           foreground: '#f7f8f8',
           cursor: '#828fff',
           selectionBackground: '#5e6ad24d'
-        }
+        },
+        ...(windowsPty ? { windowsPty } : {})
       })
 
       terminal = instance
@@ -1099,9 +1188,10 @@ export function TerminalComponent({
 
       instance.loadAddon(fitAddon)
       instance.loadAddon(new SearchAddon())
-      instance.loadAddon(new WebLinksAddon(openTerminalWebLink))
+      instance.loadAddon(new WebLinksAddon((event, uri) => openTerminalWebLink(event, uri, instance)))
       instance.open(container)
       transformedCanvasMouseFix = installTransformedCanvasMouseFix(instance)
+      scrollPaintFix = installTerminalScrollPaintFix(instance, container)
       selectionDisposable = instance.onSelectionChange(refreshTerminalSelectionSnapshot)
       unregisterTranslationSelectionProvider = registerTranslationSelectionProvider(() => {
         if (!container.isConnected || terminalRef.current !== instance || !isNodeSelectedRef.current) return ''
@@ -1181,7 +1271,12 @@ export function TerminalComponent({
       }
 
       dataDisposable = instance.onData((data) => {
-        if (sessionIdRef.current) void window.atlas.terminal.write(sessionIdRef.current, data)
+        const sessionId = sessionIdRef.current
+        if (!sessionId) return
+        // 仅在 xterm textarea 真正聚焦时转发鼠标上报；焦点上报（CSI I/O）仍放行，
+        // 因为 blur 后本来就不聚焦，仍需要发出 [O。
+        if (!shouldWriteTerminalUserInput(data, container)) return
+        void window.atlas.terminal.write(sessionId, data)
       })
 
       resizeObserver = new ResizeObserver(scheduleFit)
@@ -1284,6 +1379,7 @@ export function TerminalComponent({
       dataDisposable?.dispose()
       selectionDisposable?.dispose()
       transformedCanvasMouseFix?.dispose()
+      scrollPaintFix?.dispose()
       resizeObserver?.disconnect()
       sessionIdRef.current = null
       terminalRef.current = null
