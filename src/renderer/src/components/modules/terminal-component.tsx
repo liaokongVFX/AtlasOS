@@ -20,6 +20,7 @@ import {
   mergeTerminalEnvironments,
   normalizeTerminalEnvironment,
   normalizeTerminalEnvironmentNames,
+  omitTerminalEnvironment,
   pickTerminalEnvironment,
   type TerminalEnvironment
 } from '@shared/terminal-environment'
@@ -51,6 +52,7 @@ type XtermMouseService = {
 type XtermSelectionService = {
   _screenElement?: HTMLElement
   _getMouseEventScrollAmount?: (event: MouseEvent) => number
+  shouldForceSelection?: (event: MouseEvent) => boolean
 }
 
 type XtermCore = {
@@ -80,6 +82,8 @@ type NativeClipboardFilesResult = Awaited<ReturnType<(typeof window)['atlas']['t
 
 type TerminalClipboardShortcutHandlers = {
   getSelectionText: () => string
+  isCopyShortcutActive: () => boolean
+  getContainer: () => HTMLElement | null
   onClearSelection: () => void
   onCopySelection: (text: string) => void
 }
@@ -218,6 +222,7 @@ function installTransformedCanvasMouseFix(terminal: Terminal): Disposable {
   const originalGetCoords = mouseService?.getCoords
   const originalGetMouseReportCoords = mouseService?.getMouseReportCoords
   const originalGetMouseEventScrollAmount = selectionService?._getMouseEventScrollAmount
+  const originalShouldForceSelection = selectionService?.shouldForceSelection
 
   if (mouseService && originalGetCoords) {
     mouseService.getCoords = function getCoordsWithCanvasTransformFix(event, element, ...args) {
@@ -241,6 +246,22 @@ function installTransformedCanvasMouseFix(terminal: Terminal): Disposable {
     }
   }
 
+  /**
+   * Claude Code / Codex enable DEC mouse tracking, which makes xterm disable
+   * normal drag selection and only allow Shift/Option forced selection.
+   * In this canvas-embedded terminal, copy/select is the primary interaction,
+   * so always force selection. Hold Alt to fall back to the original policy
+   * when a TUI truly needs raw mouse events.
+   */
+  if (selectionService && originalShouldForceSelection) {
+    selectionService.shouldForceSelection = function shouldForceSelectionForEmbeddedTerminal(event) {
+      if (event.altKey) {
+        return originalShouldForceSelection.call(selectionService, event)
+      }
+      return true
+    }
+  }
+
   return {
     dispose: () => {
       if (mouseService && originalGetCoords) {
@@ -250,8 +271,29 @@ function installTransformedCanvasMouseFix(terminal: Terminal): Disposable {
       if (selectionService && originalGetMouseEventScrollAmount) {
         selectionService._getMouseEventScrollAmount = originalGetMouseEventScrollAmount
       }
+      if (selectionService && originalShouldForceSelection) {
+        selectionService.shouldForceSelection = originalShouldForceSelection
+      }
     }
   }
+}
+
+function isNativeCopyTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    // xterm's helper textarea is not a real text field for OS copy; we own that path.
+    if (target.classList.contains('xterm-helper-textarea')) return false
+    return true
+  }
+
+  return target.isContentEditable
+}
+
+function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
+  if (event.type !== 'keydown' || event.altKey || event.defaultPrevented) return false
+  if (!(event.ctrlKey || event.metaKey)) return false
+  return event.key.toLowerCase() === 'c'
 }
 
 /**
@@ -295,36 +337,73 @@ function createWindowsPtyOption(): { backend: 'conpty' } | undefined {
   return isWindowsHost() ? { backend: 'conpty' } : undefined
 }
 
-function installTerminalScrollPaintFix(terminal: Terminal, container: HTMLElement): Disposable {
+/**
+ * Terminal nodes sit under React Flow's CSS transform tree. Chromium can keep a
+ * composited snapshot of the xterm surface after the row DOM is already correct,
+ * which shows up as a 1-cell-wide left column of stale glyphs after scrollback
+ * scrolls or full-screen redraws (Claude Code /clear is a common trigger).
+ *
+ * xterm.refresh() only rebuilds DOM and does not invalidate that GPU layer, so
+ * we force a tiny transform change on the screen surface after:
+ * - viewport scroll (scrollback browsing)
+ * - full-viewport renders (clear / resize / full refresh)
+ */
+function installTerminalCompositorPaintFix(terminal: Terminal, container: HTMLElement): Disposable {
+  const surface =
+    container.querySelector<HTMLElement>('.xterm-screen') ??
+    container.querySelector<HTMLElement>('.xterm') ??
+    container
   const viewport = container.querySelector<HTMLElement>('.xterm-viewport')
-  if (!viewport) return { dispose: () => undefined }
 
   let repaintPending = false
+  let frame: number | null = null
+  let paintToken = 0
   let wasAtBottom = terminal.buffer.active.viewportY === terminal.buffer.active.baseY
+
+  const flushCompositorRepaint = (): void => {
+    frame = null
+    if (!repaintPending || !surface.isConnected) return
+    repaintPending = false
+
+    paintToken = paintToken === 0 ? 1 : 0
+    // Alternating sub-pixel Z keeps the layer promoted while forcing Chromium to
+    // discard the previous composited bitmap under parent canvas transforms.
+    surface.style.transform = paintToken === 0 ? 'translate3d(0, 0, 0)' : 'translate3d(0, 0, 0.01px)'
+  }
+
+  const scheduleCompositorRepaint = (): void => {
+    repaintPending = true
+    if (frame !== null) return
+    frame = window.requestAnimationFrame(flushCompositorRepaint)
+  }
+
   const handleViewportScroll = (): void => {
     const activeBuffer = terminal.buffer.active
     const isAtBottom = activeBuffer.viewportY === activeBuffer.baseY
 
-    // Output-following scrollTop updates also emit DOM scroll events. Repaint only
-    // while viewing scrollback or once when returning from scrollback to the bottom.
-    if (!isAtBottom || !wasAtBottom) repaintPending = true
+    if (!isAtBottom || !wasAtBottom) scheduleCompositorRepaint()
     wasAtBottom = isAtBottom
   }
 
-  viewport.addEventListener('scroll', handleViewportScroll, { passive: true })
-  const renderDisposable = terminal.onRender(() => {
-    if (!repaintPending) return
+  viewport?.addEventListener('scroll', handleViewportScroll, { passive: true })
 
-    // xterm renders after the viewport scroll. Clear first so the forced refresh's
-    // own render event cannot schedule another refresh loop.
-    repaintPending = false
-    terminal.refresh(0, terminal.rows - 1)
+  const renderDisposable = terminal.onRender((event) => {
+    // Full-viewport redraws cover clear/resize/scroll refreshes. Partial row
+    // updates during streaming are left alone to avoid per-frame layer thrash.
+    if (event.start <= 0 && event.end >= Math.max(0, terminal.rows - 1)) {
+      scheduleCompositorRepaint()
+    }
   })
 
   return {
     dispose: () => {
-      viewport.removeEventListener('scroll', handleViewportScroll)
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame)
+        frame = null
+      }
+      viewport?.removeEventListener('scroll', handleViewportScroll)
       renderDisposable.dispose()
+      surface.style.removeProperty('transform')
     }
   }
 }
@@ -341,33 +420,61 @@ function readNativeClipboardText(): string {
   }
 }
 
-function installTerminalClipboardShortcuts(terminal: Terminal, handlers: TerminalClipboardShortcutHandlers): void {
+function installTerminalClipboardShortcuts(terminal: Terminal, handlers: TerminalClipboardShortcutHandlers): Disposable {
+  const copySelectionFromEvent = (
+    event: KeyboardEvent,
+    options?: { onlyWhenTextareaBlurred?: boolean; requireActiveNode?: boolean }
+  ): boolean => {
+    if (!isTerminalCopyShortcut(event)) return false
+    if (options?.requireActiveNode && !handlers.isCopyShortcutActive()) return false
+    if (options?.onlyWhenTextareaBlurred && isTerminalTextareaFocused(handlers.getContainer())) return false
+    if (isNativeCopyTarget(event.target)) return false
+
+    const selectedText = handlers.getSelectionText()
+    if (!selectedText) return false
+
+    event.preventDefault()
+    event.stopPropagation()
+    handlers.onCopySelection(selectedText)
+    terminal.clearSelection()
+    handlers.onClearSelection()
+    return true
+  }
+
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown' || event.altKey) {
       return true
     }
 
-    const key = event.key.toLowerCase()
-    const hasPrimaryModifier = event.ctrlKey || event.metaKey
-
     if (isTerminalPasteShortcut(event)) {
       return false
     }
 
-    if (hasPrimaryModifier && key === 'c') {
-      const selectedText = handlers.getSelectionText()
-      if (!selectedText) return true
-
-      event.preventDefault()
-      event.stopPropagation()
-      handlers.onCopySelection(selectedText)
-      terminal.clearSelection()
-      handlers.onClearSelection()
+    // Focused xterm textarea path: copy selection, otherwise let Ctrl+C interrupt.
+    if (copySelectionFromEvent(event)) {
       return false
     }
 
     return true
   })
+
+  // Blurred textarea path: selection highlight can remain after focus leaves the
+  // helper textarea (common after Claude Code / Codex interaction). Keep Ctrl+C
+  // as copy while the terminal node is still the active canvas selection.
+  const handleWindowKeyDown = (event: KeyboardEvent): void => {
+    copySelectionFromEvent(event, {
+      onlyWhenTextareaBlurred: true,
+      requireActiveNode: true
+    })
+  }
+
+  window.addEventListener('keydown', handleWindowKeyDown, true)
+
+  return {
+    dispose: () => {
+      window.removeEventListener('keydown', handleWindowKeyDown, true)
+    }
+  }
 }
 
 function terminalSelectionText(terminal: Terminal): string {
@@ -552,18 +659,38 @@ export function TerminalComponent({
   const [sessionReady, setSessionReady] = useState(false)
   const appSettingsLoaded = useAppSettingsStore((state) => state.isLoaded)
   const globalEnvironment = useAppSettingsStore((state) => state.settings.terminalEnvironment)
+  const globalDisabledEnvironmentNamesRaw = useAppSettingsStore((state) => state.settings.terminalEnvironmentDisabledNames)
+  const globalDisabledEnvironmentNames = useMemo(
+    () => normalizeTerminalEnvironmentNames(globalDisabledEnvironmentNamesRaw),
+    [globalDisabledEnvironmentNamesRaw]
+  )
   const nodeEnvironment = useMemo(() => normalizeTerminalEnvironment(component.config.environment), [component.config.environment])
+  const nodeDisabledEnvironmentNames = useMemo(
+    () => normalizeTerminalEnvironmentNames(component.config.environmentDisabledNames),
+    [component.config.environmentDisabledNames]
+  )
   const selectedGlobalEnvironmentNames = useMemo(
     () => normalizeTerminalEnvironmentNames(component.config.environmentGlobalNames),
     [component.config.environmentGlobalNames]
   )
   const selectedGlobalEnvironment = useMemo(
-    () => pickTerminalEnvironment(globalEnvironment, selectedGlobalEnvironmentNames),
-    [globalEnvironment, selectedGlobalEnvironmentNames]
+    () =>
+      pickTerminalEnvironment(
+        omitTerminalEnvironment(globalEnvironment, globalDisabledEnvironmentNames),
+        selectedGlobalEnvironmentNames
+      ),
+    [globalEnvironment, globalDisabledEnvironmentNames, selectedGlobalEnvironmentNames]
   )
   const sessionEnvironment = useMemo<TerminalEnvironment>(
-    () => mergeTerminalEnvironments(selectedGlobalEnvironment, nodeEnvironment),
-    [selectedGlobalEnvironment, nodeEnvironment]
+    () =>
+      omitTerminalEnvironment(
+        mergeTerminalEnvironments(
+          selectedGlobalEnvironment,
+          omitTerminalEnvironment(nodeEnvironment, nodeDisabledEnvironmentNames)
+        ),
+        globalDisabledEnvironmentNames
+      ),
+    [selectedGlobalEnvironment, nodeEnvironment, nodeDisabledEnvironmentNames, globalDisabledEnvironmentNames]
   )
   const canvasScale = safeScale(canvasZoom)
 
@@ -664,7 +791,15 @@ export function TerminalComponent({
   }, [commandPanelExpanded, updateState])
 
   const saveNodeEnvironment = useCallback(
-    async ({ environment, selectedGlobalNames }: { environment: TerminalEnvironment; selectedGlobalNames?: string[] }) => {
+    async ({
+      environment,
+      disabledNames,
+      selectedGlobalNames
+    }: {
+      environment: TerminalEnvironment
+      disabledNames: string[]
+      selectedGlobalNames?: string[]
+    }) => {
       const sessionId = sessionIdRef.current
       if (sessionId) {
         sessionIdRef.current = null
@@ -672,7 +807,14 @@ export function TerminalComponent({
         setSessionReady(false)
         await window.atlas.terminal.close(sessionId)
       }
-      updateConfig({ environment, environmentGlobalNames: selectedGlobalNames ?? [] }, true)
+      updateConfig(
+        {
+          environment,
+          environmentDisabledNames: disabledNames,
+          environmentGlobalNames: selectedGlobalNames ?? []
+        },
+        true
+      )
       setEnvironmentDialogOpen(false)
     },
     [updateConfig]
@@ -1112,7 +1254,8 @@ export function TerminalComponent({
     let dataDisposable: Disposable | null = null
     let selectionDisposable: Disposable | null = null
     let transformedCanvasMouseFix: Disposable | null = null
-    let scrollPaintFix: Disposable | null = null
+    let compositorPaintFix: Disposable | null = null
+    let clipboardShortcuts: Disposable | null = null
     let disposeData: () => void = () => undefined
     let disposeExit: () => void = () => undefined
     let unregisterTranslationSelectionProvider: () => void = () => undefined
@@ -1191,14 +1334,16 @@ export function TerminalComponent({
       instance.loadAddon(new WebLinksAddon((event, uri) => openTerminalWebLink(event, uri, instance)))
       instance.open(container)
       transformedCanvasMouseFix = installTransformedCanvasMouseFix(instance)
-      scrollPaintFix = installTerminalScrollPaintFix(instance, container)
+      compositorPaintFix = installTerminalCompositorPaintFix(instance, container)
       selectionDisposable = instance.onSelectionChange(refreshTerminalSelectionSnapshot)
       unregisterTranslationSelectionProvider = registerTranslationSelectionProvider(() => {
         if (!container.isConnected || terminalRef.current !== instance || !isNodeSelectedRef.current) return ''
         return selectedTerminalText()
       })
-      installTerminalClipboardShortcuts(instance, {
+      clipboardShortcuts = installTerminalClipboardShortcuts(instance, {
         getSelectionText: selectedTerminalText,
+        isCopyShortcutActive: () => isNodeSelectedRef.current,
+        getContainer: () => containerRef.current,
         onClearSelection: clearTerminalSelectionSnapshot,
         onCopySelection: (text) => {
           void writeClipboardText(text).catch(() => undefined)
@@ -1379,7 +1524,8 @@ export function TerminalComponent({
       dataDisposable?.dispose()
       selectionDisposable?.dispose()
       transformedCanvasMouseFix?.dispose()
-      scrollPaintFix?.dispose()
+      compositorPaintFix?.dispose()
+      clipboardShortcuts?.dispose()
       resizeObserver?.disconnect()
       sessionIdRef.current = null
       terminalRef.current = null
@@ -1401,6 +1547,7 @@ export function TerminalComponent({
     component.title,
     component.config.cwd,
     component.config.environment,
+    component.config.environmentDisabledNames,
     component.config.environmentGlobalNames,
     component.config.initialCommand,
     component.config.shell,
@@ -1442,7 +1589,9 @@ export function TerminalComponent({
             </div>
             <TerminalEnvironmentEditor
               globalEnvironment={globalEnvironment}
+              globalDisabledNames={globalDisabledEnvironmentNames}
               initialEnvironment={nodeEnvironment}
+              initialDisabledNames={nodeDisabledEnvironmentNames}
               initialSelectedGlobalNames={selectedGlobalEnvironmentNames}
               description={t('terminalEnvironment.nodeRestartDescription')}
               onSave={saveNodeEnvironment}

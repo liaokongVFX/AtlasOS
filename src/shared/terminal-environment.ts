@@ -108,6 +108,24 @@ export function pickTerminalEnvironment(environment: TerminalEnvironment, names:
   return selected
 }
 
+export function omitTerminalEnvironment(environment: TerminalEnvironment, disabledNames: readonly string[]): TerminalEnvironment {
+  if (disabledNames.length === 0) return environment
+
+  const disabledKeys = new Set(disabledNames.map(terminalEnvironmentKey))
+  const active: TerminalEnvironment = {}
+
+  for (const [name, value] of Object.entries(environment)) {
+    if (!disabledKeys.has(terminalEnvironmentKey(name))) active[name] = value
+  }
+
+  return active
+}
+
+export function isTerminalEnvironmentNameDisabled(name: string, disabledNames: readonly string[]): boolean {
+  const key = terminalEnvironmentKey(name)
+  return disabledNames.some((disabledName) => terminalEnvironmentKey(disabledName) === key)
+}
+
 export function formatTerminalEnvironmentText(environment: TerminalEnvironment): string {
   return terminalEnvironmentEntries(environment)
     .map(([name, value]) => `${name}=${value}`)
@@ -161,3 +179,5 @@ export function parseTerminalEnvironmentText(text: string): { environment: Termi
 }
 
 export const terminalEnvironmentSchema = z.unknown().optional().transform((value) => normalizeTerminalEnvironment(value))
+
+export const terminalEnvironmentNamesSchema = z.unknown().optional().transform((value) => normalizeTerminalEnvironmentNames(value))

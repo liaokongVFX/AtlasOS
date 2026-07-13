@@ -639,8 +639,12 @@ function TerminalEnvironmentSettingsPanel({ active }: SettingsSectionPanelProps)
       </div>
       <TerminalEnvironmentEditor
         initialEnvironment={settings.terminalEnvironment}
-        onSave={async ({ environment }) => {
-          await patchSettings({ terminalEnvironment: environment })
+        initialDisabledNames={settings.terminalEnvironmentDisabledNames}
+        onSave={async ({ environment, disabledNames }) => {
+          await patchSettings({
+            terminalEnvironment: environment,
+            terminalEnvironmentDisabledNames: disabledNames
+          })
         }}
       />
     </section>

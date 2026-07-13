@@ -1682,36 +1682,27 @@ svg {
 }
 
 .terminal-environment-editor__global-row {
-  grid-template-columns: 18px minmax(120px, 0.36fr) minmax(0, 1fr) 64px;
-  gap: var(--space-2);
+  grid-template-columns: 18px minmax(80px, 0.2fr) minmax(0, 1fr) max-content;
+  column-gap: 8px;
+  row-gap: var(--space-2);
 }
 
 .terminal-environment-editor__row {
-  grid-template-columns: 28px minmax(140px, 0.34fr) minmax(0, 1fr) 30px;
+  grid-template-columns: 18px minmax(140px, 0.34fr) minmax(0, 1fr) 30px;
   gap: 6px;
 }
 
-.terminal-environment-editor__row-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  min-width: 0;
-  border: 1px solid var(--color-hairline-tertiary);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-primary-softer), var(--color-surface-3) 54%);
-  color: var(--color-ink-subtle);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
+.terminal-environment-editor__global-row--disabled,
+.terminal-environment-editor__row--disabled {
+  opacity: 0.72;
 }
 
-.terminal-environment-editor__global-row input[type='checkbox'] {
+.terminal-environment-editor__global-row input[type='checkbox'],
+.terminal-environment-editor__row input[type='checkbox'] {
   width: 16px;
   height: 16px;
   accent-color: var(--color-primary);
+  justify-self: center;
 }
 
 .terminal-environment-editor__global-row > span,
@@ -1732,6 +1723,12 @@ svg {
 .terminal-environment-editor__global-row > small {
   color: var(--color-ink-subtle);
   font-size: 12px;
+  justify-self: center;
+  align-self: center;
+  text-align: center;
+  min-width: 2.5em;
+  padding-inline: 0;
+  line-height: 1;
 }
 
 .terminal-environment-editor__global-row input:not([type='checkbox']),
@@ -3326,14 +3323,17 @@ svg {
 }
 
 /*
- * Terminal nodes live under React Flow's CSS transform tree. Without an isolated
- * paint layer, Chromium can leave a 1-cell-wide stale strip on the left edge
- * after long scrollback scrolls (especially Claude Code output).
+ * Keep xterm's own row/span geometry free of permanent transforms. A sticky
+ * translateZ on .xterm-rows can retain a 1-cell-wide composited strip after
+ * clear/scroll under the canvas transform tree. Isolation stays on the screen
+ * host; compositor invalidation is handled in terminal-component.tsx.
  */
-.terminal-module__screen .xterm-screen,
-.terminal-module__screen .xterm-rows {
-  transform: translateZ(0);
+.terminal-module__screen {
   isolation: isolate;
+  contain: paint;
+}
+
+.terminal-module__screen .xterm {
   backface-visibility: hidden;
 }
 
@@ -8133,8 +8133,8 @@ svg {
     grid-template-columns: 1fr;
   }
 
-  .terminal-environment-editor__row-index,
-  .terminal-environment-editor__global-row input[type='checkbox'] {
+  .terminal-environment-editor__global-row input[type='checkbox'],
+  .terminal-environment-editor__row input[type='checkbox'] {
     justify-self: start;
   }
 

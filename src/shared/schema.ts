@@ -5,7 +5,7 @@ import { normalizeKeyboardShortcut } from './keyboard-shortcuts'
 import { petSettingsSchema } from './pet'
 import { remoteServerSettingsSchema } from './remote-servers'
 import { terminalCommandLibrarySchema } from './terminal-commands'
-import { terminalEnvironmentSchema } from './terminal-environment'
+import { terminalEnvironmentNamesSchema, terminalEnvironmentSchema } from './terminal-environment'
 import { updateSettingsSchema } from './updates'
 
 export const componentTypeSchema = z.string().min(1)
@@ -124,6 +124,7 @@ export const appSettingsSchema = z.object({
   shortcuts: appShortcutSettingsSchema,
   terminalCommands: terminalCommandLibrarySchema,
   terminalEnvironment: terminalEnvironmentSchema,
+  terminalEnvironmentDisabledNames: terminalEnvironmentNamesSchema,
   pet: petSettingsSchema,
   updates: updateSettingsSchema,
   ai: aiSettingsSchema,
@@ -140,6 +141,7 @@ export const appSettingsPatchSchema = z
     shortcuts: appSettingsPatchField(appShortcutSettingsSchema),
     terminalCommands: appSettingsPatchField(terminalCommandLibrarySchema),
     terminalEnvironment: appSettingsPatchField(terminalEnvironmentSchema),
+    terminalEnvironmentDisabledNames: appSettingsPatchField(terminalEnvironmentNamesSchema),
     pet: appSettingsPatchField(petSettingsSchema),
     updates: appSettingsPatchField(updateSettingsSchema),
     ai: appSettingsPatchField(aiSettingsSchema),

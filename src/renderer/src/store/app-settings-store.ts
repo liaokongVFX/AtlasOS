@@ -14,6 +14,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   shortcuts: { ...DEFAULT_APP_SHORTCUTS },
   terminalCommands: createDefaultTerminalCommandLibrary(),
   terminalEnvironment: { ...DEFAULT_TERMINAL_ENVIRONMENT },
+  terminalEnvironmentDisabledNames: [],
   pet: { ...DEFAULT_PET_SETTINGS },
   updates: { ...DEFAULT_UPDATE_SETTINGS },
   ai: DEFAULT_AI_SETTINGS,

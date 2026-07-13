@@ -3,8 +3,10 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   MAX_TERMINAL_ENVIRONMENT_VARIABLES,
   MAX_TERMINAL_ENVIRONMENT_VALUE_LENGTH,
+  isTerminalEnvironmentNameDisabled,
   isValidTerminalEnvironmentName,
   normalizeTerminalEnvironmentNames,
+  omitTerminalEnvironment,
   terminalEnvironmentEntries,
   terminalEnvironmentKey,
   type TerminalEnvironment
@@ -15,10 +17,12 @@ type TerminalEnvironmentRow = {
   id: string
   name: string
   value: string
+  enabled: boolean
 }
 
 type TerminalEnvironmentEditorResult = {
   environment: TerminalEnvironment
+  disabledNames: string[]
   selectedGlobalNames?: string[]
 }
 
@@ -26,7 +30,9 @@ type TerminalEnvironmentEditorProps = {
   className?: string
   description?: string
   disabled?: boolean
+  globalDisabledNames?: string[]
   globalEnvironment?: TerminalEnvironment
+  initialDisabledNames?: string[]
   initialEnvironment?: TerminalEnvironment
   initialSelectedGlobalNames?: string[]
   onSave: (result: TerminalEnvironmentEditorResult) => Promise<void> | void
@@ -40,16 +46,27 @@ type ValidationIssue = {
 }
 
 const EMPTY_TERMINAL_ENVIRONMENT: TerminalEnvironment = {}
+const EMPTY_DISABLED_NAMES: string[] = []
 
 function createRowId(): string {
   return Math.random().toString(36).slice(2)
 }
 
-function environmentRows(environment: TerminalEnvironment): TerminalEnvironmentRow[] {
-  return terminalEnvironmentEntries(environment).map(([name, value]) => ({ id: createRowId(), name, value }))
+function environmentRows(environment: TerminalEnvironment, disabledNames: readonly string[] = []): TerminalEnvironmentRow[] {
+  const disabledKeys = new Set(disabledNames.map(terminalEnvironmentKey))
+  return terminalEnvironmentEntries(environment).map(([name, value]) => ({
+    id: createRowId(),
+    name,
+    value,
+    enabled: !disabledKeys.has(terminalEnvironmentKey(name))
+  }))
 }
 
-function partitionEnvironmentRows(environment: TerminalEnvironment, selectedNames: readonly string[]): {
+function partitionEnvironmentRows(
+  environment: TerminalEnvironment,
+  selectedNames: readonly string[],
+  disabledNames: readonly string[] = []
+): {
   globalOverrideRows: TerminalEnvironmentRow[]
   rows: TerminalEnvironmentRow[]
 } {
@@ -57,9 +74,9 @@ function partitionEnvironmentRows(environment: TerminalEnvironment, selectedName
   const globalOverrideRows: TerminalEnvironmentRow[] = []
   const rows: TerminalEnvironmentRow[] = []
 
-  for (const row of environmentRows(environment)) {
+  for (const row of environmentRows(environment, disabledNames)) {
     if (selectedKeys.has(terminalEnvironmentKey(row.name))) {
-      globalOverrideRows.push(row)
+      globalOverrideRows.push({ ...row, enabled: true })
     } else {
       rows.push(row)
     }
@@ -78,6 +95,26 @@ function rowsToEnvironment(rows: TerminalEnvironmentRow[]): TerminalEnvironment 
   }
 
   return environment
+}
+
+function rowsToDisabledNames(rows: TerminalEnvironmentRow[]): string[] {
+  const names: string[] = []
+  const assignedNames = new Set<string>()
+
+  for (const row of rows) {
+    if (row.enabled) continue
+
+    const name = row.name.trim()
+    if (!isValidTerminalEnvironmentName(name)) continue
+
+    const key = terminalEnvironmentKey(name)
+    if (assignedNames.has(key)) continue
+
+    assignedNames.add(key)
+    names.push(name)
+  }
+
+  return names
 }
 
 function sameEnvironment(left: TerminalEnvironment, right: TerminalEnvironment): boolean {
@@ -104,9 +141,15 @@ function environmentValue(environment: TerminalEnvironment, name: string): strin
   return entry?.[1]
 }
 
-function selectedGlobalNames(globalEnvironment: TerminalEnvironment, value: string[] | undefined): string[] {
+function selectedGlobalNames(
+  globalEnvironment: TerminalEnvironment,
+  value: string[] | undefined,
+  globalDisabledNames: readonly string[]
+): string[] {
   const normalized = normalizeTerminalEnvironmentNames(value)
-  const availableKeys = new Set(Object.keys(globalEnvironment).map(terminalEnvironmentKey))
+  const availableKeys = new Set(
+    Object.keys(omitTerminalEnvironment(globalEnvironment, globalDisabledNames)).map(terminalEnvironmentKey)
+  )
   return normalized.filter((name) => availableKeys.has(terminalEnvironmentKey(name)))
 }
 
@@ -118,7 +161,7 @@ function createBlankRow(rows: TerminalEnvironmentRow[]): TerminalEnvironmentRow 
     name = `CUSTOM_VAR_${index}`
     index += 1
   }
-  return { id: createRowId(), name, value: '' }
+  return { id: createRowId(), name, value: '', enabled: true }
 }
 
 function upsertEnvironmentRow(rows: TerminalEnvironmentRow[], name: string, value: string): TerminalEnvironmentRow[] {
@@ -126,10 +169,10 @@ function upsertEnvironmentRow(rows: TerminalEnvironmentRow[], name: string, valu
   const existing = rows.find((row) => terminalEnvironmentKey(row.name.trim()) === key)
 
   if (existing) {
-    return rows.map((row) => (row.id === existing.id ? { ...row, value } : row))
+    return rows.map((row) => (row.id === existing.id ? { ...row, value, enabled: true } : row))
   }
 
-  return [...rows, { id: createRowId(), name, value }]
+  return [...rows, { id: createRowId(), name, value, enabled: true }]
 }
 
 function removeEnvironmentRow(rows: TerminalEnvironmentRow[], name: string): TerminalEnvironmentRow[] {
@@ -141,7 +184,9 @@ export function TerminalEnvironmentEditor({
   className,
   description,
   disabled = false,
+  globalDisabledNames = EMPTY_DISABLED_NAMES,
   globalEnvironment = EMPTY_TERMINAL_ENVIRONMENT,
+  initialDisabledNames,
   initialEnvironment,
   initialSelectedGlobalNames,
   onSave,
@@ -151,13 +196,26 @@ export function TerminalEnvironmentEditor({
   const { t } = useI18n()
   const normalizedGlobalEnvironment = globalEnvironment ?? EMPTY_TERMINAL_ENVIRONMENT
   const normalizedInitialEnvironment = initialEnvironment ?? EMPTY_TERMINAL_ENVIRONMENT
+  const normalizedGlobalDisabledNames = useMemo(
+    () => normalizeTerminalEnvironmentNames(globalDisabledNames),
+    [globalDisabledNames]
+  )
+  const normalizedInitialDisabledNames = useMemo(
+    () => normalizeTerminalEnvironmentNames(initialDisabledNames),
+    [initialDisabledNames]
+  )
   const initialGlobalNames = useMemo(
-    () => selectedGlobalNames(normalizedGlobalEnvironment, initialSelectedGlobalNames),
-    [normalizedGlobalEnvironment, initialSelectedGlobalNames]
+    () => selectedGlobalNames(normalizedGlobalEnvironment, initialSelectedGlobalNames, normalizedGlobalDisabledNames),
+    [normalizedGlobalEnvironment, initialSelectedGlobalNames, normalizedGlobalDisabledNames]
   )
   const initialPartitionedRows = useMemo(
-    () => partitionEnvironmentRows(normalizedInitialEnvironment, showGlobalSelection ? initialGlobalNames : []),
-    [normalizedInitialEnvironment, initialGlobalNames, showGlobalSelection]
+    () =>
+      partitionEnvironmentRows(
+        normalizedInitialEnvironment,
+        showGlobalSelection ? initialGlobalNames : [],
+        normalizedInitialDisabledNames
+      ),
+    [normalizedInitialEnvironment, initialGlobalNames, normalizedInitialDisabledNames, showGlobalSelection]
   )
   const initialRows = initialPartitionedRows.rows
   const initialGlobalOverrideRows = initialPartitionedRows.globalOverrideRows
@@ -176,6 +234,7 @@ export function TerminalEnvironmentEditor({
 
   const nodeEnvironment = useMemo(() => rowsToEnvironment(rows), [rows])
   const environment = useMemo(() => rowsToEnvironment([...globalOverrideRows, ...rows]), [globalOverrideRows, rows])
+  const disabledNames = useMemo(() => rowsToDisabledNames(rows), [rows])
   const globalEntries = useMemo(() => terminalEnvironmentEntries(normalizedGlobalEnvironment), [normalizedGlobalEnvironment])
   const selectedKeys = useMemo(() => new Set(selectedNames.map(terminalEnvironmentKey)), [selectedNames])
   const overriddenKeys = useMemo(() => new Set(Object.keys(environment).map(terminalEnvironmentKey)), [environment])
@@ -222,13 +281,18 @@ export function TerminalEnvironmentEditor({
 
     return nextIssues
   }, [globalOverrideRows, rows, t, variableCount])
-  const initialEnvironmentValue = useMemo(() => rowsToEnvironment([...initialGlobalOverrideRows, ...initialRows]), [initialGlobalOverrideRows, initialRows])
+  const initialEnvironmentValue = useMemo(
+    () => rowsToEnvironment([...initialGlobalOverrideRows, ...initialRows]),
+    [initialGlobalOverrideRows, initialRows]
+  )
+  const initialDisabledNamesValue = useMemo(() => rowsToDisabledNames(initialRows), [initialRows])
   const rowsDirty = !sameEnvironment(environment, initialEnvironmentValue)
+  const disabledDirty = !sameStringSet(disabledNames, initialDisabledNamesValue)
   const selectionDirty = showGlobalSelection && !sameStringSet(selectedNames, initialGlobalNames)
-  const isDirty = rowsDirty || selectionDirty
+  const isDirty = rowsDirty || disabledDirty || selectionDirty
   const hasIssues = issues.length > 0
 
-  const updateRow = (id: string, patch: Partial<Pick<TerminalEnvironmentRow, 'name' | 'value'>>): void => {
+  const updateRow = (id: string, patch: Partial<Pick<TerminalEnvironmentRow, 'name' | 'value' | 'enabled'>>): void => {
     setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)))
     setActionError(null)
   }
@@ -244,6 +308,8 @@ export function TerminalEnvironmentEditor({
   }
 
   const toggleGlobalName = (name: string): void => {
+    if (isTerminalEnvironmentNameDisabled(name, normalizedGlobalDisabledNames)) return
+
     const key = terminalEnvironmentKey(name)
 
     if (selectedNames.some((selectedName) => terminalEnvironmentKey(selectedName) === key)) {
@@ -280,9 +346,10 @@ export function TerminalEnvironmentEditor({
     try {
       await onSave({
         environment,
+        disabledNames,
         selectedGlobalNames: showGlobalSelection ? selectedNames : undefined
       })
-      const savedRows = partitionEnvironmentRows(environment, showGlobalSelection ? selectedNames : [])
+      const savedRows = partitionEnvironmentRows(environment, showGlobalSelection ? selectedNames : [], disabledNames)
       setRows(savedRows.rows)
       setGlobalOverrideRows(savedRows.globalOverrideRows)
     } catch (error) {
@@ -305,27 +372,42 @@ export function TerminalEnvironmentEditor({
           {globalEntries.length > 0 ? (
             <div className="terminal-environment-editor__global-list">
               {globalEntries.map(([name, value]) => {
+                const globallyDisabled = isTerminalEnvironmentNameDisabled(name, normalizedGlobalDisabledNames)
                 const checked = selectedKeys.has(terminalEnvironmentKey(name))
                 const overridden = overriddenKeys.has(terminalEnvironmentKey(name))
                 const effectiveValue = environmentValue(environment, name) ?? value
 
                 return (
-                  <div key={name} className="terminal-environment-editor__global-row">
+                  <div
+                    key={name}
+                    className={[
+                      'terminal-environment-editor__global-row',
+                      globallyDisabled && 'terminal-environment-editor__global-row--disabled'
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                  >
                     <input
                       type="checkbox"
-                      checked={checked}
-                      disabled={disabled || saving || (!checked && atVariableLimit)}
+                      checked={checked && !globallyDisabled}
+                      disabled={disabled || saving || globallyDisabled || (!checked && atVariableLimit)}
                       aria-label={name}
                       onChange={() => toggleGlobalName(name)}
                     />
                     <span>{name}</span>
                     <input
                       value={effectiveValue}
-                      disabled={disabled || saving || !checked}
+                      disabled={disabled || saving || globallyDisabled || !checked}
                       aria-label={t('terminalEnvironment.valueFor', { name })}
                       onChange={(event) => overrideGlobalName(name, event.target.value)}
                     />
-                    <small>{overridden ? t('terminalEnvironment.overridden') : t('terminalEnvironment.fromSettings')}</small>
+                    <small>
+                      {globallyDisabled
+                        ? t('terminalEnvironment.disabledGlobally')
+                        : overridden
+                          ? t('terminalEnvironment.overridden')
+                          : t('terminalEnvironment.fromSettings')}
+                    </small>
                   </div>
                 )
               })}
@@ -346,11 +428,20 @@ export function TerminalEnvironmentEditor({
         </div>
 
         <div className="terminal-environment-editor__rows">
-          {rows.map((row, index) => (
-            <div key={row.id} className="terminal-environment-editor__row">
-              <span className="terminal-environment-editor__row-index" aria-hidden="true">
-                {index + 1}
-              </span>
+          {rows.map((row) => (
+            <div
+              key={row.id}
+              className={['terminal-environment-editor__row', !row.enabled && 'terminal-environment-editor__row--disabled']
+                .filter(Boolean)
+                .join(' ')}
+            >
+              <input
+                type="checkbox"
+                checked={row.enabled}
+                disabled={disabled || saving}
+                aria-label={t('terminalEnvironment.enabledFor', { name: row.name.trim() || t('terminalEnvironment.key') })}
+                onChange={() => updateRow(row.id, { enabled: !row.enabled })}
+              />
               <input
                 value={row.name}
                 disabled={disabled || saving}
