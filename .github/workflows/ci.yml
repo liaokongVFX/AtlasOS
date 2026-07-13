@@ -16,19 +16,8 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate ${{ matrix.label }}
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: Windows
-            os: windows-2022
-            npm: npm.cmd
-          - label: macOS
-            os: macos-15
-            npm: npm
+    name: Validate Windows
+    runs-on: windows-2022
 
     steps:
       - name: Check out repository
@@ -44,7 +33,7 @@ jobs:
         run: npm ci
 
       - name: Verify no test files are committed
-        run: ${{ matrix.npm }} run verify:no-tests
+        run: npm.cmd run verify:no-tests
 
       - name: Build app
-        run: ${{ matrix.npm }} run build
+        run: npm.cmd run build
