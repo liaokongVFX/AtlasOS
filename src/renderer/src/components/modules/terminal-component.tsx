@@ -344,15 +344,15 @@ function createWindowsPtyOption(): { backend: 'conpty' } | undefined {
  * scrolls or full-screen redraws (Claude Code /clear is a common trigger).
  *
  * xterm.refresh() only rebuilds DOM and does not invalidate that GPU layer, so
- * we force a tiny transform change on the screen surface after:
+ * we force a tiny transform change on the common xterm surface after:
  * - viewport scroll (scrollback browsing)
- * - full-viewport renders (clear / resize / full refresh)
+ * - every completed xterm render (full refreshes and partial dirty rows)
+ *
+ * The common root keeps the native-scrollbar viewport and character screen in
+ * the same invalidated compositor layer.
  */
 function installTerminalCompositorPaintFix(terminal: Terminal, container: HTMLElement): Disposable {
-  const surface =
-    container.querySelector<HTMLElement>('.xterm-screen') ??
-    container.querySelector<HTMLElement>('.xterm') ??
-    container
+  const surface = container.querySelector<HTMLElement>('.xterm') ?? container
   const viewport = container.querySelector<HTMLElement>('.xterm-viewport')
 
   let repaintPending = false
@@ -387,12 +387,10 @@ function installTerminalCompositorPaintFix(terminal: Terminal, container: HTMLEl
 
   viewport?.addEventListener('scroll', handleViewportScroll, { passive: true })
 
-  const renderDisposable = terminal.onRender((event) => {
-    // Full-viewport redraws cover clear/resize/scroll refreshes. Partial row
-    // updates during streaming are left alone to avoid per-frame layer thrash.
-    if (event.start <= 0 && event.end >= Math.max(0, terminal.rows - 1)) {
-      scheduleCompositorRepaint()
-    }
+  const renderDisposable = terminal.onRender(() => {
+    // ConPTY applications can follow a synchronous full resize render with
+    // asynchronous partial redraws. The frame guard coalesces render bursts.
+    scheduleCompositorRepaint()
   })
 
   return {
