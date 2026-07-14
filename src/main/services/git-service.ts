@@ -462,7 +462,7 @@ export class GitService {
 
   async getStatus(repoPathInput: string): Promise<GitStatusSnapshot> {
     const repoPath = await this.resolveRepositoryRoot(repoPathInput)
-    const result = await this.runGit(repoPath, ['status', '--porcelain=v2', '-z', '--branch', '--show-stash'])
+    const result = await this.runGit(repoPath, ['status', '--porcelain=v2', '-z', '--branch', '--show-stash', '--untracked-files=all'])
     return parseGitStatus(repoPath, result.stdout)
   }
 
@@ -686,6 +686,9 @@ export class GitService {
     const path = this.pathspec(repoPath, target.filePath)
     const absolutePath = assertInsideRoot(repoPath, resolve(repoPath, path))
     const info = await stat(absolutePath)
+    if (!info.isFile()) {
+      return { repoPath, target, diff: '', binary: false, truncated: false }
+    }
     if (info.size > MAX_DIFF_CHARS) {
       return { repoPath, target, diff: '', binary: false, truncated: true }
     }
