@@ -112,6 +112,14 @@ const TERMINAL_USER_ENV_BLOCKLIST = [
   'ATLAS_TERMINAL_SESSION_ID',
   'ATLAS_TERMINAL_TITLE'
 ] as const
+const TERMINAL_HOST_ENV_BLOCKLIST = [
+  ...TERMINAL_USER_ENV_BLOCKLIST,
+  'TERM',
+  'COLORTERM',
+  'TERM_PROGRAM',
+  'TERM_PROGRAM_VERSION',
+  'NO_COLOR'
+] as const
 const PASTED_IMAGE_EXTENSIONS_BY_MIME_TYPE = new Map([
   ['image/png', '.png'],
   ['image/x-png', '.png'],
@@ -198,7 +206,11 @@ function normalizeTerminalOutputForMatching(value: string): string {
 
 function terminalBaseEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env }
-  removeEnvironmentVariables(env, TERMINAL_USER_ENV_BLOCKLIST)
+  removeEnvironmentVariables(env, TERMINAL_HOST_ENV_BLOCKLIST)
+  env.TERM = 'xterm-256color'
+  env.COLORTERM = 'truecolor'
+  env.TERM_PROGRAM = 'AtlasOS'
+  env.TERM_PROGRAM_VERSION = app.getVersion()
   return env
 }
 
@@ -377,17 +389,18 @@ export class PtyService {
     const args = shellArgs(shell)
 
     const sessionId = randomUUID()
+    const env = terminalEnvironment(
+      environmentInput,
+      this.options.getAgentHookEnvironment?.({ sessionId, canvasId, componentId, title, cwd })
+    )
     let term: pty.IPty
     try {
       term = pty.spawn(shell, args, {
-        name: 'xterm-256color',
+        name: env.TERM || 'xterm-256color',
         cols,
         rows,
         cwd,
-        env: terminalEnvironment(
-          environmentInput,
-          this.options.getAgentHookEnvironment?.({ sessionId, canvasId, componentId, title, cwd })
-        )
+        env
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
