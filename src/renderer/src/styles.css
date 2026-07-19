@@ -3320,21 +3320,8 @@ svg {
   min-height: 0;
   overflow: hidden;
   background: var(--color-canvas);
-}
-
-/*
- * Keep xterm's own row/span geometry free of permanent transforms. A sticky
- * translateZ on .xterm-rows can retain a 1-cell-wide composited strip after
- * clear/scroll under the canvas transform tree. Isolation stays on the screen
- * host; compositor invalidation is handled in terminal-component.tsx.
- */
-.terminal-module__screen {
   isolation: isolate;
   contain: paint;
-}
-
-.terminal-module__screen .xterm {
-  backface-visibility: hidden;
 }
 
 .terminal-module__commands {
@@ -3459,10 +3446,19 @@ svg {
   width: 100%;
   height: 100%;
   padding: 0 0 var(--space-2) var(--space-2);
+  backface-visibility: hidden;
 }
 
 .terminal-module__screen .xterm * {
   box-sizing: content-box;
+}
+
+/* xterm 6 uses a DOM scrollbar with a fixed 14px interaction rail. Keep that
+ * hit target intact while matching AtlasOS's narrow native scrollbar visual. */
+.terminal-module__screen .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  left: 7px !important;
+  width: 5px !important;
+  border-radius: 3px;
 }
 
 .remote-server-module {

@@ -211,6 +211,7 @@ function terminalBaseEnvironment(): NodeJS.ProcessEnv {
   env.COLORTERM = 'truecolor'
   env.TERM_PROGRAM = 'AtlasOS'
   env.TERM_PROGRAM_VERSION = app.getVersion()
+  env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = '1'
   return env
 }
 

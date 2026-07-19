@@ -39,27 +39,6 @@ type Disposable = {
   dispose: () => void
 }
 
-type XtermMouseEvent = {
-  clientX: number
-  clientY: number
-}
-
-type XtermMouseService = {
-  getCoords: (event: XtermMouseEvent, element: HTMLElement, ...args: unknown[]) => unknown
-  getMouseReportCoords?: (event: MouseEvent, element: HTMLElement) => unknown
-}
-
-type XtermSelectionService = {
-  _screenElement?: HTMLElement
-  _getMouseEventScrollAmount?: (event: MouseEvent) => number
-  shouldForceSelection?: (event: MouseEvent) => boolean
-}
-
-type XtermCore = {
-  _mouseService?: XtermMouseService
-  _selectionService?: XtermSelectionService
-}
-
 type TerminalPasteFeedback = {
   tone: 'info' | 'error'
   message: string
@@ -101,11 +80,12 @@ type CommandPanelResizeSession = {
   startY: number
 }
 
-const MIN_TRANSFORM_SCALE_DELTA = 0.001
 const PASTE_FEEDBACK_DURATION_MS = 3200
 const PASTE_SHORTCUT_FALLBACK_DELAY_MS = 80
 const TERMINAL_MIN_COLS = 10
 const TERMINAL_MIN_ROWS = 4
+const TERMINAL_BASE_FONT_SIZE = 13
+const TERMINAL_TRANSFORM_SCALE_TOLERANCE = 0.001
 const COMMAND_PANEL_DEFAULT_HEIGHT = 96
 const COMMAND_PANEL_MIN_HEIGHT = 72
 const COMMAND_PANEL_MAX_HEIGHT = 320
@@ -191,89 +171,185 @@ function createTerminalSize(terminal: Terminal): { cols: number; rows: number } 
   }
 }
 
-function createUnscaledMouseEvent<T extends XtermMouseEvent>(event: T, element: HTMLElement): T {
-  const rect = element.getBoundingClientRect()
-  const scaleX = element.offsetWidth > 0 ? rect.width / element.offsetWidth : 1
-  const scaleY = element.offsetHeight > 0 ? rect.height / element.offsetHeight : 1
-
-  if (Math.abs(scaleX - 1) < MIN_TRANSFORM_SCALE_DELTA && Math.abs(scaleY - 1) < MIN_TRANSFORM_SCALE_DELTA) {
-    return event
-  }
-
-  const adjustedEvent = Object.create(event) as T
-  Object.defineProperties(adjustedEvent, {
-    clientX: {
-      value: rect.left + (event.clientX - rect.left) / (scaleX || 1)
-    },
-    clientY: {
-      value: rect.top + (event.clientY - rect.top) / (scaleY || 1)
-    }
-  })
-
-  return adjustedEvent
+type TerminalCell = {
+  column: number
+  row: number
 }
 
-function installTransformedCanvasMouseFix(terminal: Terminal): Disposable {
-  const core = (terminal as unknown as { _core?: XtermCore })._core
-  const mouseService = core?._mouseService
-  const selectionService = core?._selectionService
-  if (!mouseService && !selectionService) return { dispose: () => undefined }
+function terminalCellAt(
+  terminal: Terminal,
+  screen: HTMLElement,
+  clientX: number,
+  clientY: number,
+  clampToScreen = false
+): TerminalCell | null {
+  const rect = screen.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return null
+  if (!clampToScreen && (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom)) return null
 
-  const originalGetCoords = mouseService?.getCoords
-  const originalGetMouseReportCoords = mouseService?.getMouseReportCoords
-  const originalGetMouseEventScrollAmount = selectionService?._getMouseEventScrollAmount
-  const originalShouldForceSelection = selectionService?.shouldForceSelection
+  const cellWidth = rect.width / terminal.cols
+  const cellHeight = rect.height / terminal.rows
+  const x = Math.min(rect.right, Math.max(rect.left, clientX))
+  const y = Math.min(rect.bottom, Math.max(rect.top, clientY))
+  const column = Math.min(terminal.cols, Math.max(0, Math.floor((x - rect.left + cellWidth / 2) / cellWidth)))
+  const viewportRow = Math.min(terminal.rows - 1, Math.max(0, Math.floor((y - rect.top) / cellHeight)))
+  return {
+    column,
+    row: terminal.buffer.active.viewportY + viewportRow
+  }
+}
 
-  if (mouseService && originalGetCoords) {
-    mouseService.getCoords = function getCoordsWithCanvasTransformFix(event, element, ...args) {
-      return originalGetCoords.call(mouseService, createUnscaledMouseEvent(event, element), element, ...args)
-    }
+function selectTerminalRange(terminal: Terminal, anchor: TerminalCell, focus: TerminalCell): void {
+  const anchorOffset = anchor.row * terminal.cols + anchor.column
+  const focusOffset = focus.row * terminal.cols + focus.column
+  const start = anchorOffset <= focusOffset ? anchor : focus
+  const length = Math.abs(focusOffset - anchorOffset)
 
-    if (originalGetMouseReportCoords) {
-      mouseService.getMouseReportCoords = function getMouseReportCoordsWithCanvasTransformFix(event, element) {
-        return originalGetMouseReportCoords.call(mouseService, createUnscaledMouseEvent(event, element), element)
-      }
-    }
+  if (length === 0) {
+    terminal.clearSelection()
+    return
   }
 
-  if (selectionService && originalGetMouseEventScrollAmount) {
-    selectionService._getMouseEventScrollAmount = function getMouseEventScrollAmountWithCanvasTransformFix(event) {
-      const screenElement = selectionService._screenElement
-      return originalGetMouseEventScrollAmount.call(
-        selectionService,
-        screenElement ? createUnscaledMouseEvent(event, screenElement) : event
-      )
+  terminal.select(start.column, start.row, length)
+}
+
+function isTerminalScreenScaled(screen: HTMLElement): boolean {
+  if (screen.offsetWidth <= 0 || screen.offsetHeight <= 0) return false
+
+  const rect = screen.getBoundingClientRect()
+  const scaleX = rect.width / screen.offsetWidth
+  const scaleY = rect.height / screen.offsetHeight
+  return (
+    Math.abs(scaleX - 1) >= TERMINAL_TRANSFORM_SCALE_TOLERANCE ||
+    Math.abs(scaleY - 1) >= TERMINAL_TRANSFORM_SCALE_TOLERANCE
+  )
+}
+
+function installTerminalSelectionCompatibility(terminal: Terminal): Disposable {
+  const element = terminal.element
+  if (!element) return { dispose: () => undefined }
+  const screen = element.querySelector<HTMLElement>('.xterm-screen')
+  if (!screen) return { dispose: () => undefined }
+
+  const ownerDocument = element.ownerDocument
+  const ownerWindow = ownerDocument.defaultView ?? window
+  let selectionAnchor: TerminalCell | null = null
+  let previousDisableStdin: boolean | null = null
+  let inputRestoreTimer: number | null = null
+
+  const restoreTerminalInput = (): void => {
+    if (inputRestoreTimer !== null) {
+      ownerWindow.clearTimeout(inputRestoreTimer)
+      inputRestoreTimer = null
     }
+    if (previousDisableStdin === null) return
+
+    terminal.options.disableStdin = previousDisableStdin
+    previousDisableStdin = null
   }
+
+  const suspendTerminalInput = (): void => {
+    restoreTerminalInput()
+    previousDisableStdin = Boolean(terminal.options.disableStdin)
+    terminal.options.disableStdin = true
+  }
+
+  const endSelection = (deferInputRestore = false): void => {
+    selectionAnchor = null
+    ownerDocument.removeEventListener('mousemove', handleMouseMove, true)
+    ownerDocument.removeEventListener('mouseup', handleMouseUp, true)
+
+    if (!deferInputRestore) {
+      restoreTerminalInput()
+      return
+    }
+
+    inputRestoreTimer = ownerWindow.setTimeout(() => {
+      inputRestoreTimer = null
+      restoreTerminalInput()
+    }, 0)
+  }
+
+  const handleMouseMove = (event: MouseEvent): void => {
+    if (!selectionAnchor) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+
+    const focus = terminalCellAt(terminal, screen, event.clientX, event.clientY, true)
+    if (focus) selectTerminalRange(terminal, selectionAnchor, focus)
+  }
+
+  const handleMouseUp = (event: MouseEvent): void => {
+    if (!selectionAnchor) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+
+    const focus = terminalCellAt(terminal, screen, event.clientX, event.clientY, true)
+    if (focus) selectTerminalRange(terminal, selectionAnchor, focus)
+    // xterm clears its selection on user input before onData observers run. Keep
+    // stdin suspended through the rest of the mouseup task so a global TUI mouse
+    // listener cannot erase the range that was just committed.
+    endSelection(true)
+  }
+
+  const handleHoverMouseMove = (event: MouseEvent): void => {
+    if (
+      event.buttons !== 0 ||
+      event.altKey ||
+      terminal.modes.mouseTrackingMode !== 'any' ||
+      !terminal.hasSelection()
+    ) {
+      return
+    }
+
+    // DEC 1003 reports hover motion as user input. xterm clears the current
+    // selection before exposing that report through onData, so application-level
+    // filtering is too late. Preserve the range until the next explicit click.
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+
+  const handleWindowBlur = (): void => endSelection()
 
   /**
-   * Claude Code / Codex enable DEC mouse tracking, which makes xterm disable
-   * normal drag selection and only allow Shift/Option forced selection.
-   * In this canvas-embedded terminal, copy/select is the primary interaction,
-   * so always force selection. Hold Alt to fall back to the original policy
-   * when a TUI truly needs raw mouse events.
+   * TUIs can toggle DEC mouse tracking while they run, which intentionally
+   * changes xterm's selection gesture to Shift+drag. Even with tracking off,
+   * xterm's layout-space cell metrics do not match screen-space mouse events
+   * under the React Flow CSS transform. Handle plain drag through xterm's public
+   * selection API in either case, while keeping Alt+drag for raw TUI mouse input.
    */
-  if (selectionService && originalShouldForceSelection) {
-    selectionService.shouldForceSelection = function shouldForceSelectionForEmbeddedTerminal(event) {
-      if (event.altKey) {
-        return originalShouldForceSelection.call(selectionService, event)
-      }
-      return true
+  const handleMouseDown = (event: MouseEvent): void => {
+    if (
+      event.button !== 0 ||
+      event.shiftKey ||
+      event.altKey ||
+      (terminal.modes.mouseTrackingMode === 'none' && !isTerminalScreenScaled(screen))
+    ) {
+      return
     }
+
+    const anchor = terminalCellAt(terminal, screen, event.clientX, event.clientY)
+    if (!anchor) return
+
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    terminal.focus()
+    terminal.clearSelection()
+    suspendTerminalInput()
+    selectionAnchor = anchor
+    ownerDocument.addEventListener('mousemove', handleMouseMove, true)
+    ownerDocument.addEventListener('mouseup', handleMouseUp, true)
   }
 
+  element.addEventListener('mousedown', handleMouseDown, true)
+  element.addEventListener('mousemove', handleHoverMouseMove, true)
+  ownerWindow.addEventListener('blur', handleWindowBlur)
   return {
     dispose: () => {
-      if (mouseService && originalGetCoords) {
-        mouseService.getCoords = originalGetCoords
-        mouseService.getMouseReportCoords = originalGetMouseReportCoords
-      }
-      if (selectionService && originalGetMouseEventScrollAmount) {
-        selectionService._getMouseEventScrollAmount = originalGetMouseEventScrollAmount
-      }
-      if (selectionService && originalShouldForceSelection) {
-        selectionService.shouldForceSelection = originalShouldForceSelection
-      }
+      endSelection()
+      element.removeEventListener('mousedown', handleMouseDown, true)
+      element.removeEventListener('mousemove', handleHoverMouseMove, true)
+      ownerWindow.removeEventListener('blur', handleWindowBlur)
     }
   }
 }
@@ -335,75 +411,6 @@ function isWindowsHost(): boolean {
 
 function createWindowsPtyOption(): { backend: 'conpty' } | undefined {
   return isWindowsHost() ? { backend: 'conpty' } : undefined
-}
-
-/**
- * Terminal nodes sit under React Flow's CSS transform tree. Chromium can keep a
- * composited snapshot of the xterm surface after the row DOM is already correct,
- * which shows up as a 1-cell-wide left column of stale glyphs after scrollback
- * scrolls or full-screen redraws (Claude Code /clear is a common trigger).
- *
- * xterm.refresh() only rebuilds DOM and does not invalidate that GPU layer, so
- * we force a tiny transform change on the common xterm surface after:
- * - viewport scroll (scrollback browsing)
- * - every completed xterm render (full refreshes and partial dirty rows)
- *
- * The common root keeps the native-scrollbar viewport and character screen in
- * the same invalidated compositor layer.
- */
-function installTerminalCompositorPaintFix(terminal: Terminal, container: HTMLElement): Disposable {
-  const surface = container.querySelector<HTMLElement>('.xterm') ?? container
-  const viewport = container.querySelector<HTMLElement>('.xterm-viewport')
-
-  let repaintPending = false
-  let frame: number | null = null
-  let paintToken = 0
-  let wasAtBottom = terminal.buffer.active.viewportY === terminal.buffer.active.baseY
-
-  const flushCompositorRepaint = (): void => {
-    frame = null
-    if (!repaintPending || !surface.isConnected) return
-    repaintPending = false
-
-    paintToken = paintToken === 0 ? 1 : 0
-    // Alternating sub-pixel Z keeps the layer promoted while forcing Chromium to
-    // discard the previous composited bitmap under parent canvas transforms.
-    surface.style.transform = paintToken === 0 ? 'translate3d(0, 0, 0)' : 'translate3d(0, 0, 0.01px)'
-  }
-
-  const scheduleCompositorRepaint = (): void => {
-    repaintPending = true
-    if (frame !== null) return
-    frame = window.requestAnimationFrame(flushCompositorRepaint)
-  }
-
-  const handleViewportScroll = (): void => {
-    const activeBuffer = terminal.buffer.active
-    const isAtBottom = activeBuffer.viewportY === activeBuffer.baseY
-
-    if (!isAtBottom || !wasAtBottom) scheduleCompositorRepaint()
-    wasAtBottom = isAtBottom
-  }
-
-  viewport?.addEventListener('scroll', handleViewportScroll, { passive: true })
-
-  const renderDisposable = terminal.onRender(() => {
-    // ConPTY applications can follow a synchronous full resize render with
-    // asynchronous partial redraws. The frame guard coalesces render bursts.
-    scheduleCompositorRepaint()
-  })
-
-  return {
-    dispose: () => {
-      if (frame !== null) {
-        window.cancelAnimationFrame(frame)
-        frame = null
-      }
-      viewport?.removeEventListener('scroll', handleViewportScroll)
-      renderDisposable.dispose()
-      surface.style.removeProperty('transform')
-    }
-  }
 }
 
 function readNativeClipboardText(): string {
@@ -1251,14 +1258,14 @@ export function TerminalComponent({
     let resizeObserver: ResizeObserver | null = null
     let dataDisposable: Disposable | null = null
     let selectionDisposable: Disposable | null = null
-    let transformedCanvasMouseFix: Disposable | null = null
-    let compositorPaintFix: Disposable | null = null
+    let selectionCompatibility: Disposable | null = null
     let clipboardShortcuts: Disposable | null = null
     let disposeData: () => void = () => undefined
     let disposeExit: () => void = () => undefined
     let unregisterTranslationSelectionProvider: () => void = () => undefined
     let removeDomListeners: () => void = () => undefined
     let shortcutPasteFallbackTimer: number | null = null
+    let lastPtySize: { cols: number; rows: number } | null = null
 
     const fitAndResize = (sendResize: boolean): void => {
       if (disposed || !terminal || !fitAddon || !container.isConnected) return
@@ -1269,7 +1276,11 @@ export function TerminalComponent({
       try {
         fitAddon.fit()
         if (sendResize && sessionIdRef.current && validTerminalSize(terminal)) {
-          void window.atlas.terminal.resize(sessionIdRef.current, terminal.cols, terminal.rows)
+          const nextSize = createTerminalSize(terminal)
+          if (!lastPtySize || lastPtySize.cols !== nextSize.cols || lastPtySize.rows !== nextSize.rows) {
+            lastPtySize = nextSize
+            void window.atlas.terminal.resize(sessionIdRef.current, nextSize.cols, nextSize.rows)
+          }
         }
       } catch (error) {
         console.warn('Failed to fit AtlasOS terminal', error)
@@ -1286,7 +1297,6 @@ export function TerminalComponent({
         fitAndResize(true)
       })
     }
-
     const clearPendingShortcutPasteFallback = (): void => {
       if (shortcutPasteFallbackTimer !== null) {
         window.clearTimeout(shortcutPasteFallbackTimer)
@@ -1311,14 +1321,16 @@ export function TerminalComponent({
         cursorStyle: 'bar',
         cursorWidth: 1,
         cursorInactiveStyle: 'bar',
-        convertEol: true,
         fontFamily: 'JetBrains Mono, Consolas, "Cascadia Mono", monospace',
-        fontSize: 13,
+        fontSize: TERMINAL_BASE_FONT_SIZE,
         theme: {
           background: '#010102',
           foreground: '#f7f8f8',
           cursor: '#828fff',
-          selectionBackground: '#5e6ad24d'
+          selectionBackground: '#5e6ad24d',
+          scrollbarSliderBackground: '#1d212a',
+          scrollbarSliderHoverBackground: '#363944',
+          scrollbarSliderActiveBackground: '#4a4e5a'
         },
         ...(windowsPty ? { windowsPty } : {})
       })
@@ -1330,9 +1342,9 @@ export function TerminalComponent({
       instance.loadAddon(fitAddon)
       instance.loadAddon(new SearchAddon())
       instance.loadAddon(new WebLinksAddon((event, uri) => openTerminalWebLink(event, uri, instance)))
+      // Keep xterm's DOM renderer; GPU renderers can retain stale texture strips on virtual displays.
       instance.open(container)
-      transformedCanvasMouseFix = installTransformedCanvasMouseFix(instance)
-      compositorPaintFix = installTerminalCompositorPaintFix(instance, container)
+      selectionCompatibility = installTerminalSelectionCompatibility(instance)
       selectionDisposable = instance.onSelectionChange(refreshTerminalSelectionSnapshot)
       unregisterTranslationSelectionProvider = registerTranslationSelectionProvider(() => {
         if (!container.isConnected || terminalRef.current !== instance || !isNodeSelectedRef.current) return ''
@@ -1426,6 +1438,7 @@ export function TerminalComponent({
       resizeObserver.observe(container)
 
       const initialSize = createTerminalSize(instance)
+      lastPtySize = initialSize
       void window.atlas.terminal
         .create({
           componentId: component.id,
@@ -1468,7 +1481,8 @@ export function TerminalComponent({
             requestFocus()
           }
           disposeData = window.atlas.terminal.onData(session.sessionId, (data) => {
-            if (!disposed) instance.write(data)
+            if (disposed) return
+            instance.write(data)
           })
           const disposeCwd = window.atlas.terminal.onCwd(session.sessionId, (cwd) => {
             if (disposed || cwd === cwdRef.current) return
@@ -1521,8 +1535,7 @@ export function TerminalComponent({
       disposeExit()
       dataDisposable?.dispose()
       selectionDisposable?.dispose()
-      transformedCanvasMouseFix?.dispose()
-      compositorPaintFix?.dispose()
+      selectionCompatibility?.dispose()
       clipboardShortcuts?.dispose()
       resizeObserver?.disconnect()
       sessionIdRef.current = null
@@ -1636,12 +1649,10 @@ export function TerminalComponent({
       ) : null}
       {pasteFeedback ? (
         <div
-          className={[
+          className={cn(
             'terminal-module__paste-feedback',
-            pasteFeedback.tone === 'error' ? 'terminal-module__paste-feedback--error' : ''
-          ]
-            .filter(Boolean)
-            .join(' ')}
+            pasteFeedback.tone === 'error' && 'terminal-module__paste-feedback--error'
+          )}
           aria-live="polite"
         >
           <strong>{pasteFeedback.message}</strong>
