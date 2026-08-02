@@ -14,6 +14,7 @@ import {
   terminalReadClipboardFilesInputSchema,
   terminalSaveClipboardImageInputSchema,
   terminalResizeInputSchema,
+  terminalUpdateTitleInputSchema,
   terminalWriteInputSchema
 } from '@shared/ipc'
 import { terminalCreateSchema } from '@shared/schema'
@@ -277,6 +278,10 @@ export class PtyService {
 
     handleValidated('terminal:resize', terminalResizeInputSchema, (_, input) => {
       return { ok: this.resize(input.sessionId, input.cols, input.rows) }
+    })
+
+    handleValidated('terminal:update-title', terminalUpdateTitleInputSchema, (_, input) => {
+      return { ok: this.updateTitle(input.sessionId, input.title) }
     })
 
     handleValidated('terminal:close', terminalCloseInputSchema, (_, input) => {
@@ -577,6 +582,14 @@ export class PtyService {
       console.warn(`Failed to resize PTY session ${sessionId}:`, error)
       return false
     }
+  }
+
+  private updateTitle(sessionId: string, title: string): boolean {
+    const session = this.sessionsById.get(sessionId)
+    if (!session) return false
+
+    session.title = title
+    return true
   }
 
   private closeByOwner(ownerId: number): void {

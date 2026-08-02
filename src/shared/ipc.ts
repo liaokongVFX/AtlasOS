@@ -161,6 +161,11 @@ export const terminalResizeInputSchema = z.object({
   rows: z.number().int().min(4)
 })
 
+export const terminalUpdateTitleInputSchema = z.object({
+  sessionId: z.string().min(1),
+  title: z.string().min(1)
+})
+
 export const terminalCloseInputSchema = z.object({
   sessionId: z.string().min(1)
 })

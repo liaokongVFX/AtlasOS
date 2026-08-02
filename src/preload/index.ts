@@ -143,6 +143,7 @@ const atlasApi = {
       ipcRenderer.invoke('terminal:create', input) as Promise<{ sessionId: string; cwd: string; shell: string; didRunInitialCommand?: boolean }>,
     write: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', { sessionId, data }),
     resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { sessionId, cols, rows }),
+    updateTitle: (sessionId: string, title: string) => ipcRenderer.invoke('terminal:update-title', { sessionId, title }),
     close: (sessionId: string) => ipcRenderer.invoke('terminal:close', { sessionId }),
     closeComponent: (componentId: string) => ipcRenderer.invoke('terminal:close-component', { componentId }),
     savePastedAsset: (input: { dataBase64: string; mimeType?: string; sourceName?: string }) =>

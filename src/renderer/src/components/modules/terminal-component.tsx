@@ -711,6 +711,13 @@ export function TerminalComponent({
     setCommandPanelHeight(persistedCommandPanelHeight)
   }, [persistedCommandPanelHeight])
 
+  useEffect(() => {
+    const sessionId = sessionIdRef.current
+    if (!sessionId || !sessionReady) return
+
+    void window.atlas.terminal.updateTitle(sessionId, component.title)
+  }, [component.title, sessionReady])
+
   const persistActiveAgentRestore = useCallback(
     (agentRestore: TerminalAgentRestore) => {
       activeAgentRestoreRef.current = agentRestore
@@ -1555,7 +1562,6 @@ export function TerminalComponent({
     clearTerminalSelectionSnapshot,
     canvasId,
     component.id,
-    component.title,
     component.config.cwd,
     component.config.environment,
     component.config.environmentDisabledNames,
