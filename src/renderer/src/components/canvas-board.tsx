@@ -1230,6 +1230,7 @@ export function CanvasBoard(): JSX.Element {
   const dragDuplicateStateRef = useRef<DragDuplicateState | null>(null)
   const nodeDragInteractionActiveRef = useRef(false)
   const viewportInteractionActiveRef = useRef(false)
+  const rightButtonPanRef = useRef<{ x: number; y: number; moved: boolean } | null>(null)
 
   useEffect(() => {
     return () => {
@@ -1351,6 +1352,47 @@ export function CanvasBoard(): JSX.Element {
 
   const clearTrackedPointerPosition = useCallback(() => {
     lastPointerScreenPositionRef.current = null
+  }, [])
+
+  const captureNodePanPointer = useCallback((event: PointerEvent<HTMLElement>) => {
+    if (event.button === 2 && event.target instanceof Element && event.target.closest('.react-flow__node')) {
+      // Keep embedded editors from starting their own gesture, but allow mousedown.
+      event.stopPropagation()
+    }
+  }, [])
+
+  const startNodePan = useCallback((event: MouseEvent<HTMLElement>) => {
+    rightButtonPanRef.current = null
+    if (event.button !== 2 || !(event.target instanceof Element) || !event.target.closest('.react-flow__node')) return
+
+    const pane = event.currentTarget.querySelector<HTMLElement>('.react-flow__pane')
+    if (!pane) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    // React Flow's nopan filter exempts middle clicks on nodes, but not right clicks.
+    // Start on the pane so its existing pan gesture owns movement, release and persistence.
+    pane.dispatchEvent(new globalThis.MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      button: event.button,
+      buttons: event.buttons,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      screenX: event.screenX,
+      screenY: event.screenY,
+      ctrlKey: event.ctrlKey,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey,
+      metaKey: event.metaKey
+    }))
+  }, [])
+
+  const suppressPanContextMenu = useCallback((event: MouseEvent<HTMLElement>) => {
+    if (event.button !== 2 || !rightButtonPanRef.current?.moved) return
+    event.preventDefault()
+    event.stopPropagation()
   }, [])
 
   const applyCanvasCtrlWheelZoom = useCallback(
@@ -1881,7 +1923,10 @@ export function CanvasBoard(): JSX.Element {
     return () => window.removeEventListener('keydown', handleCanvasKeyDown, true)
   }, [handleCanvasKeyDown])
 
-  const onMoveStart: OnMoveStart = useCallback((_, viewport) => {
+  const onMoveStart: OnMoveStart = useCallback((event, viewport) => {
+    rightButtonPanRef.current = event && 'button' in event && event.button === 2
+      ? { x: viewport.x, y: viewport.y, moved: false }
+      : null
     closeCreateMenu()
     if (!viewportInteractionActiveRef.current) {
       viewportInteractionActiveRef.current = true
@@ -1891,7 +1936,11 @@ export function CanvasBoard(): JSX.Element {
     notifyCanvasViewportSync({ ...viewport, phase: 'start' })
   }, [beginCanvasInteraction, closeCreateMenu])
 
-  const onMove: OnMove = useCallback((_, viewport) => {
+  const onMove: OnMove = useCallback((event, viewport) => {
+    const rightButtonPan = rightButtonPanRef.current
+    if (rightButtonPan && event?.type === 'mousemove' && (viewport.x !== rightButtonPan.x || viewport.y !== rightButtonPan.y)) {
+      rightButtonPan.moved = true
+    }
     notifyCanvasViewportSync({ ...viewport, phase: 'move' })
   }, [])
 
@@ -2096,6 +2145,9 @@ export function CanvasBoard(): JSX.Element {
       onPointerEnter={trackPointerPosition}
       onPointerMove={trackPointerPosition}
       onPointerLeave={clearTrackedPointerPosition}
+      onPointerDownCapture={captureNodePanPointer}
+      onMouseDownCapture={startNodePan}
+      onContextMenuCapture={suppressPanContextMenu}
       onDropCapture={clearFileDragActive}
       tabIndex={-1}
     >
