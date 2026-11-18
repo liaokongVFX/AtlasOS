@@ -630,6 +630,7 @@ export function TerminalComponent({
   updateConfig,
   updateState,
   setHeaderActions,
+  isCanvasInteracting = false,
   isNodeSelected = false
 }: AtlasComponentRendererProps): JSX.Element {
   const { t } = useI18n()
@@ -638,6 +639,8 @@ export function TerminalComponent({
   const commandPanelRef = useRef<HTMLDivElement | null>(null)
   const sessionIdRef = useRef<string | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
+  const scheduleFitRef = useRef<(() => void) | null>(null)
+  const isCanvasInteractingRef = useRef(isCanvasInteracting)
   const cwdRef = useRef(asString(component.state.cwd, asString(component.config.cwd)))
   const initialCommand = asString(component.config.initialCommand)
   const initialCommandDispatched = asBoolean(component.state.initialCommandDispatched)
@@ -700,6 +703,7 @@ export function TerminalComponent({
   const canvasScale = safeScale(canvasZoom)
 
   isNodeSelectedRef.current = isNodeSelected
+  isCanvasInteractingRef.current = isCanvasInteracting
   cwdRef.current = asString(component.state.cwd, asString(component.config.cwd))
   activeAgentRestoreRef.current = storedAgentRestore ?? startupAgentRestore
 
@@ -1245,6 +1249,10 @@ export function TerminalComponent({
     clearScheduledFocus()
   }, [clearScheduledFocus, isNodeSelected, requestFocus])
 
+  useLayoutEffect(() => {
+    if (!isCanvasInteracting) scheduleFitRef.current?.()
+  }, [isCanvasInteracting])
+
   useEffect(() => {
     return () => {
       clearPasteFeedback()
@@ -1276,6 +1284,9 @@ export function TerminalComponent({
 
     const fitAndResize = (sendResize: boolean): void => {
       if (disposed || !terminal || !fitAddon || !container.isConnected) return
+      // Codex clears and replays scrollback on resize. Keep both grids stable
+      // during a node interaction instead of triggering replay at every size.
+      if (sendResize && isCanvasInteractingRef.current) return
 
       const rect = container.getBoundingClientRect()
       if (rect.width < 2 || rect.height < 2) return
@@ -1304,6 +1315,7 @@ export function TerminalComponent({
         fitAndResize(true)
       })
     }
+    scheduleFitRef.current = scheduleFit
     const clearPendingShortcutPasteFallback = (): void => {
       if (shortcutPasteFallbackTimer !== null) {
         window.clearTimeout(shortcutPasteFallbackTimer)
@@ -1519,6 +1531,8 @@ export function TerminalComponent({
             disposeAgentCommand()
             disposeAgentSessionEnded()
           }
+          // The container may have changed size while the PTY was being created.
+          scheduleFit()
         })
         .catch((error) => {
           if (disposed) return
@@ -1532,6 +1546,7 @@ export function TerminalComponent({
 
     return () => {
       disposed = true
+      scheduleFitRef.current = null
       if (initFrame !== null) window.cancelAnimationFrame(initFrame)
       if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame)
       clearScheduledFocus()
