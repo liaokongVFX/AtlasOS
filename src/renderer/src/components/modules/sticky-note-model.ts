@@ -77,10 +77,12 @@ function isJsonContent(value: unknown): value is JSONContent {
 function nodeText(value: unknown): string {
   if (!isRecord(value)) return ''
   if (typeof value.text === 'string') return value.text
+  if (value.type === 'hardBreak') return '\n'
 
   if (!Array.isArray(value.content)) return ''
 
-  return value.content.map(nodeText).join('')
+  const hasBlocks = value.type === 'doc' || value.type === 'listItem' || value.type === 'orderedList' || value.type === 'bulletList'
+  return value.content.map(nodeText).join(hasBlocks ? '\n' : '')
 }
 
 export function stickyNoteDocumentFromState(value: unknown): JSONContent {
@@ -88,9 +90,7 @@ export function stickyNoteDocumentFromState(value: unknown): JSONContent {
 }
 
 export function stickyNotePlainText(value: unknown): string {
-  const document = stickyNoteDocumentFromState(value)
-  const blocks = Array.isArray(document.content) ? document.content.map(nodeText) : []
-  return blocks.join('\n').trim()
+  return nodeText(stickyNoteDocumentFromState(value)).trim()
 }
 
 export function stickyNoteTitleFromDocument(value: unknown): string {

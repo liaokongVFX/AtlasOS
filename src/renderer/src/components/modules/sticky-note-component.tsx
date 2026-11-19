@@ -1,10 +1,10 @@
 import TextAlign from '@tiptap/extension-text-align'
 import Underline from '@tiptap/extension-underline'
-import { EditorContent, type Editor, type JSONContent, useEditor } from '@tiptap/react'
+import { EditorContent, findParentNode, type ChainedCommands, type Editor, type JSONContent, useEditor, useEditorState } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
-import { AlignCenter, AlignLeft, AlignRight, Bold, Italic, Type, Underline as UnderlineIcon } from 'lucide-react'
+import { AlignCenter, AlignLeft, AlignRight, Bold, Italic, List, ListOrdered, Strikethrough, Type, Underline as UnderlineIcon, type LucideIcon } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
-import { useI18n } from '../../i18n'
+import { type I18nKey, useI18n } from '../../i18n'
 import { cn } from '../../lib/utils'
 import type { AtlasComponentRendererProps } from '../registry'
 import {
@@ -25,15 +25,14 @@ type StickyNoteComponentProps = AtlasComponentRendererProps & {
 const STICKY_NOTE_EXTENSIONS = [
   StarterKit.configure({
     blockquote: false,
-    bulletList: false,
     code: false,
     codeBlock: false,
     dropcursor: false,
     heading: false,
     horizontalRule: false,
-    listItem: false,
-    orderedList: false,
-    strike: false
+    // A trailing paragraph would become an extra item when switching a selected list.
+    trailingNode: false,
+    underline: false
   }),
   Underline,
   TextAlign.configure({
@@ -57,12 +56,13 @@ function stickyNoteTextAlign(node: JSONContent): CSSProperties['textAlign'] | un
   return textAlign === 'left' || textAlign === 'center' || textAlign === 'right' ? textAlign : undefined
 }
 
-function renderStaticInlineNode(node: JSONContent, key: string): ReactNode {
+function renderStaticNode(node: JSONContent, key: number): ReactNode {
   if (node.type === 'text') {
     let content: ReactNode = node.text ?? ''
     const marks = Array.isArray(node.marks) ? node.marks : []
 
     if (marks.some((mark) => mark.type === 'underline')) content = <u>{content}</u>
+    if (marks.some((mark) => mark.type === 'strike')) content = <s>{content}</s>
     if (marks.some((mark) => mark.type === 'italic')) content = <em>{content}</em>
     if (marks.some((mark) => mark.type === 'bold')) content = <strong>{content}</strong>
 
@@ -71,34 +71,86 @@ function renderStaticInlineNode(node: JSONContent, key: string): ReactNode {
 
   if (node.type === 'hardBreak') return <br key={key} />
 
-  if (Array.isArray(node.content)) {
-    return <Fragment key={key}>{node.content.map((child, index) => renderStaticInlineNode(child, `${key}-${index}`))}</Fragment>
+  const children = Array.isArray(node.content) ? node.content.map(renderStaticNode) : []
+  switch (node.type) {
+    case 'bulletList':
+      return <ul key={key}>{children}</ul>
+    case 'orderedList':
+      return <ol key={key} start={node.attrs?.start} type={node.attrs?.type}>{children}</ol>
+    case 'listItem':
+      return <li key={key}>{children}</li>
+    case 'paragraph':
+      return <p key={key} style={{ textAlign: stickyNoteTextAlign(node) }}>{children.length ? children : <br />}</p>
+    default:
+      return <Fragment key={key}>{children}</Fragment>
   }
-
-  return null
 }
 
-function renderStaticDocument(document: JSONContent): ReactNode {
-  const blocks = Array.isArray(document.content) ? document.content : []
+const FORMAT_TOOLS: {
+  label: I18nKey
+  icon: LucideIcon
+  active: string | { textAlign: string }
+  apply: (chain: ChainedCommands) => ChainedCommands
+}[] = [
+  { label: 'stickyNote.bold', icon: Bold, active: 'bold', apply: (chain) => chain.toggleBold() },
+  { label: 'stickyNote.italic', icon: Italic, active: 'italic', apply: (chain) => chain.toggleItalic() },
+  { label: 'stickyNote.underline', icon: UnderlineIcon, active: 'underline', apply: (chain) => chain.toggleUnderline() },
+  { label: 'stickyNote.strike', icon: Strikethrough, active: 'strike', apply: (chain) => chain.toggleStrike() },
+  { label: 'stickyNote.bulletList', icon: List, active: 'bulletList', apply: (chain) => chain.toggleBulletList() },
+  { label: 'stickyNote.orderedList', icon: ListOrdered, active: 'orderedList', apply: (chain) => chain.toggleOrderedList() },
+  { label: 'stickyNote.alignLeft', icon: AlignLeft, active: { textAlign: 'left' }, apply: (chain) => chain.setTextAlign('left') },
+  { label: 'stickyNote.alignCenter', icon: AlignCenter, active: { textAlign: 'center' }, apply: (chain) => chain.setTextAlign('center') },
+  { label: 'stickyNote.alignRight', icon: AlignRight, active: { textAlign: 'right' }, apply: (chain) => chain.setTextAlign('right') }
+]
 
-  return blocks.map((block, blockIndex) => {
-    const inlineNodes = Array.isArray(block.content)
-      ? block.content.map((child, childIndex) => renderStaticInlineNode(child, `${blockIndex}-${childIndex}`))
-      : []
-    const textAlign = stickyNoteTextAlign(block)
+function isListType(type: unknown): boolean {
+  return type === 'bulletList' || type === 'orderedList'
+}
 
-    return (
-      <p key={blockIndex} style={textAlign ? { textAlign } : undefined}>
-        {inlineNodes.length > 0 ? inlineNodes : <br />}
-      </p>
-    )
+const findParentList = findParentNode((node) => isListType(node.type.name))
+
+function StickyNoteFormatTools({ editor }: { editor: Editor | null }): JSX.Element {
+  const { t } = useI18n()
+  const pressed = useEditorState({
+    editor,
+    selector: () => {
+      if (!editor) return []
+      const { selection } = editor.state
+      const list = findParentList(selection)
+      return FORMAT_TOOLS.map(({ active }) => {
+        if (list && isListType(active) && selection.to <= list.start + list.node.content.size) {
+          return list.node.type.name === active
+        }
+        return editor.isActive(active)
+      })
+    }
   })
+
+  return (
+    <div className="sticky-note-toolbar__group" role="group" aria-label={t('stickyNote.format')}>
+      {FORMAT_TOOLS.map(({ label, icon: Icon, apply }, index) => (
+        <button
+          key={label}
+          type="button"
+          className={cn('sticky-note-tool-button', pressed?.[index] && 'sticky-note-tool-button--active')}
+          disabled={!editor}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => editor && apply(editor.chain().focus()).run()}
+          aria-pressed={pressed?.[index] ?? false}
+          aria-label={t(label)}
+          title={t(label)}
+        >
+          <Icon size={14} />
+        </button>
+      ))}
+    </div>
+  )
 }
 
 type StickyNoteEditorProps = {
   content: JSONContent
-  onDocumentCreate: (document: JSONContent, text: string) => void
-  onDocumentUpdate: (document: JSONContent, text: string) => void
+  onDocumentCreate: (document: JSONContent) => void
+  onDocumentUpdate: (document: JSONContent) => void
   onEditorChange: (editor: Editor | null) => void
 }
 
@@ -118,10 +170,10 @@ function StickyNoteEditor({ content, onDocumentCreate, onDocumentUpdate, onEdito
     },
     editable: true,
     onUpdate: ({ editor }) => {
-      onDocumentUpdate(editor.getJSON(), editor.getText().trim())
+      onDocumentUpdate(editor.getJSON())
     },
     onCreate: ({ editor }) => {
-      onDocumentCreate(editor.getJSON(), editor.getText().trim())
+      onDocumentCreate(editor.getJSON())
     }
   }, [t])
 
@@ -166,6 +218,8 @@ export function StickyNoteComponent({
   const content = useMemo(() => stickyNoteDocumentFromState(component.state.document), [component.state.document])
   const persistedPlainText = useMemo(() => stickyNotePlainText(content), [content])
   const plainText = isEditing ? draftPlainText : persistedPlainText
+  const blocks = Array.isArray(content.content) ? content.content : []
+  const showPlaceholder = !isEditing && !plainText && !blocks.some((block) => isListType(block.type))
   const selectedFontSize = STICKY_NOTE_FONT_SIZES.find((item) => item.id === config.fontSizePreset) ?? STICKY_NOTE_FONT_SIZES[1]
   const fontSize = config.autoFontSize
     ? autoFontSize(plainText, component.frame.width, component.frame.height)
@@ -182,14 +236,13 @@ export function StickyNoteComponent({
     }
   }, [component.title, setTitle, updateState])
 
-  const handleDocumentCreate = useCallback((document: JSONContent, text: string) => {
+  const handleDocumentCreate = useCallback((document: JSONContent) => {
     draftDocumentRef.current = document
-    setDraftPlainText(text)
+    setDraftPlainText(stickyNotePlainText(document))
   }, [])
 
-  const handleDocumentUpdate = useCallback((document: JSONContent, text: string) => {
-    draftDocumentRef.current = document
-    setDraftPlainText(text)
+  const handleDocumentUpdate = useCallback((document: JSONContent) => {
+    setDraftPlainText(stickyNotePlainText(document))
     commitDocument(document, false)
   }, [commitDocument])
 
@@ -225,20 +278,6 @@ export function StickyNoteComponent({
   useEffect(() => {
     if (!isNodeSelected && isEditing) stopEditing()
   }, [isEditing, isNodeSelected, stopEditing])
-
-  const toggleMark = useCallback((mark: 'bold' | 'italic' | 'underline') => {
-    if (!editor || !isEditing) return
-    if (mark === 'bold') editor.chain().focus().toggleBold().run()
-    if (mark === 'italic') editor.chain().focus().toggleItalic().run()
-    if (mark === 'underline') editor.chain().focus().toggleUnderline().run()
-    handleDocumentUpdate(editor.getJSON(), editor.getText().trim())
-  }, [editor, handleDocumentUpdate, isEditing])
-
-  const setAlignment = useCallback((alignment: 'left' | 'center' | 'right') => {
-    if (!editor || !isEditing) return
-    editor.chain().focus().setTextAlign(alignment).run()
-    handleDocumentUpdate(editor.getJSON(), editor.getText().trim())
-  }, [editor, handleDocumentUpdate, isEditing])
 
   const setBackgroundColor = useCallback((backgroundColor: string) => {
     updateConfig({ backgroundColor }, true)
@@ -315,68 +354,7 @@ export function StickyNoteComponent({
               </button>
             ))}
           </div>
-          <div className="sticky-note-toolbar__group" role="group" aria-label={t('stickyNote.format')}>
-            <button
-              type="button"
-              className={cn('sticky-note-tool-button', editor?.isActive('bold') && 'sticky-note-tool-button--active')}
-              disabled={!editor}
-              onClick={() => toggleMark('bold')}
-              aria-label={t('stickyNote.bold')}
-              title={t('stickyNote.bold')}
-            >
-              <Bold size={14} />
-            </button>
-            <button
-              type="button"
-              className={cn('sticky-note-tool-button', editor?.isActive('italic') && 'sticky-note-tool-button--active')}
-              disabled={!editor}
-              onClick={() => toggleMark('italic')}
-              aria-label={t('stickyNote.italic')}
-              title={t('stickyNote.italic')}
-            >
-              <Italic size={14} />
-            </button>
-            <button
-              type="button"
-              className={cn('sticky-note-tool-button', editor?.isActive('underline') && 'sticky-note-tool-button--active')}
-              disabled={!editor}
-              onClick={() => toggleMark('underline')}
-              aria-label={t('stickyNote.underline')}
-              title={t('stickyNote.underline')}
-            >
-              <UnderlineIcon size={14} />
-            </button>
-            <button
-              type="button"
-              className={cn('sticky-note-tool-button', editor?.isActive({ textAlign: 'left' }) && 'sticky-note-tool-button--active')}
-              disabled={!editor}
-              onClick={() => setAlignment('left')}
-              aria-label={t('stickyNote.alignLeft')}
-              title={t('stickyNote.alignLeft')}
-            >
-              <AlignLeft size={14} />
-            </button>
-            <button
-              type="button"
-              className={cn('sticky-note-tool-button', editor?.isActive({ textAlign: 'center' }) && 'sticky-note-tool-button--active')}
-              disabled={!editor}
-              onClick={() => setAlignment('center')}
-              aria-label={t('stickyNote.alignCenter')}
-              title={t('stickyNote.alignCenter')}
-            >
-              <AlignCenter size={14} />
-            </button>
-            <button
-              type="button"
-              className={cn('sticky-note-tool-button', editor?.isActive({ textAlign: 'right' }) && 'sticky-note-tool-button--active')}
-              disabled={!editor}
-              onClick={() => setAlignment('right')}
-              aria-label={t('stickyNote.alignRight')}
-              title={t('stickyNote.alignRight')}
-            >
-              <AlignRight size={14} />
-            </button>
-          </div>
+          <StickyNoteFormatTools editor={editor} />
         </div>
       ) : null}
       <div className="sticky-note-paper">
@@ -389,10 +367,10 @@ export function StickyNoteComponent({
           />
         ) : (
           <div className="sticky-note-editor sticky-note-editor--static">
-            <div className="sticky-note-editor__content sticky-note-editor__content--static">{renderStaticDocument(content)}</div>
+            <div className="sticky-note-editor__content sticky-note-editor__content--static">{blocks.map(renderStaticNode)}</div>
           </div>
         )}
-        {!plainText && !isEditing ? <div className="sticky-note-placeholder">{t('stickyNote.placeholder')}</div> : null}
+        {showPlaceholder ? <div className="sticky-note-placeholder">{t('stickyNote.placeholder')}</div> : null}
       </div>
     </div>
   )

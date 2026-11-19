@@ -4740,7 +4740,8 @@ svg {
   top: -44px;
   left: 50%;
   display: flex;
-  max-width: min(620px, calc(100vw - 32px));
+  width: max-content;
+  max-width: calc(100vw - 32px);
   min-height: 34px;
   align-items: center;
   gap: var(--space-1);
@@ -4857,8 +4858,19 @@ svg {
   margin: 0;
 }
 
-.sticky-note-editor__content p + p {
+.sticky-note-editor__content :is(p, ol, ul) + :is(p, ol, ul) {
   margin-top: 0.45em;
+}
+
+.sticky-note-editor__content :is(ol, ul) {
+  padding-inline-start: 1.6em;
+}
+
+/* Undo the list reset in its own layer so pasted <ol type> markers also survive. */
+@layer base {
+  .sticky-note-editor__content :is(ol, ul) {
+    list-style-type: revert-layer;
+  }
 }
 
 .sticky-note-editor__content.ProseMirror,
