@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, release } from 'node:os'
 import { join } from 'node:path'
 import { app, clipboard, ipcMain, webContents } from 'electron'
 import * as pty from 'node-pty'
@@ -15,7 +15,8 @@ import {
   terminalSaveClipboardImageInputSchema,
   terminalResizeInputSchema,
   terminalUpdateTitleInputSchema,
-  terminalWriteInputSchema
+  terminalWriteInputSchema,
+  type TerminalWriteInput
 } from '@shared/ipc'
 import { terminalCreateSchema } from '@shared/schema'
 import {
@@ -27,8 +28,9 @@ import {
 } from '@shared/terminal-agent'
 import type { TerminalEnvironment } from '@shared/terminal-environment'
 import { parseFileUriListPaths, readClipboardFilePathsFromNativeFormats } from './clipboard-files'
+import { CodexStartupPaste } from './codex-startup-paste'
 import { handleValidated } from './ipc-helpers'
-import { buildPowerShellBootstrapScript, extractCwdMarkers } from './pty-cwd'
+import { buildPowerShellBootstrapScript, CODEX_COMMAND_MARKER, CODEX_WIN32_INPUT_CONFIG, extractCwdMarkers } from './pty-cwd'
 import { readWindowsClipboardFileDropPaths } from './windows-clipboard-files'
 
 type TerminalSession = {
@@ -42,6 +44,11 @@ type TerminalSession = {
   cwd: string
   dataBuffer: string
   inputBuffer: string
+  sentWin32Input: boolean
+  codexStartupPaste?: CodexStartupPaste
+  activeAgent?: TerminalAgentSource
+  activeProviderSessionId?: string
+  sawShellPrompt: boolean
   autoConfirmWorkspaceTrust: boolean
   didAutoConfirmWorkspaceTrust: boolean
 }
@@ -102,6 +109,8 @@ type NativeClipboardFilesResult = {
 const STALE_PASTED_ASSET_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7
 const MAX_PASTED_ASSET_BYTES = 10 * 1024 * 1024
 const MAX_TERMINAL_INPUT_BUFFER_CHARS = 4096
+// node-pty falls back to winpty on Windows builds older than 18309.
+const USE_BUNDLED_CONPTY = process.platform === 'win32' && Number(release().split('.')[2]) >= 18309
 const TERMINAL_ENV_BLOCKLIST = ['CODEX_THREAD_ID', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE', 'CODEX_SHELL'] as const
 const TERMINAL_USER_ENV_BLOCKLIST = [
   ...TERMINAL_ENV_BLOCKLIST,
@@ -155,8 +164,19 @@ function supportsCwdTracking(shell: string): boolean {
 }
 
 function shellArgs(shell: string): string[] {
+  if (USE_BUNDLED_CONPTY && isCodexShell(shell)) return ['-c', CODEX_WIN32_INPUT_CONFIG]
+  if (USE_BUNDLED_CONPTY && /^cmd(?:\.exe)?$/.test(shellBaseName(shell))) {
+    // DOSKEY macros belong to this console. Preserve an existing user macro.
+    const doskey = '%SystemRoot%\\System32\\doskey.exe'
+    const findstr = '%SystemRoot%\\System32\\findstr.exe'
+    return ['/k', `${doskey} /macros | ${findstr} /i /b /l codex= >nul || ${doskey} codex=codex -c ${CODEX_WIN32_INPUT_CONFIG} $*`]
+  }
   if (!supportsCwdTracking(shell)) return []
-  return ['-NoLogo', '-NoExit', '-Command', buildPowerShellBootstrapScript()]
+  return ['-NoLogo', '-NoExit', '-Command', buildPowerShellBootstrapScript(USE_BUNDLED_CONPTY)]
+}
+
+function isCodexShell(shell: string): boolean {
+  return /^(?:codex|codex\.exe)$/.test(shellBaseName(shell))
 }
 
 function terminalPastedAssetDir(): string {
@@ -205,6 +225,50 @@ function normalizeTerminalOutputForMatching(value: string): string {
     .toLowerCase()
 }
 
+function matchesTextClipboard(paste: string): boolean {
+  // Codex prioritizes images on Shift+Insert. Keep Atlas's original text
+  // when a clipboard offers both formats, or when the text came from elsewhere.
+  try {
+    return !clipboard.availableFormats().some(format => format.startsWith('image/')) &&
+      clipboard.readText().replace(/\r?\n/g, '\r') === paste.replace(/\r?\n/g, '\r')
+  } catch {
+    return false
+  }
+}
+
+function encodePtyInput(session: TerminalSession, { data, altKey, fromClipboard }: Omit<TerminalWriteInput, 'sessionId'>): string {
+  if (!USE_BUNDLED_CONPTY) return data
+  if (session.activeAgent === 'codex' && data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~') && /[\r\n\t]/.test(data)) {
+    session.sentWin32Input = true
+    // Let Codex read a real multiline clipboard as one paste. Its Windows
+    // console reader otherwise infers paste boundaries from key-event timing.
+    if (fromClipboard && matchesTextClipboard(data.slice(6, -6))) {
+      return '\x1b[45;82;0;1;16;1_\x1b[45;82;0;0;16;1_'
+    }
+    // For an in-memory paste, release Shift+Enter between blank lines.
+    // 0x109 translates to U+0009. Windows AltGr (right Alt + left Ctrl) makes
+    // the composer insert that literal control character even outside a burst.
+    data = data.replace(/\r\n|[\r\n\t]/g, ch => ch === '\t'
+      ? '\x1b[265;15;9;1;9;1_\x1b[265;15;9;0;9;1_'
+      : '\x1b[13;28;13;1;16;1_\x1b[13;28;13;0;16;1_')
+  }
+  // After its first Win32 record, ConPTY buffers an isolated ESC or Alt+[
+  // as the start of a longer VT sequence. Send those keystrokes explicitly.
+  if (session.sentWin32Input && data.startsWith('\x1b')) {
+    if (data.length === 1) return '\x1b[27;1;27;1;0;1_'
+    if (data.length === 2 && altKey) {
+      const modifiers = 2 | (altKey.ctrl ? 8 : 0) | (altKey.shift ? 16 : 0)
+      return `\x1b[${altKey.virtualKey};0;${data.charCodeAt(1)};1;${modifiers};1_`
+    }
+  }
+  // Win32 input uses CSI Vk;Sc;UnicodeChar;KeyDown;ControlKeyState;RepeatCount _.
+  // ReadConsoleInputW clients need a key-down for each half of a surrogate pair.
+  return data.replace(/[\u{10000}-\u{10ffff}]/gu, (pair) => {
+    session.sentWin32Input = true
+    return `\x1b[0;0;${pair.charCodeAt(0)};1;0;1_\x1b[0;0;${pair.charCodeAt(1)};1;0;1_`
+  })
+}
+
 function terminalBaseEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env }
   removeEnvironmentVariables(env, TERMINAL_HOST_ENV_BLOCKLIST)
@@ -212,7 +276,8 @@ function terminalBaseEnvironment(): NodeJS.ProcessEnv {
   env.COLORTERM = 'truecolor'
   env.TERM_PROGRAM = 'AtlasOS'
   env.TERM_PROGRAM_VERSION = app.getVersion()
-  env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = '1'
+  // Keep Claude's reading anchor across width changes in its fullscreen renderer.
+  env.CLAUDE_CODE_DISABLE_VIRTUAL_SCROLL ??= '1'
   return env
 }
 
@@ -273,7 +338,7 @@ export class PtyService {
     })
 
     handleValidated('terminal:write', terminalWriteInputSchema, (_, input) => {
-      return { ok: this.write(input.sessionId, input.data) }
+      return { ok: this.write(input) }
     })
 
     handleValidated('terminal:resize', terminalResizeInputSchema, (_, input) => {
@@ -324,6 +389,9 @@ export class PtyService {
   recordAgentProviderSession(context: AgentProviderSessionContext): void {
     const session = this.sessionsById.get(context.terminalSessionId)
     if (!session) return
+    if (context.source !== 'codex') session.codexStartupPaste?.reset()
+    session.activeAgent = context.source
+    session.activeProviderSessionId = context.providerSessionId
 
     const command = terminalAgentResumeCommand(context.source, context.providerSessionId)
     if (!command) return
@@ -342,6 +410,11 @@ export class PtyService {
   recordAgentProviderSessionEnded(context: AgentProviderSessionEndedContext): void {
     const session = this.sessionsById.get(context.terminalSessionId)
     if (!session) return
+    if (session.activeAgent === context.source && session.activeProviderSessionId === context.providerSessionId) {
+      session.codexStartupPaste?.reset()
+      session.activeAgent = undefined
+      session.activeProviderSessionId = undefined
+    }
 
     const event = terminalAgentSessionEndedEventSchema.parse({
       sessionId: session.id,
@@ -403,6 +476,8 @@ export class PtyService {
     try {
       term = pty.spawn(shell, args, {
         name: env.TERM || 'xterm-256color',
+        // The bundled ConPTY forwards full-screen TUI mouse modes on older Windows builds too.
+        useConptyDll: USE_BUNDLED_CONPTY,
         cols,
         rows,
         cwd,
@@ -424,10 +499,17 @@ export class PtyService {
       cwd,
       dataBuffer: '',
       inputBuffer: '',
+      sentWin32Input: false,
+      activeAgent: USE_BUNDLED_CONPTY && isCodexShell(shell) ? 'codex' : undefined,
+      sawShellPrompt: false,
       autoConfirmWorkspaceTrust,
       didAutoConfirmWorkspaceTrust: false
     }
 
+    if (USE_BUNDLED_CONPTY) {
+      session.codexStartupPaste = new CodexStartupPaste(input => this.writeToPty(session, input))
+      if (session.activeAgent === 'codex') session.codexStartupPaste.begin()
+    }
     this.sessionsById.set(sessionId, session)
     this.sessionsByComponentId.set(componentId, session)
     this.trackOwnerSession(ownerId, sessionId)
@@ -446,7 +528,7 @@ export class PtyService {
     let didRunInitialCommand = false
     if (initialCommand) {
       try {
-        term.write(`${initialCommand}\r`)
+        term.write(encodePtyInput(session, { data: `${initialCommand}\r` }))
         this.reportAgentCommandStarted(session, initialCommand)
         didRunInitialCommand = true
       } catch (error) {
@@ -461,9 +543,28 @@ export class PtyService {
     const session = this.sessionsById.get(sessionId)
     if (!session) return
 
-    session.dataBuffer = `${session.dataBuffer}${data}`.slice(-8192)
-    const markers = extractCwdMarkers(session.dataBuffer)
+    const newDataStart = session.dataBuffer.length
+    const output = session.dataBuffer + data
+    session.dataBuffer = output.slice(-8192)
+    const markers = extractCwdMarkers(output, newDataStart)
     const nextCwd = markers.at(-1)
+    if (nextCwd) {
+      // An initial command can already be queued when PowerShell emits its first prompt.
+      if (session.sawShellPrompt || markers.length > 1) {
+        session.codexStartupPaste?.reset()
+        session.activeAgent = undefined
+        session.activeProviderSessionId = undefined
+        session.inputBuffer = ''
+      }
+      session.sawShellPrompt = true
+    }
+    const commandIndex = output.lastIndexOf(CODEX_COMMAND_MARKER)
+    const commandEnd = commandIndex + CODEX_COMMAND_MARKER.length
+    if (commandIndex >= 0 && commandEnd > newDataStart && (!nextCwd || !extractCwdMarkers(output, commandEnd).length)) {
+      session.activeAgent = 'codex'
+      session.codexStartupPaste?.begin()
+    }
+    if (session.activeAgent === 'codex') session.codexStartupPaste?.observe(output, newDataStart)
     if (!nextCwd || nextCwd === session.cwd) return
 
     session.cwd = nextCwd
@@ -489,6 +590,7 @@ export class PtyService {
     const session = this.sessionsById.get(sessionId)
     if (!session) return
 
+    session.codexStartupPaste?.reset()
     this.sessionsById.delete(sessionId)
     this.sessionsByComponentId.delete(session.componentId)
     this.untrackOwnerSession(session.ownerId, sessionId)
@@ -509,21 +611,32 @@ export class PtyService {
     this.closeBySessionId(session.id)
   }
 
-  private write(sessionId: string, data: string): boolean {
-    const session = this.sessionsById.get(sessionId)
+  private write(input: TerminalWriteInput): boolean {
+    const session = this.sessionsById.get(input.sessionId)
     if (!session) return false
+    if (session.activeAgent === 'codex' && session.codexStartupPaste?.defer(input)) return true
+    return this.writeToPty(session, input)
+  }
 
+  private writeToPty(session: TerminalSession, input: TerminalWriteInput): boolean {
     try {
-      session.pty.write(data)
-      this.trackTerminalInput(session, data)
+      session.pty.write(encodePtyInput(session, input))
+      this.trackTerminalInput(session, input.data)
       return true
     } catch (error) {
-      console.warn(`Failed to write to PTY session ${sessionId}:`, error)
+      console.warn(`Failed to write to PTY session ${session.id}:`, error)
       return false
     }
   }
 
   private trackTerminalInput(session: TerminalSession, data: string): void {
+    if (session.activeAgent && session.sawShellPrompt) return
+    // Focus, mouse and terminal replies are not part of the shell command.
+    if (/^\x1b\[[\d;?<>=]*[IOcRMm]$/.test(data)) return
+    if (data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~')) {
+      if (!session.activeAgent) session.inputBuffer = (session.inputBuffer + data.slice(6, -6)).slice(-MAX_TERMINAL_INPUT_BUFFER_CHARS)
+      return
+    }
     for (const char of data) {
       if (char === '\r' || char === '\n') {
         const command = session.inputBuffer
@@ -542,6 +655,10 @@ export class PtyService {
   private reportAgentCommandStarted(session: TerminalSession, command: string): void {
     const agentCommand = detectTerminalAgentCommand(command)
     if (!agentCommand) return
+    session.codexStartupPaste?.reset()
+    session.activeAgent = agentCommand.source
+    if (agentCommand.source === 'codex') session.codexStartupPaste?.begin()
+    session.activeProviderSessionId = undefined
 
     const event = terminalAgentCommandEventSchema.parse({
       sessionId: session.id,

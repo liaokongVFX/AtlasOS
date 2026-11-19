@@ -10,7 +10,7 @@ import type {
 } from '@shared/ai'
 import type { AgentUsageDayDetail, AgentUsageIndexStatus, AgentUsageYearResult } from '@shared/agent-usage'
 import type { PluginConfig, PluginDiagnosticEntry, PluginInfo, PluginSettings } from '@shared/plugins'
-import type { GitDiffInput, LauncherChooseFileResult, LauncherOpenInput } from '@shared/ipc'
+import type { GitDiffInput, LauncherChooseFileResult, LauncherOpenInput, TerminalAltKey } from '@shared/ipc'
 import type { PetAlertTarget, PetRuntimeState, PetSettings } from '@shared/pet'
 import type { AppSettings, AppSettingsPatch, AtlasAppState, CanvasDocument, FileEntry } from '@shared/schema'
 import type { TerminalEnvironment } from '@shared/terminal-environment'
@@ -141,7 +141,8 @@ const atlasApi = {
   terminal: {
     create: (input: { componentId: string; canvasId?: string; title?: string; cwd?: string; shell?: string; initialCommand?: string; environment?: TerminalEnvironment; autoConfirmWorkspaceTrust?: boolean; cols?: number; rows?: number }) =>
       ipcRenderer.invoke('terminal:create', input) as Promise<{ sessionId: string; cwd: string; shell: string; didRunInitialCommand?: boolean }>,
-    write: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', { sessionId, data }),
+    write: (sessionId: string, data: string, altKey?: TerminalAltKey) => ipcRenderer.invoke('terminal:write', { sessionId, data, altKey }),
+    writeClipboardPaste: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', { sessionId, data, fromClipboard: true }),
     resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { sessionId, cols, rows }),
     updateTitle: (sessionId: string, title: string) => ipcRenderer.invoke('terminal:update-title', { sessionId, title }),
     close: (sessionId: string) => ipcRenderer.invoke('terminal:close', { sessionId }),

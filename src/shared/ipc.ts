@@ -152,8 +152,17 @@ export const watchDirectoryInputSchema = z.object({
 
 export const terminalWriteInputSchema = z.object({
   sessionId: z.string().min(1),
-  data: z.string()
+  data: z.string(),
+  fromClipboard: z.literal(true).optional(),
+  altKey: z.object({
+    virtualKey: z.number().int().min(0).max(255),
+    shift: z.boolean(),
+    ctrl: z.boolean()
+  }).optional()
 })
+
+export type TerminalWriteInput = z.infer<typeof terminalWriteInputSchema>
+export type TerminalAltKey = NonNullable<TerminalWriteInput['altKey']>
 
 export const terminalResizeInputSchema = z.object({
   sessionId: z.string().min(1),

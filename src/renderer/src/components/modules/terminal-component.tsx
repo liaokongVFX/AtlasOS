@@ -1,5 +1,6 @@
-import { FitAddon } from '@xterm/addon-fit'
+import { FitAddon, type ITerminalDimensions } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
+import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -28,6 +29,8 @@ import { fileExtension, fileName } from '../../lib/file-types'
 import { useI18n, type TFunction } from '../../i18n'
 import { writeClipboardText } from '../../lib/clipboard'
 import { TERMINAL_LOCKED_STATE_KEY, isTerminalComponentLocked } from '../../lib/terminal-lock'
+import { installTerminalScrollCompatibility } from '../../lib/terminal-scroll'
+import { installTerminalResizeHistory } from '../../lib/terminal-resize-history'
 import { registerTranslationSelectionProvider } from '../../lib/translation-selection'
 import { asBoolean, asString, cn } from '../../lib/utils'
 import { useAppSettingsStore } from '../../store/app-settings-store'
@@ -160,15 +163,8 @@ function resizeSessionPanelHeight(session: CommandPanelResizeSession, clientY: n
   return Math.round(Math.min(Math.max(session.startHeight + deltaY, session.minHeight), session.maxHeight))
 }
 
-function validTerminalSize(terminal: Terminal): boolean {
-  return terminal.cols >= TERMINAL_MIN_COLS && terminal.rows >= TERMINAL_MIN_ROWS
-}
-
-function createTerminalSize(terminal: Terminal): { cols: number; rows: number } {
-  return {
-    cols: Math.max(TERMINAL_MIN_COLS, terminal.cols),
-    rows: Math.max(TERMINAL_MIN_ROWS, terminal.rows)
-  }
+function validTerminalSize(size: ITerminalDimensions): boolean {
+  return size.cols >= TERMINAL_MIN_COLS && size.rows >= TERMINAL_MIN_ROWS
 }
 
 type TerminalCell = {
@@ -315,15 +311,17 @@ function installTerminalSelectionCompatibility(terminal: Terminal): Disposable {
    * TUIs can toggle DEC mouse tracking while they run, which intentionally
    * changes xterm's selection gesture to Shift+drag. Even with tracking off,
    * xterm's layout-space cell metrics do not match screen-space mouse events
-   * under the React Flow CSS transform. Handle plain drag through xterm's public
-   * selection API in either case, while keeping Alt+drag for raw TUI mouse input.
+   * under the React Flow CSS transform. Full-screen mouse applications own
+   * plain drags (including their scrollbars), with Shift+drag for local selection.
    */
   const handleMouseDown = (event: MouseEvent): void => {
+    const tracksMouse = terminal.modes.mouseTrackingMode !== 'none'
+    const applicationDrag = tracksMouse && terminal.buffer.active.type === 'alternate'
     if (
       event.button !== 0 ||
-      event.shiftKey ||
+      (applicationDrag ? !event.shiftKey : event.shiftKey) ||
       event.altKey ||
-      (terminal.modes.mouseTrackingMode === 'none' && !isTerminalScreenScaled(screen))
+      (!tracksMouse && !isTerminalScreenScaled(screen))
     ) {
       return
     }
@@ -639,6 +637,7 @@ export function TerminalComponent({
   const commandPanelRef = useRef<HTMLDivElement | null>(null)
   const sessionIdRef = useRef<string | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
+  const clipboardPasteRef = useRef(false)
   const scheduleFitRef = useRef<(() => void) | null>(null)
   const isCanvasInteractingRef = useRef(isCanvasInteracting)
   const cwdRef = useRef(asString(component.state.cwd, asString(component.config.cwd)))
@@ -1039,7 +1038,13 @@ export function TerminalComponent({
       const sessionId = sessionIdRef.current
       if (!sessionId) return
 
-      void window.atlas.terminal.write(sessionId, execute ? `${command}\r` : command)
+      const terminal = terminalRef.current
+      if (terminal?.modes.bracketedPasteMode) {
+        terminal.paste(command)
+        if (execute) void window.atlas.terminal.write(sessionId, '\r')
+      } else {
+        void window.atlas.terminal.write(sessionId, execute ? `${command}\r` : command)
+      }
       requestFocus()
     },
     [requestFocus]
@@ -1199,6 +1204,15 @@ export function TerminalComponent({
 
   const pasteClipboardIntoTerminal = useCallback(
     async (instance: Terminal, event?: ClipboardEvent) => {
+      // xterm frames the paste and fires onData synchronously.
+      const pasteClipboardText = (text: string) => {
+        clipboardPasteRef.current = true
+        try {
+          instance.paste(text)
+        } finally {
+          clipboardPasteRef.current = false
+        }
+      }
       const files = dataTransferFiles(event?.clipboardData)
       if (files.length > 0) {
         await pasteFilesIntoTerminal(files)
@@ -1207,7 +1221,7 @@ export function TerminalComponent({
 
       const text = event?.clipboardData?.getData('text/plain') || ''
       if (text) {
-        instance.paste(text)
+        pasteClipboardText(text)
         return true
       }
 
@@ -1217,7 +1231,7 @@ export function TerminalComponent({
 
       const nativeText = readNativeClipboardText()
       if (nativeText) {
-        instance.paste(nativeText)
+        pasteClipboardText(nativeText)
         return true
       }
 
@@ -1274,13 +1288,15 @@ export function TerminalComponent({
     let dataDisposable: Disposable | null = null
     let selectionDisposable: Disposable | null = null
     let selectionCompatibility: Disposable | null = null
+    let disposeScrollCompatibility: () => void = () => undefined
+    let resizeHistory: ReturnType<typeof installTerminalResizeHistory> | undefined
     let clipboardShortcuts: Disposable | null = null
     let disposeData: () => void = () => undefined
     let disposeExit: () => void = () => undefined
     let unregisterTranslationSelectionProvider: () => void = () => undefined
     let removeDomListeners: () => void = () => undefined
     let shortcutPasteFallbackTimer: number | null = null
-    let lastPtySize: { cols: number; rows: number } | null = null
+    let lastPtySize: ITerminalDimensions | null = null
 
     const fitAndResize = (sendResize: boolean): void => {
       if (disposed || !terminal || !fitAddon || !container.isConnected) return
@@ -1292,13 +1308,16 @@ export function TerminalComponent({
       if (rect.width < 2 || rect.height < 2) return
 
       try {
-        fitAddon.fit()
-        if (sendResize && sessionIdRef.current && validTerminalSize(terminal)) {
-          const nextSize = createTerminalSize(terminal)
-          if (!lastPtySize || lastPtySize.cols !== nextSize.cols || lastPtySize.rows !== nextSize.rows) {
-            lastPtySize = nextSize
-            void window.atlas.terminal.resize(sessionIdRef.current, nextSize.cols, nextSize.rows)
-          }
+        // Shrinking only xterm below the PTY minimum discards rows in a full-screen TUI.
+        const size = fitAddon.proposeDimensions()
+        if (!size || !validTerminalSize(size)) return
+        if (size.cols !== terminal.cols || size.rows !== terminal.rows) {
+          if (resizeHistory && !resizeHistory.beforeResize()) return
+          terminal.resize(size.cols, size.rows)
+        }
+        if (sendResize && sessionIdRef.current && (lastPtySize?.cols !== size.cols || lastPtySize.rows !== size.rows)) {
+          lastPtySize = size
+          void window.atlas.terminal.resize(sessionIdRef.current, size.cols, size.rows)
         }
       } catch (error) {
         console.warn('Failed to fit AtlasOS terminal', error)
@@ -1336,6 +1355,8 @@ export function TerminalComponent({
 
       const windowsPty = createWindowsPtyOption()
       const instance = new Terminal({
+        allowProposedApi: true, // Required by xterm's Unicode provider API.
+        scrollback: 10000,
         cursorBlink: true,
         cursorStyle: 'bar',
         cursorWidth: 1,
@@ -1359,10 +1380,13 @@ export function TerminalComponent({
       fitAddon = new FitAddon()
 
       instance.loadAddon(fitAddon)
+      instance.loadAddon(new UnicodeGraphemesAddon())
       instance.loadAddon(new SearchAddon())
       instance.loadAddon(new WebLinksAddon((event, uri) => openTerminalWebLink(event, uri, instance)))
       // Keep xterm's DOM renderer; GPU renderers can retain stale texture strips on virtual displays.
       instance.open(container)
+      resizeHistory = installTerminalResizeHistory(instance, scheduleFit)
+      disposeScrollCompatibility = installTerminalScrollCompatibility(instance)
       selectionCompatibility = installTerminalSelectionCompatibility(instance)
       selectionDisposable = instance.onSelectionChange(refreshTerminalSelectionSnapshot)
       unregisterTranslationSelectionProvider = registerTranslationSelectionProvider(() => {
@@ -1444,19 +1468,37 @@ export function TerminalComponent({
         requestFocus()
       }
 
+      let altStroke: { key: string; event: KeyboardEvent } | undefined
+      if (windowsPty) {
+        // xterm emits onKey immediately before onData. Keep the layout-specific
+        // virtual key for Alt chords that share a prefix with VT sequences.
+        instance.onKey(({ key, domEvent }) => {
+          altStroke = domEvent.altKey && key.length === 2 && key[0] === '\x1b'
+            ? { key, event: domEvent }
+            : undefined
+        })
+      }
       dataDisposable = instance.onData((data) => {
+        const event = altStroke?.key === data ? altStroke.event : undefined
+        altStroke = undefined
         const sessionId = sessionIdRef.current
         if (!sessionId) return
         // 仅在 xterm textarea 真正聚焦时转发鼠标上报；焦点上报（CSI I/O）仍放行，
         // 因为 blur 后本来就不聚焦，仍需要发出 [O。
         if (!shouldWriteTerminalUserInput(data, container)) return
-        void window.atlas.terminal.write(sessionId, data)
+        if (clipboardPasteRef.current) {
+          void window.atlas.terminal.writeClipboardPaste(sessionId, data)
+        } else if (event) {
+          void window.atlas.terminal.write(sessionId, data, { virtualKey: event.keyCode, shift: event.shiftKey, ctrl: event.ctrlKey })
+        } else {
+          void window.atlas.terminal.write(sessionId, data)
+        }
       })
 
       resizeObserver = new ResizeObserver(scheduleFit)
       resizeObserver.observe(container)
 
-      const initialSize = createTerminalSize(instance)
+      const initialSize = { cols: instance.cols, rows: instance.rows }
       lastPtySize = initialSize
       void window.atlas.terminal
         .create({
@@ -1558,6 +1600,8 @@ export function TerminalComponent({
       dataDisposable?.dispose()
       selectionDisposable?.dispose()
       selectionCompatibility?.dispose()
+      disposeScrollCompatibility()
+      resizeHistory?.dispose()
       clipboardShortcuts?.dispose()
       resizeObserver?.disconnect()
       sessionIdRef.current = null
