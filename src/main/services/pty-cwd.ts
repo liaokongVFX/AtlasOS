@@ -1,8 +1,13 @@
 const CWD_MARKER_PREFIX = '\u001b]1337;CurrentDir='
 const CWD_MARKER_SUFFIX = '\u0007'
 export const CODEX_COMMAND_MARKER = '\u001b]1337;SetUserVar=AtlasCodex=MQ==\u0007'
-export const CODEX_WIN32_INPUT_CONFIG = 'disable_paste_burst=true'
 const CWD_MARKER_REGEX = /\u001b]1337;CurrentDir=([A-Za-z0-9+/=]+)\u0007/g
+
+export function codexTerminalArgs(useWin32Input: boolean): string[] {
+  const args = ['-c', 'tui.alternate_screen=never']
+  if (useWin32Input) args.push('-c', 'disable_paste_burst=true')
+  return args
+}
 
 export function encodeCwdMarker(cwd: string): string {
   return `${CWD_MARKER_PREFIX}${Buffer.from(cwd, 'utf8').toString('base64')}${CWD_MARKER_SUFFIX}`
@@ -46,11 +51,9 @@ export function buildPowerShellBootstrapScript(useWin32Input = false): string {
     '          if ($commands.Count) {',
     // The accepted command includes recalled/edited input. Insert after the
     // executable so quoted paths and the precedence of explicit -c flags survive.
-    ...(useWin32Input ? [
-      '            for ($i = $commands.Count - 1; $i -ge 0; $i--) {',
-      `              $line = $line.Insert($commands[$i].CommandElements[0].Extent.EndOffset, ' -c ${CODEX_WIN32_INPUT_CONFIG}')`,
-      '            }'
-    ] : []),
+    '            for ($i = $commands.Count - 1; $i -ge 0; $i--) {',
+    `              $line = $line.Insert($commands[$i].CommandElements[0].Extent.EndOffset, ' ${codexTerminalArgs(useWin32Input).join(' ')}')`,
+    '            }',
     `            [Console]::Write("${CODEX_COMMAND_MARKER}")`,
     '          }',
     '        }',

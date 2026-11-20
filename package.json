@@ -115,6 +115,9 @@
       "node_modules/node-screenshots*/**/*"
     ],
     "afterPack": "scripts/verify-node-pty-after-pack.cjs",
+    "extraResources": [
+      { "from": "scripts/terminal-bin", "to": "terminal-bin" }
+    ],
     "files": [
       "out/**/*",
       "build/icon.png",

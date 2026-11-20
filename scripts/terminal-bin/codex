@@ -1,0 +1,16 @@
+#!/bin/sh
+# Leave the launcher's directory out of the PATH inherited by Codex and its tools.
+remaining=$PATH:
+search=
+separator=
+while [ -n "$remaining" ]; do
+  directory=${remaining%%:*}
+  remaining=${remaining#*:}
+  [ "${directory:-.}/codex" -ef "$0" ] && continue
+  search=$search$separator$directory
+  separator=:
+done
+[ -n "$separator" ] || { echo 'codex: command not found' >&2; exit 127; }
+PATH=$search
+export PATH
+exec codex -c tui.alternate_screen=never "$@"

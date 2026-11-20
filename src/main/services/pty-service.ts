@@ -30,7 +30,7 @@ import type { TerminalEnvironment } from '@shared/terminal-environment'
 import { parseFileUriListPaths, readClipboardFilePathsFromNativeFormats } from './clipboard-files'
 import { CodexStartupPaste } from './codex-startup-paste'
 import { handleValidated } from './ipc-helpers'
-import { buildPowerShellBootstrapScript, CODEX_COMMAND_MARKER, CODEX_WIN32_INPUT_CONFIG, extractCwdMarkers } from './pty-cwd'
+import { buildPowerShellBootstrapScript, CODEX_COMMAND_MARKER, codexTerminalArgs, extractCwdMarkers } from './pty-cwd'
 import { readWindowsClipboardFileDropPaths } from './windows-clipboard-files'
 
 type TerminalSession = {
@@ -164,12 +164,12 @@ function supportsCwdTracking(shell: string): boolean {
 }
 
 function shellArgs(shell: string): string[] {
-  if (USE_BUNDLED_CONPTY && isCodexShell(shell)) return ['-c', CODEX_WIN32_INPUT_CONFIG]
-  if (USE_BUNDLED_CONPTY && /^cmd(?:\.exe)?$/.test(shellBaseName(shell))) {
+  if (isCodexShell(shell)) return codexTerminalArgs(USE_BUNDLED_CONPTY)
+  if (process.platform === 'win32' && /^cmd(?:\.exe)?$/.test(shellBaseName(shell))) {
     // DOSKEY macros belong to this console. Preserve an existing user macro.
     const doskey = '%SystemRoot%\\System32\\doskey.exe'
     const findstr = '%SystemRoot%\\System32\\findstr.exe'
-    return ['/k', `${doskey} /macros | ${findstr} /i /b /l codex= >nul || ${doskey} codex=codex -c ${CODEX_WIN32_INPUT_CONFIG} $*`]
+    return ['/k', `${doskey} /macros | ${findstr} /i /b /l codex= >nul || ${doskey} codex=codex ${codexTerminalArgs(USE_BUNDLED_CONPTY).join(' ')} $*`]
   }
   if (!supportsCwdTracking(shell)) return []
   return ['-NoLogo', '-NoExit', '-Command', buildPowerShellBootstrapScript(USE_BUNDLED_CONPTY)]
@@ -276,8 +276,7 @@ function terminalBaseEnvironment(): NodeJS.ProcessEnv {
   env.COLORTERM = 'truecolor'
   env.TERM_PROGRAM = 'AtlasOS'
   env.TERM_PROGRAM_VERSION = app.getVersion()
-  // Keep Claude's reading anchor across width changes in its fullscreen renderer.
-  env.CLAUDE_CODE_DISABLE_VIRTUAL_SCROLL ??= '1'
+  env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = '1'
   return env
 }
 
@@ -472,6 +471,12 @@ export class PtyService {
       environmentInput,
       this.options.getAgentHookEnvironment?.({ sessionId, canvasId, componentId, title, cwd })
     )
+    if (process.platform !== 'win32' && !isCodexShell(shell)) {
+      const terminalBin = app.isPackaged
+        ? join(process.resourcesPath, 'terminal-bin')
+        : join(app.getAppPath(), 'scripts', 'terminal-bin')
+      env.PATH = `${terminalBin}:${env.PATH ?? '/usr/bin:/bin'}`
+    }
     let term: pty.IPty
     try {
       term = pty.spawn(shell, args, {
