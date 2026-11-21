@@ -25,38 +25,33 @@ function compactSettingsPatch(patch: AppSettingsPatch): AppSettingsPatch {
 
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`
-  await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await rename(tmpPath, filePath)
-      return
-    } catch (error) {
-      const code = errorCode(error)
-      if (code !== 'EEXIST' && code !== 'EPERM') throw error
-
-      await rm(filePath, { force: true })
+  try {
+    await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+    for (let attempt = 0; ; attempt += 1) {
       try {
         await rename(tmpPath, filePath)
         return
-      } catch (renameError) {
-        const renameCode = errorCode(renameError)
+      } catch (error) {
+        const code = errorCode(error)
         const delay = JSON_WRITE_RETRY_DELAYS_MS[attempt]
-        if (delay === undefined || (renameCode !== 'EPERM' && renameCode !== 'ENOENT')) throw renameError
+        if (delay === undefined || (code !== 'EEXIST' && code !== 'EPERM')) throw error
         await new Promise((resolve) => setTimeout(resolve, delay))
       }
     }
+  } catch (error) {
+    await rm(tmpPath, { force: true })
+    throw error
   }
 }
 
-const pendingJsonWrites = new Map<string, Promise<void>>()
+const pendingJsonWrites = new Map<string, Promise<unknown>>()
 
-async function writeJsonQueued(filePath: string, write: () => Promise<void>): Promise<void> {
+async function writeJsonQueued<T>(filePath: string, write: () => Promise<T>): Promise<T> {
   const previous = pendingJsonWrites.get(filePath) ?? Promise.resolve()
   const next = previous.catch(() => undefined).then(write)
   pendingJsonWrites.set(filePath, next)
   try {
-    await next
+    return await next
   } finally {
     if (pendingJsonWrites.get(filePath) === next) pendingJsonWrites.delete(filePath)
   }
@@ -81,17 +76,13 @@ export class AppSettingsService {
   }
 
   async getSettings(): Promise<AppSettings> {
-    await mkdir(this.stateDir, { recursive: true })
-
-    const saved = await this.readSettings()
-    if (saved) {
-      if (saved.needsMigration) await this.writeSettings(saved.settings)
-      return saved.settings
-    }
-
-    const settings = appSettingsSchema.parse({})
-    await this.writeSettings(settings)
-    return settings
+    return writeJsonQueued(this.settingsPath, async () => {
+      await mkdir(this.stateDir, { recursive: true })
+      const saved = await this.readSettings()
+      const settings = saved?.settings ?? appSettingsSchema.parse({})
+      if (!saved || saved.needsMigration) await this.writeSettingsFile(settings)
+      return settings
+    })
   }
 
   async updateSettings(settings: AppSettings): Promise<AppSettings> {
@@ -104,22 +95,20 @@ export class AppSettingsService {
     const parsedPatch = compactSettingsPatch(appSettingsPatchSchema.parse(patch))
     return this.updateSettingsWith((settings) => ({
       ...settings,
-      ...parsedPatch
+      ...parsedPatch,
+      quickInput: { ...settings.quickInput, ...parsedPatch.quickInput }
     }))
   }
 
   async updateSettingsWith(update: (settings: AppSettings) => AppSettings | Promise<AppSettings>): Promise<AppSettings> {
-    let savedSettings: AppSettings | null = null
-
-    await writeJsonQueued(this.settingsPath, async () => {
+    return writeJsonQueued(this.settingsPath, async () => {
       await mkdir(this.stateDir, { recursive: true })
       const saved = await this.readSettings()
       const currentSettings = saved?.settings ?? appSettingsSchema.parse({})
-      savedSettings = appSettingsSchema.parse(await update(currentSettings))
+      const savedSettings = appSettingsSchema.parse(await update(currentSettings))
       await this.writeSettingsFile(savedSettings)
+      return savedSettings
     })
-
-    return savedSettings ?? appSettingsSchema.parse({})
   }
 
   private async writeSettings(settings: AppSettings): Promise<void> {

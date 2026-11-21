@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { BellRing, Bot, Check, ChevronDown, Grid2X2, Puzzle, RefreshCcw, Settings, SlidersHorizontal, TerminalSquare, Trash2, Upload, X, type LucideIcon } from 'lucide-react'
+import { BellRing, Bot, Check, ChevronDown, Grid2X2, Keyboard, Puzzle, RefreshCcw, Settings, SlidersHorizontal, TerminalSquare, Trash2, Upload, X, type LucideIcon } from 'lucide-react'
 import { DEFAULT_APP_SHORTCUTS } from '@shared/constants'
 import { DEFAULT_PET_SPRITE_ANIMATION, petSettingsSchema, type PetRuntimeState, type PetSettings } from '@shared/pet'
 import { localAssetUrl } from '@shared/local-assets'
@@ -18,6 +18,7 @@ import { useAppSettingsStore } from '../store/app-settings-store'
 import { AiSettingsPanel } from './ai-settings-panel'
 import { ApplicationsSettingsPanel } from './applications-settings-panel'
 import { PluginSettingsPanel } from './plugin-settings-panel'
+import { QuickInputSettingsPanel } from './quick-input-settings-panel'
 import { TerminalCommandLibraryManager } from './terminal-command-library-manager'
 import { TerminalEnvironmentEditor } from './terminal-environment-editor'
 
@@ -1196,6 +1197,12 @@ const SETTINGS_SECTIONS = [
     titleKey: 'settings.applications',
     icon: Grid2X2,
     Panel: ApplicationsSettingsPanel
+  },
+  {
+    id: 'quick-input',
+    titleKey: 'settings.quickInput',
+    icon: Keyboard,
+    Panel: QuickInputSettingsPanel
   },
   {
     id: 'terminal-commands',

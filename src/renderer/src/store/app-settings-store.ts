@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_LOCALE } from '@shared/constants'
+import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_LOCALE, DEFAULT_QUICK_INPUT_WINDOW_SHORTCUT } from '@shared/constants'
 import { DEFAULT_AI_SETTINGS } from '@shared/ai'
 import { DEFAULT_PET_SETTINGS } from '@shared/pet'
 import { DEFAULT_REMOTE_SERVER_SETTINGS } from '@shared/remote-servers'
@@ -12,6 +12,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   schemaVersion: ATLAS_SCHEMA_VERSION,
   locale: DEFAULT_LOCALE,
   shortcuts: { ...DEFAULT_APP_SHORTCUTS },
+  quickInput: { windowShortcut: DEFAULT_QUICK_INPUT_WINDOW_SHORTCUT, snippets: [] },
   terminalCommands: createDefaultTerminalCommandLibrary(),
   terminalEnvironment: { ...DEFAULT_TERMINAL_ENVIRONMENT },
   terminalEnvironmentDisabledNames: [],
