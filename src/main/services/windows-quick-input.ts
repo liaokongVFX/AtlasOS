@@ -6,7 +6,7 @@ import type { EditorInsertionResult, QuickInputFocus } from '@shared/quick-input
 export type QuickInputTarget = {
   point: { x: number; y: number } | null
   focusState(panelHandle?: number): Promise<QuickInputFocus>
-  insert?(text: string, panelHandle: number): Promise<EditorInsertionResult>
+  insert?(text: string, panelHandle: number): Promise<EditorInsertionResult | 'dispatched'>
   release(): void
 }
 
@@ -18,6 +18,8 @@ export class WindowsQuickInput {
   readonly ready: Promise<boolean>
   private stopped = false
   private nextId = 0
+
+  get isStopped(): boolean { return this.stopped }
 
   constructor() {
     this.ready = this.reply().then((line) => line === 'ready')
@@ -52,10 +54,10 @@ export class WindowsQuickInput {
         const state = await this.command(`current ${id} ${panelHandle}`)
         return state === 'current' || state === 'switched' ? state : 'unavailable'
       },
-      insert: mode === 'edit' ? async (text, panelHandle) => {
+      insert: mode === 'edit' || mode === 'paste' ? async (text, panelHandle) => {
         const encoded = Buffer.from(text, 'utf16le').toString('base64')
         const result = await this.command(`insert ${id} ${panelHandle} ${encoded}`)
-        return result === 'inserted' || result === 'unavailable' ? result : 'unknown'
+        return result === 'inserted' || result === 'dispatched' || result === 'unavailable' ? result : 'unknown'
       } : undefined,
       release: () => { void this.command(`cancel ${id}`) }
     }

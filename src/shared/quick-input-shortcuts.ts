@@ -37,6 +37,9 @@ export function shortcutProblem(settings: AppSettings, owner: ShortcutOwner, inp
   const parsed = parseKeyboardShortcut(input)
   if (!key || !parsed) return english ? 'Invalid shortcut.' : '无效快捷键。'
   if (owner === 'window' || owner.startsWith('snippet:')) {
+    if (key === 'Ctrl+V') return english
+      ? 'Ctrl+V is used to paste snippets into other applications. Choose another shortcut.'
+      : '快捷输入需要用 Ctrl+V 向其他应用粘贴片段，请选择其他快捷键。'
     if (parsed.key === 'F12' || parsed.metaKey || ['Ctrl+Alt+Delete', 'Alt+Tab', 'Ctrl+Escape'].includes(key)) {
       return english ? `${key} is reserved by Windows.` : `${key} 是 Windows 保留快捷键。`
     }

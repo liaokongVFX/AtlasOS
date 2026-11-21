@@ -17,6 +17,7 @@ internal static class QuickInputHelper {
 
     [DllImport("user32.dll")] private static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern IntPtr GetShellWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
     [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref ThreadInfo info);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out Rect rect);
@@ -44,19 +45,21 @@ internal static class QuickInputHelper {
     private static IntPtr root, edit, focus;
     private static uint processId, threadId;
     private static int selectionStart, selectionEnd;
+    private static QuickInputPaste paste;
     private static bool rich;
     private static bool consumed;
 
     private static void Clear() {
-        if (edit != IntPtr.Zero) RemoveProp(edit, marker);
+        if (edit != IntPtr.Zero || paste != null) RemoveProp(focus, marker);
         root = edit = focus = IntPtr.Zero;
+        paste = null;
         request = null;
         consumed = false;
     }
 
     private static IntPtr Focus() {
         var info = new ThreadInfo { size = Marshal.SizeOf(typeof(ThreadInfo)) };
-        return threadId != 0 && GetGUIThreadInfo(threadId, ref info) ? info.focus : IntPtr.Zero;
+        return threadId != 0 && GetGUIThreadInfo(threadId, ref info) && (info.flags & 0x1e) == 0 ? info.focus : IntPtr.Zero;
     }
 
     private static bool HasOtherForeground(IntPtr original, IntPtr panel) {
@@ -68,22 +71,14 @@ internal static class QuickInputHelper {
         uint pid;
         if (root == IntPtr.Zero || GetWindowThreadProcessId(root, out pid) != threadId || pid != processId) return "unavailable";
         if (GetForegroundWindow() != root) return panel == IntPtr.Zero || HasOtherForeground(root, panel) ? "switched" : "unavailable";
-        if (edit != IntPtr.Zero && GetProp(edit, marker) == IntPtr.Zero) return "unavailable";
-        if (Focus() == focus) return "current";
+        if ((edit != IntPtr.Zero || paste != null) && GetProp(focus, marker) == IntPtr.Zero) return "unavailable";
+        if (Focus() == focus && (paste == null || paste.HasFocus())) return "current";
         return panel == IntPtr.Zero ? "switched" : "unavailable";
     }
 
     private static bool Selection(out int start, out int end) {
         IntPtr unused;
         return GetSelection(edit, 0xb0, out start, out end, SendFlags, Timeout, out unused) != IntPtr.Zero;
-    }
-
-    private static bool AllowsNativeEdit() {
-        using (var process = Process.GetProcessById((int)processId)) {
-            var name = process.ProcessName;
-            return !String.Equals(name, "chrome", StringComparison.OrdinalIgnoreCase) &&
-                !String.Equals(name, "msedge", StringComparison.OrdinalIgnoreCase);
-        }
     }
 
     private static string Capture(string id) {
@@ -97,18 +92,24 @@ internal static class QuickInputHelper {
         GetClassName(focus, name, name.Capacity);
         var cls = name.ToString().ToUpperInvariant();
         rich = cls == "RICHEDIT20W" || cls == "RICHEDIT50W" || cls == "RICHEDITD2DPT";
-        if ((cls == "EDIT" || rich) && AllowsNativeEdit() && IsWindowUnicode(focus) && GetAncestor(focus, 2) == root &&
-            SetProp(focus, marker, (IntPtr)1)) {
-            edit = focus;
-            if (!Selection(out selectionStart, out selectionEnd)) {
-                RemoveProp(edit, marker);
-                edit = IntPtr.Zero;
+        if (cls == "EDIT" || rich) {
+            if (IsWindowUnicode(focus) && GetAncestor(focus, 2) == root && SetProp(focus, marker, (IntPtr)1)) {
+                edit = focus;
+                if (!Selection(out selectionStart, out selectionEnd)) {
+                    RemoveProp(edit, marker);
+                    edit = IntPtr.Zero;
+                }
             }
+        } else if (focus != IntPtr.Zero && root != GetShellWindow() && GetAncestor(focus, 2) == root) {
+            name.Clear();
+            GetClassName(root, name, name.Capacity);
+            paste = QuickInputPaste.Capture(name.ToString(), focus);
+            if (paste != null && !SetProp(focus, marker, (IntPtr)1)) paste = null;
         }
         Rect bounds;
         GetWindowRect(root, out bounds);
         return String.Format("captured {0} {1} {2} {3} {4}", bounds.left, bounds.top, bounds.right, bounds.bottom,
-            edit == IntPtr.Zero ? "copy" : "edit");
+            edit != IntPtr.Zero ? "edit" : paste != null ? "paste" : "copy");
     }
 
     private static bool KeysReleased() {
@@ -118,7 +119,7 @@ internal static class QuickInputHelper {
     }
 
     private static bool WaitForKeysReleased() {
-        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var timer = Stopwatch.StartNew();
         do {
             if (KeysReleased()) return true;
             Thread.Sleep(10);
@@ -127,7 +128,7 @@ internal static class QuickInputHelper {
     }
 
     private static string Insert(IntPtr panel, string text) {
-        if (edit == IntPtr.Zero || text.IndexOf('\0') >= 0 || !WaitForKeysReleased()) return "unavailable";
+        if ((edit == IntPtr.Zero && paste == null) || text.Length == 0 || text.IndexOf('\0') >= 0 || !WaitForKeysReleased()) return "unavailable";
         // Minimizing the palette lets Windows reactivate its previous foreground window.
         if (panel != IntPtr.Zero) {
             for (int i = 0; i < 25 && FocusState(panel) != "current"; ++i) {
@@ -136,7 +137,9 @@ internal static class QuickInputHelper {
                 Thread.Sleep(10);
             }
         }
-        if (FocusState(panel) != "current" || !IsWindowEnabled(edit) || !IsWindowVisible(edit)) return "unavailable";
+        if (FocusState(panel) != "current" || !IsWindowEnabled(focus) || !IsWindowVisible(focus)) return "unavailable";
+        if (paste != null) return paste.Insert(text, () => FocusState(panel) == "current" &&
+            GetForegroundWindow() == root && Focus() == focus && KeysReleased());
         int style = GetWindowLong(edit, -16);
         // Unsupported transforms, numeric fields, password fields and read-only controls.
         if ((style & (0x8 | 0x10 | 0x20 | 0x800 | 0x2000)) != 0) return "unavailable";
@@ -158,6 +161,7 @@ internal static class QuickInputHelper {
             ? "inserted" : "unknown";
     }
 
+    [STAThread]
     public static void Main() {
         SetProcessDPIAware();
         Console.WriteLine("ready");

@@ -267,14 +267,22 @@ function startQuickInput(): void {
     return normalizeKeyboardShortcut(clipboard.readText().trim())
   })
   if (process.platform !== 'win32') return
-  const helper = new WindowsQuickInput()
+  let helper = new WindowsQuickInput()
   quickInputHelper = helper
   const service = new QuickInputService({
     getSnippets: async () => (await appSettingsService!.getSettings()).quickInput.snippets,
     loadPanel: (window) => loadRenderer(window, 'quick-input'),
-    captureTarget: () => mainWindow?.isFocused()
-      ? captureAtlasQuickInputTarget(mainWindow, (original, panel) => helper.hasOtherForeground(original, panel))
-      : helper.capture(),
+    captureTarget: () => {
+      // A hung external accessibility provider can time out the helper. Start fresh
+      // on the next user request, never replay an insertion with an uncertain result.
+      if (helper.isStopped) {
+        helper = new WindowsQuickInput()
+        quickInputHelper = helper
+      }
+      return mainWindow?.isFocused()
+        ? captureAtlasQuickInputTarget(mainWindow, (original, panel) => helper.hasOtherForeground(original, panel))
+        : helper.capture()
+    },
     waitForKeysReleased: () => helper.waitForKeysReleased()
   })
   quickInput = service

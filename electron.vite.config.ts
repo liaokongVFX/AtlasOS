@@ -10,17 +10,18 @@ import { resolveRendererDevPort } from './src/build/dev-server-port'
 const rendererDevPort = resolveRendererDevPort(process.env.ATLAS_RENDERER_PORT)
 
 function windowsQuickInputHelper(): Plugin {
-  const source = resolve(__dirname, 'src/main/services/quick-input-helper.cs')
+  const sources = ['quick-input-helper.cs', 'quick-input-paste.cs'].map(name => resolve(__dirname, 'src/main/services', name))
   return {
     name: 'windows-quick-input-helper',
     buildStart() {
-      if (process.platform === 'win32') this.addWatchFile(source)
+      if (process.platform === 'win32') sources.forEach(source => this.addWatchFile(source))
     },
     writeBundle({ dir }) {
       if (process.platform !== 'win32' || !dir) return
-      const csc = resolve(process.env.SystemRoot!, 'Microsoft.NET/Framework/v4.0.30319/csc.exe')
-      execFileSync(csc, ['/nologo', '/optimize+', '/target:exe', '/platform:anycpu',
-        '/out:' + resolve(dir, 'quick-input-helper.exe'), source], { windowsHide: true, stdio: 'inherit' })
+      const framework = resolve(process.env.SystemRoot!, 'Microsoft.NET/Framework/v4.0.30319')
+      const references = ['UIAutomationClient', 'UIAutomationTypes', 'WindowsBase'].map(name => '/r:' + resolve(framework, 'WPF', name + '.dll'))
+      execFileSync(resolve(framework, 'csc.exe'), ['/nologo', '/optimize+', '/target:exe', '/platform:anycpu',
+        ...references, '/r:System.Windows.Forms.dll', '/out:' + resolve(dir, 'quick-input-helper.exe'), ...sources], { windowsHide: true, stdio: 'inherit' })
     }
   }
 }

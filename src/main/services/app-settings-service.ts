@@ -90,7 +90,9 @@ export class AppSettingsService {
   }
 
   async updateSettings(settings: AppSettings): Promise<AppSettings> {
-    return this.updateSettingsWith(() => settings)
+    return this.updateSettingsWith(current => ({
+      ...settings, quickInput: settings.quickInput ?? current.quickInput
+    }))
   }
 
   async patchSettings(patch: AppSettingsPatch): Promise<AppSettings> {

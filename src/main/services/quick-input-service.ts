@@ -154,7 +154,7 @@ export class QuickInputService {
     if (fromPanel) this.window!.minimize()
     const result = await request.target.insert(snippet.text, handle).catch(() => 'unknown' as const)
     if (this.active !== request) return
-    if (result === 'inserted') this.finish()
+    if (result === 'inserted' || result === 'dispatched') this.finish()
     else {
       // A fresh search may reuse the location, but must never repeat a possibly committed edit.
       if (result === 'unknown') request.target.insert = undefined
