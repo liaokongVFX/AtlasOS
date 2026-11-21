@@ -4,6 +4,7 @@ import '@xterm/xterm/css/xterm.css'
 import 'katex/dist/katex.min.css'
 import 'react-diff-view/style/index.css'
 import './styles.css'
+import './lib/quick-input-editor'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactFlowProvider } from '@xyflow/react'
