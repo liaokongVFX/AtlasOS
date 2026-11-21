@@ -77,13 +77,14 @@ export function QuickInputSettingsPanel({ active }: { active: boolean }): JSX.El
           <label className="general-settings__field">
             <span>{t('quickInput.windowShortcut')}</span>
             <ShortcutRecorder value={quickInput.windowShortcut ?? ''} placeholder={t('quickInput.unbound')}
+              aria-describedby="quick-input-shortcut-description"
               disabled={!isLoaded || !!loadError || saving || !!draft || window.atlas.quickInput?.systemShortcuts === false}
               onChange={key => record(key, false)} />
           </label>
           <button type="button" className="tool-button" disabled={!quickInput.windowShortcut || !isLoaded || !!loadError || saving || !!draft}
             onClick={() => void save({ windowShortcut: null })}>{t('quickInput.clearWindowShortcut')}</button>
         </div>
-        <p>{t('settings.shortcutCaptureDescription')}</p>
+        <p id="quick-input-shortcut-description">{t('settings.shortcutCaptureDescription')}</p>
         {quickInput.windowShortcut && unavailable.includes(quickInput.windowShortcut) && <small role="status">{t('quickInput.keyUnavailable')}</small>}
       </div>
       <div className="general-settings__section">
@@ -148,6 +149,7 @@ export function QuickInputSettingsPanel({ active }: { active: boolean }): JSX.El
               <label className="general-settings__field">
                 <span>{t('quickInput.snippetShortcut')}</span>
                 <ShortcutRecorder value={draft.shortcut ?? ''} placeholder={t('quickInput.unbound')}
+                  aria-describedby="quick-input-shortcut-description"
                   disabled={saving || window.atlas.quickInput?.systemShortcuts === false}
                   onChange={key => record(key, true)} />
               </label>

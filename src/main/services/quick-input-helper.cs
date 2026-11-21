@@ -45,11 +45,13 @@ internal static class QuickInputHelper {
     private static uint processId, threadId;
     private static int selectionStart, selectionEnd;
     private static bool rich;
+    private static bool consumed;
 
     private static void Clear() {
         if (edit != IntPtr.Zero) RemoveProp(edit, marker);
         root = edit = focus = IntPtr.Zero;
         request = null;
+        consumed = false;
     }
 
     private static IntPtr Focus() {
@@ -57,10 +59,12 @@ internal static class QuickInputHelper {
         return threadId != 0 && GetGUIThreadInfo(threadId, ref info) ? info.focus : IntPtr.Zero;
     }
 
-    private static bool IsCurrent() {
+    private static string FocusState() {
         uint pid;
-        return root != IntPtr.Zero && GetForegroundWindow() == root &&
-            GetWindowThreadProcessId(root, out pid) == threadId && pid == processId && Focus() == focus;
+        if (root == IntPtr.Zero || GetWindowThreadProcessId(root, out pid) != threadId || pid != processId) return "unavailable";
+        if (GetForegroundWindow() != root) return "switched";
+        if (edit != IntPtr.Zero && GetProp(edit, marker) == IntPtr.Zero) return "unavailable";
+        return Focus() == focus ? "current" : "switched";
     }
 
     private static bool Selection(out int start, out int end) {
@@ -120,13 +124,13 @@ internal static class QuickInputHelper {
         if (edit == IntPtr.Zero || text.IndexOf('\0') >= 0 || !WaitForKeysReleased()) return "unavailable";
         // Minimizing the palette lets Windows reactivate its previous foreground window.
         if (panel != IntPtr.Zero) {
-            for (int i = 0; i < 25 && !IsCurrent(); ++i) {
+            for (int i = 0; i < 25 && FocusState() != "current"; ++i) {
                 var foreground = GetForegroundWindow();
                 if (foreground != IntPtr.Zero && foreground != panel && foreground != root) break;
                 Thread.Sleep(10);
             }
         }
-        if (!IsCurrent() || GetProp(edit, marker) == IntPtr.Zero || !IsWindowEnabled(edit) || !IsWindowVisible(edit)) return "unavailable";
+        if (FocusState() != "current" || !IsWindowEnabled(edit) || !IsWindowVisible(edit)) return "unavailable";
         int style = GetWindowLong(edit, -16);
         // Unsupported transforms, numeric fields, password fields and read-only controls.
         if ((style & (0x8 | 0x10 | 0x20 | 0x800 | 0x2000)) != 0) return "unavailable";
@@ -139,7 +143,7 @@ internal static class QuickInputHelper {
             SendNumber(edit, 14, IntPtr.Zero, IntPtr.Zero, SendFlags, Timeout, out length) == IntPtr.Zero ||
             SendNumber(edit, 0xd5, IntPtr.Zero, IntPtr.Zero, SendFlags, Timeout, out limit) == IntPtr.Zero ||
             length.ToInt64() - (end - start) + native.Length > limit.ToInt64()) return "unavailable";
-        if (!IsCurrent() || GetProp(edit, marker) == IntPtr.Zero) return "unavailable";
+        if (FocusState() != "current") return "unavailable";
         if (ReplaceSelection(edit, 0xc2, (IntPtr)1, native, SendFlags, Timeout, out unused) == IntPtr.Zero) {
             return Marshal.GetLastWin32Error() == 5 ? "unavailable" : "unknown";
         }
@@ -160,10 +164,11 @@ internal static class QuickInputHelper {
                     if (args[0] == "release-keys") result = KeysReleased() ? "released" : "held";
                     else if (args[0] == "capture") result = Capture(args[1]);
                     else if (args[1] == request) {
-                        if (args[0] == "current") result = IsCurrent() ? "current" : "unavailable";
-                        if (args[0] == "insert") {
-                            try { result = Insert(new IntPtr(Int64.Parse(args[2])), Encoding.Unicode.GetString(Convert.FromBase64String(args[3]))); }
-                            finally { Clear(); }
+                        if (args[0] == "current") result = FocusState();
+                        if (args[0] == "insert" && !consumed) {
+                            consumed = true;
+                            result = Insert(new IntPtr(Int64.Parse(args[2])), Encoding.Unicode.GetString(Convert.FromBase64String(args[3])));
+                            consumed = result != "unavailable";
                         }
                         if (args[0] == "cancel") Clear();
                     }

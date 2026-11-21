@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { BrowserWindow, clipboard, ipcMain, screen, type IpcMainInvokeEvent } from 'electron'
-import type { QuickInputPanelSnippet, QuickInputPanelState } from '@shared/quick-input-panel'
+import type { QuickInputPanelState } from '@shared/quick-input-panel'
+import type { QuickInputSnippet } from '@shared/schema'
 import type { QuickInputTarget } from './windows-quick-input'
 
 const PANEL_WIDTH = 520
@@ -8,7 +9,7 @@ const PANEL_HEIGHT = 388
 
 type Options = {
   loadPanel(window: BrowserWindow): Promise<void>
-  getSnippets(): Promise<QuickInputPanelSnippet[]>
+  getSnippets(): Promise<QuickInputSnippet[]>
   captureTarget(): Promise<QuickInputTarget | null>
   waitForKeysReleased(): Promise<boolean>
 }
@@ -62,7 +63,8 @@ export class QuickInputService {
 
   private async begin(snippetId: string | null): Promise<void> {
     const previous = this.active
-    if (previous && (snippetId !== null || previous.phase !== 'choosing' || !this.isFocused())) return
+    if (previous && (snippetId !== null || !this.isFocused() ||
+      (previous.phase !== 'choosing' && previous.phase !== 'failed'))) return
     const request: Request = {
       target: previous?.target ?? null, phase: 'opening',
       state: { requestId: ++this.sequence, snippets: [], failure: null, selectedId: null }
@@ -112,9 +114,12 @@ export class QuickInputService {
     const window = this.panel()
     await this.loaded
     if (this.active !== request) return
-    if (verifyTarget && request.target && !await request.target.isCurrent()) {
-      if (this.active === request) this.finish()
-      return
+    if (verifyTarget && request.target) {
+      const focus = await request.target.focusState()
+      if (focus === 'switched' || (focus === 'unavailable' && !request.state.failure)) {
+        if (this.active === request) this.finish()
+        return
+      }
     }
     if (this.active !== request) return
     const point = request.target?.point
@@ -151,8 +156,10 @@ export class QuickInputService {
     if (this.active !== request) return
     if (result === 'inserted') this.finish()
     else {
+      // A fresh search may reuse the location, but must never repeat a possibly committed edit.
+      if (result === 'unknown') request.target.insert = undefined
       request.state.failure = result
-      await this.show(request, false)
+      await this.show(request, !fromPanel)
     }
   }
 

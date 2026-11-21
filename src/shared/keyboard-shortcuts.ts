@@ -26,6 +26,7 @@ const KEY_ALIASES: Record<string, string> = {
   escape: 'Escape',
   end: 'End',
   home: 'Home',
+  insert: 'Insert',
   left: 'ArrowLeft',
   pagedown: 'PageDown',
   pageup: 'PageUp',

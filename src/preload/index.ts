@@ -159,7 +159,8 @@ const atlasApi = {
     create: (input: { componentId: string; canvasId?: string; title?: string; cwd?: string; shell?: string; initialCommand?: string; environment?: TerminalEnvironment; autoConfirmWorkspaceTrust?: boolean; cols?: number; rows?: number }) =>
       ipcRenderer.invoke('terminal:create', input) as Promise<{ sessionId: string; cwd: string; shell: string; didRunInitialCommand?: boolean }>,
     write: (sessionId: string, data: string, altKey?: TerminalAltKey) => ipcRenderer.invoke('terminal:write', { sessionId, data, altKey }),
-    writeQuickInput: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:quick-input', { sessionId, data }) as Promise<EditorInsertionResult>,
+    writeQuickInput: (sessionId: string, data: string, expiresAt: number) =>
+      ipcRenderer.invoke('terminal:quick-input', { sessionId, data, expiresAt }) as Promise<EditorInsertionResult>,
     writeClipboardPaste: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', { sessionId, data, fromClipboard: true }),
     resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { sessionId, cols, rows }),
     updateTitle: (sessionId: string, title: string) => ipcRenderer.invoke('terminal:update-title', { sessionId, title }),

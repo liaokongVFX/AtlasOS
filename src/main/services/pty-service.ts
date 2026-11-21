@@ -12,6 +12,7 @@ import {
   terminalCloseInputSchema,
   terminalPersistAssetInputSchema,
   terminalReadClipboardFilesInputSchema,
+  terminalQuickInputSchema,
   terminalSaveClipboardImageInputSchema,
   terminalResizeInputSchema,
   terminalUpdateTitleInputSchema,
@@ -19,6 +20,7 @@ import {
   type TerminalWriteInput
 } from '@shared/ipc'
 import { terminalCreateSchema } from '@shared/schema'
+import type { EditorInsertionResult } from '@shared/quick-input-editor'
 import {
   detectTerminalAgentCommand,
   terminalAgentCommandEventSchema,
@@ -28,7 +30,7 @@ import {
 } from '@shared/terminal-agent'
 import type { TerminalEnvironment } from '@shared/terminal-environment'
 import { parseFileUriListPaths, readClipboardFilePathsFromNativeFormats } from './clipboard-files'
-import { CodexStartupPaste } from './codex-startup-paste'
+import { CodexStartupPaste, type QuickInputDelivery } from './codex-startup-paste'
 import { handleValidated } from './ipc-helpers'
 import { buildPowerShellBootstrapScript, CODEX_COMMAND_MARKER, codexTerminalArgs, extractCwdMarkers } from './pty-cwd'
 import { readWindowsClipboardFileDropPaths } from './windows-clipboard-files'
@@ -340,12 +342,10 @@ export class PtyService {
       return { ok: this.write(input) }
     })
 
-    handleValidated('terminal:quick-input', terminalWriteInputSchema, (_, { sessionId, data }) =>
-      new Promise(resolve => this.write({ sessionId, data }, written => {
-        if (written === undefined) resolve('unavailable')
-        else resolve(written ? 'inserted' : 'unknown')
-      }))
-    )
+    handleValidated('terminal:quick-input', terminalQuickInputSchema, (event, { sessionId, data, expiresAt }) => {
+      if (this.sessionsById.get(sessionId)?.ownerId !== event.sender.id || Date.now() >= expiresAt) return 'unavailable'
+      return new Promise<EditorInsertionResult>(finish => this.write({ sessionId, data }, { expiresAt, finish }))
+    })
 
     handleValidated('terminal:resize', terminalResizeInputSchema, (_, input) => {
       return { ok: this.resize(input.sessionId, input.cols, input.rows) }
@@ -623,26 +623,26 @@ export class PtyService {
     this.closeBySessionId(session.id)
   }
 
-  private write(input: TerminalWriteInput, finish?: (written?: boolean) => void): boolean {
+  private write(input: TerminalWriteInput, delivery?: QuickInputDelivery): boolean {
     const session = this.sessionsById.get(input.sessionId)
     if (!session) {
-      finish?.()
+      delivery?.finish('unavailable')
       return false
     }
-    if (session.activeAgent === 'codex' && session.codexStartupPaste?.defer(input, finish)) return true
-    const written = this.writeToPty(session, input)
-    finish?.(written)
-    return written
+    if (session.activeAgent === 'codex' && session.codexStartupPaste?.defer(input, delivery)) return true
+    const result = this.writeToPty(session, input)
+    delivery?.finish(result)
+    return result === 'inserted'
   }
 
-  private writeToPty(session: TerminalSession, input: TerminalWriteInput): boolean {
+  private writeToPty(session: TerminalSession, input: TerminalWriteInput): EditorInsertionResult {
     try {
       session.pty.write(encodePtyInput(session, input))
       this.trackTerminalInput(session, input.data)
-      return true
+      return 'inserted'
     } catch (error) {
       console.warn(`Failed to write to PTY session ${session.id}:`, error)
-      return false
+      return 'unknown'
     }
   }
 
