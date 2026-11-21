@@ -126,8 +126,11 @@ export class QuickInputService {
     if (!snippet) { this.finish(); return }
     request.state.selectedId = id
     request.state.snippets = [snippet]
-    if (fromPanel && !await this.options.waitForKeysReleased()) {
-      if (this.active === request) this.finish()
+    if (!await this.options.waitForKeysReleased()) {
+      if (this.active === request) {
+        request.state.failure = 'unavailable'
+        await this.show(request, false)
+      }
       return
     }
     if (this.active !== request || (fromPanel && !this.isFocused())) return

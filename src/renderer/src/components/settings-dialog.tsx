@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { BellRing, Bot, Check, ChevronDown, Grid2X2, Keyboard, Puzzle, RefreshCcw, Settings, SlidersHorizontal, TerminalSquare, Trash2, Upload, X, type LucideIcon } from 'lucide-react'
@@ -6,11 +6,7 @@ import { DEFAULT_APP_SHORTCUTS } from '@shared/constants'
 import { DEFAULT_PET_SPRITE_ANIMATION, petSettingsSchema, type PetRuntimeState, type PetSettings } from '@shared/pet'
 import { localAssetUrl } from '@shared/local-assets'
 import type { AtlasUpdateState } from '@shared/updates'
-import {
-  formatKeyboardShortcut,
-  keyboardShortcutFromEvent,
-  normalizeKeyboardShortcut
-} from '@shared/keyboard-shortcuts'
+import { shortcutProblem } from '@shared/quick-input-shortcuts'
 import type { AppShortcutSettings } from '@shared/schema'
 import { LOCALES, useI18n, type I18nKey, type Locale, type TFunction } from '../i18n'
 import { cn } from '../lib/utils'
@@ -19,6 +15,7 @@ import { AiSettingsPanel } from './ai-settings-panel'
 import { ApplicationsSettingsPanel } from './applications-settings-panel'
 import { PluginSettingsPanel } from './plugin-settings-panel'
 import { QuickInputSettingsPanel } from './quick-input-settings-panel'
+import { ShortcutRecorder } from './shortcut-recorder'
 import { TerminalCommandLibraryManager } from './terminal-command-library-manager'
 import { TerminalEnvironmentEditor } from './terminal-environment-editor'
 
@@ -297,7 +294,7 @@ function EmptySettingsPanel({ id, titleKey, messageKey }: EmptySettingsPanelProp
   )
 }
 
-type ShortcutErrors = Partial<Record<keyof AppShortcutSettings, I18nKey>>
+type ShortcutErrors = Partial<Record<keyof AppShortcutSettings, string>>
 const SHORTCUT_DESCRIPTION_ID = 'settings-shortcuts-description'
 
 const SHORTCUT_FIELDS = [
@@ -307,37 +304,6 @@ const SHORTCUT_FIELDS = [
   { key: 'canvasGroupSelection', labelKey: 'settings.shortcutGroupSelection' },
   { key: 'canvasUngroupSelection', labelKey: 'settings.shortcutUngroupSelection' }
 ] as const satisfies readonly { key: keyof AppShortcutSettings; labelKey: I18nKey }[]
-
-function validateShortcutDraft(draft: AppShortcutSettings): { errors: ShortcutErrors; shortcuts: AppShortcutSettings | null } {
-  const errors: ShortcutErrors = {}
-  const shortcuts: Partial<AppShortcutSettings> = {}
-  const usedShortcuts = new Set<string>()
-
-  for (const field of SHORTCUT_FIELDS) {
-    const shortcut = normalizeKeyboardShortcut(draft[field.key])
-    if (!shortcut) {
-      errors[field.key] = 'settings.shortcutInvalid'
-      continue
-    }
-
-    if (usedShortcuts.has(shortcut)) {
-      errors[field.key] = 'settings.shortcutAlreadyUsed'
-      continue
-    }
-
-    usedShortcuts.add(shortcut)
-    shortcuts[field.key] = shortcut
-  }
-
-  if (Object.keys(errors).length > 0) {
-    return { errors, shortcuts: null }
-  }
-
-  return {
-    errors,
-    shortcuts: shortcuts as AppShortcutSettings
-  }
-}
 
 function updateStatusLabel(t: TFunction, state: AtlasUpdateState | null): string {
   if (!state) return t('saveState.idle')
@@ -412,35 +378,22 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
     setActionError(null)
   }
 
-  const captureShortcut = (event: ReactKeyboardEvent<HTMLInputElement>, key: keyof AppShortcutSettings): void => {
-    event.preventDefault()
-    event.stopPropagation()
-
-    if (event.key === 'Escape') {
-      event.currentTarget.blur()
-      return
-    }
-
-    if (event.nativeEvent.isComposing) return
-
-    const shortcut = keyboardShortcutFromEvent(event.nativeEvent)
-    if (!shortcut) return
-
-    updateShortcutDraft(key, formatKeyboardShortcut(shortcut))
-    event.currentTarget.select()
-  }
-
   const saveShortcuts = async (): Promise<void> => {
-    const validation = validateShortcutDraft(draft)
-    setErrors(validation.errors)
-    if (!validation.shortcuts) return
+    const errors: ShortcutErrors = {}
+    for (const { key } of SHORTCUT_FIELDS) {
+      if (draft[key] === settings.shortcuts[key]) continue
+      const problem = shortcutProblem({ ...settings, locale, shortcuts: draft }, key, draft[key])
+      if (problem) errors[key] = problem
+    }
+    setErrors(errors)
+    if (Object.keys(errors).length) return
 
     setSaving(true)
     setActionError(null)
 
     try {
       const saved = await patchSettings({
-        shortcuts: validation.shortcuts
+        shortcuts: draft
       })
       setDraft(saved.shortcuts)
     } catch (error) {
@@ -577,20 +530,13 @@ function GeneralSettingsPanel({ active }: SettingsSectionPanelProps): JSX.Elemen
             return (
               <label key={field.key} className="general-settings__field">
                 <span>{t(field.labelKey)}</span>
-                <input
-                  type="text"
-                  className="general-settings__shortcut-input"
+                <ShortcutRecorder
                   value={draft[field.key]}
-                  readOnly
-                  inputMode="none"
-                  autoComplete="off"
-                  spellCheck={false}
-                  onFocus={(event) => event.currentTarget.select()}
-                  onKeyDownCapture={(event) => captureShortcut(event, field.key)}
+                  onChange={value => updateShortcutDraft(field.key, value)}
                   aria-invalid={error ? 'true' : undefined}
                   aria-describedby={describedBy}
                 />
-                {error ? <small id={errorId}>{t(error)}</small> : null}
+                {error ? <small id={errorId}>{error}</small> : null}
               </label>
             )
           })}
@@ -1272,7 +1218,10 @@ export function SettingsDialog({ showTrigger = true }: SettingsDialogProps): JSX
       ) : null}
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content settings-dialog" onInteractOutside={(event) => event.preventDefault()}>
+        <Dialog.Content className="dialog-content settings-dialog" onInteractOutside={(event) => event.preventDefault()}
+          onEscapeKeyDown={event => {
+            if (document.activeElement?.classList.contains('general-settings__shortcut-input')) event.preventDefault()
+          }}>
           <div className="settings-dialog__header">
             <div>
               <Dialog.Title className="dialog-title">{t('settings.open')}</Dialog.Title>

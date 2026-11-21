@@ -60,7 +60,11 @@ export class WindowsQuickInput {
   }
 
   async waitForKeysReleased(): Promise<boolean> {
-    return await this.command('release-keys') === 'released'
+    for (;;) {
+      const result = await this.command('release-keys')
+      if (result !== 'held') return result === 'released'
+      await new Promise(resolve => setTimeout(resolve, 15))
+    }
   }
 
   dispose(): void {

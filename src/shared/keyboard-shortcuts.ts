@@ -7,6 +7,8 @@ const MODIFIER_ALIASES = {
   command: 'meta',
   meta: 'meta',
   super: 'meta',
+  win: 'meta',
+  windows: 'meta',
   shift: 'shift'
 } as const
 
@@ -55,7 +57,7 @@ function normalizeKeyToken(token: string): string | null {
   const lower = compact.toLowerCase()
   if (KEY_ALIASES[lower]) return KEY_ALIASES[lower]
   if (compact.length === 1) return compact.toUpperCase()
-  if (/^f(?:[1-9]|1[0-2])$/i.test(compact)) return compact.toUpperCase()
+  if (/^f(?:[1-9]|1\d|2[0-4])$/i.test(compact)) return compact.toUpperCase()
 
   return null
 }
