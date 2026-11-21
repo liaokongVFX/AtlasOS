@@ -25,6 +25,7 @@ import { applyAtlasBrowserNetworkPolicy, applyAtlasBrowserWebPreferences } from 
 import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services/local-asset-protocol'
 import { createContentSecurityPolicy } from './security-policy'
 import { QuickInputService } from './services/quick-input-service'
+import { captureAtlasQuickInputTarget } from './services/atlas-quick-input'
 import { WindowsQuickInput } from './services/windows-quick-input'
 import type { PetAlertTarget } from '@shared/pet'
 
@@ -266,7 +267,7 @@ async function startQuickInputTestMode(): Promise<void> {
   const service = new QuickInputService({
     getSnippets: async () => [snippet],
     loadPanel: (window) => loadRenderer(window, 'quick-input'),
-    captureTarget: () => helper.capture(),
+    captureTarget: () => mainWindow?.isFocused() ? captureAtlasQuickInputTarget(mainWindow) : helper.capture(),
     waitForKeysReleased: () => helper.waitForKeysReleased()
   })
   quickInput = service

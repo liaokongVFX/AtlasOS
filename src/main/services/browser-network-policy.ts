@@ -6,7 +6,7 @@ import type { WebPreferences } from 'electron/main'
 const ATLAS_BROWSER_WEBRTC_IP_HANDLING_POLICY = 'disable_non_proxied_udp'
 const ATLAS_BROWSER_WEBVIEW_PRELOAD = join(
   dirname(fileURLToPath(import.meta.url)),
-  '../../preload/browser-webview-policy.js'
+  '../preload/browser-webview-policy.js'
 )
 
 export function applyAtlasBrowserWebPreferences(webPreferences: WebPreferences): void {
