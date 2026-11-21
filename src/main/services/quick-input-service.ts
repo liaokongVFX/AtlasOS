@@ -134,18 +134,17 @@ export class QuickInputService {
     if (!snippet) { this.finish(); return }
     request.state.selectedId = id
     request.state.snippets = [snippet]
-    if (!await this.options.waitForKeysReleased()) {
-      if (this.active === request) {
-        request.state.failure = 'unavailable'
-        await this.show(request, false)
-      }
+    const keysReleased = await this.options.waitForKeysReleased()
+    if (this.active !== request || (fromPanel && !this.isFocused())) return
+    if (!keysReleased || !request.target?.insert) {
+      request.state.failure = 'unavailable'
+      await this.show(request, !fromPanel)
       return
     }
-    if (this.active !== request || (fromPanel && !this.isFocused())) return
     request.phase = 'inserting'
     const handle = fromPanel ? this.window!.getNativeWindowHandle().readUInt32LE() : 0
     if (fromPanel) this.window!.minimize()
-    const result = await request.target?.insert(snippet.text, handle).catch(() => 'unknown' as const) ?? 'unavailable'
+    const result = await request.target.insert(snippet.text, handle).catch(() => 'unknown' as const)
     if (this.active !== request) return
     if (result === 'inserted') this.finish()
     else {

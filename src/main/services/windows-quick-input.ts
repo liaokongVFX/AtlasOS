@@ -7,7 +7,7 @@ export type QuickInputResult = 'inserted' | 'unavailable' | 'unknown'
 export type QuickInputTarget = {
   point: { x: number; y: number } | null
   isCurrent(): Promise<boolean>
-  insert(text: string, panelHandle: number): Promise<QuickInputResult>
+  insert?(text: string, panelHandle: number): Promise<QuickInputResult>
   release(): void
 }
 
@@ -45,16 +45,16 @@ export class WindowsQuickInput {
 
   async capture(): Promise<QuickInputTarget | null> {
     const id = ++this.nextId
-    const [status, left, top, right, bottom] = (await this.command(`capture ${id}`)).split(' ')
+    const [status, left, top, right, bottom, mode] = (await this.command(`capture ${id}`)).split(' ')
     if (status !== 'captured') return null
     return {
       point: { x: Math.round((Number(left) + Number(right)) / 2), y: Math.round((Number(top) + Number(bottom)) / 2) },
       isCurrent: async () => await this.command(`current ${id}`) === 'current',
-      insert: async (text, panelHandle) => {
+      insert: mode === 'edit' ? async (text, panelHandle) => {
         const encoded = Buffer.from(text, 'utf16le').toString('base64')
         const result = await this.command(`insert ${id} ${panelHandle} ${encoded}`)
         return result === 'inserted' || result === 'unavailable' ? result : 'unknown'
-      },
+      } : undefined,
       release: () => { void this.command(`cancel ${id}`) }
     }
   }

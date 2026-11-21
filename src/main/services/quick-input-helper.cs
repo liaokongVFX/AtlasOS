@@ -97,7 +97,8 @@ internal static class QuickInputHelper {
         }
         Rect bounds;
         GetWindowRect(root, out bounds);
-        return String.Format("captured {0} {1} {2} {3}", bounds.left, bounds.top, bounds.right, bounds.bottom);
+        return String.Format("captured {0} {1} {2} {3} {4}", bounds.left, bounds.top, bounds.right, bounds.bottom,
+            edit == IntPtr.Zero ? "copy" : "edit");
     }
 
     private static bool KeysReleased() {
