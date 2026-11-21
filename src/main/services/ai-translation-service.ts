@@ -45,6 +45,7 @@ import { captureScreenshotDisplays } from './screenshot-capture-engine'
 type AiTranslationServiceOptions = {
   appSettingsService: AppSettingsService
   getMainWindow: () => BrowserWindow | null
+  isQuickInputFocused?: () => boolean
   loadTranslationRenderer: (targetWindow: BrowserWindow) => Promise<void>
   loadCaptureRenderer: (targetWindow: BrowserWindow) => Promise<void>
   captureDisplays?: (displays: Electron.Display[]) => Promise<AiScreenshotCaptureDisplay[]>
@@ -783,7 +784,7 @@ export class AiTranslationService {
     if (this.systemCaptureInFlight || this.isAtlasWindowFocused()) return
 
     const settings = await this.getSettings()
-    if (!settings.translation.systemDoubleCtrlEnabled) return
+    if (!settings.translation.systemDoubleCtrlEnabled || this.isAtlasWindowFocused()) return
 
     this.systemCaptureInFlight = true
     try {
@@ -814,6 +815,7 @@ export class AiTranslationService {
     const mainWindow = this.options.getMainWindow()
     return Boolean(
       (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) ||
+        this.options.isQuickInputFocused?.() ||
         (this.translationWindow && !this.translationWindow.isDestroyed() && this.translationWindow.isFocused()) ||
         (this.captureWindow && !this.captureWindow.isDestroyed() && this.captureWindow.isFocused())
     )

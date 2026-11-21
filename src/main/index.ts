@@ -404,6 +404,7 @@ async function createWindow(): Promise<void> {
   aiTranslationService = new AiTranslationService({
     appSettingsService,
     getMainWindow: () => mainWindow,
+    isQuickInputFocused: () => quickInput?.isFocused() ?? false,
     loadTranslationRenderer: (targetWindow) => loadRenderer(targetWindow, 'translation'),
     loadCaptureRenderer: (targetWindow) => loadRenderer(targetWindow, 'capture')
   })

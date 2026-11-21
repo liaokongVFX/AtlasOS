@@ -3,6 +3,9 @@ import { BrowserWindow, clipboard, ipcMain, screen, type IpcMainInvokeEvent } fr
 import type { QuickInputPanelSnippet, QuickInputPanelState } from '@shared/quick-input-panel'
 import type { QuickInputTarget } from './windows-quick-input'
 
+const PANEL_WIDTH = 520
+const PANEL_HEIGHT = 388
+
 type Options = {
   loadPanel(window: BrowserWindow): Promise<void>
   getSnippets(): Promise<QuickInputPanelSnippet[]>
@@ -26,10 +29,14 @@ export class QuickInputService {
     ipcMain.handle('quick-input:get', (event) => this.fromPanel(event) ? this.active?.state ?? null : null)
     ipcMain.handle('quick-input:choose', (event, id, snippetId) => {
       const request = this.panelRequest(event, id)
-      if (request?.phase === 'choosing' && typeof snippetId === 'string') return this.submit(request, snippetId, true)
+      if (request?.phase !== 'choosing' || typeof snippetId !== 'string') return
+      return this.submit(request, snippetId, true).catch(() => {
+        if (this.active === request) this.finish()
+      })
     })
     ipcMain.handle('quick-input:cancel', (event, id) => {
-      if (this.panelRequest(event, id)) this.finish()
+      const request = this.panelRequest(event, id)
+      if (request?.phase === 'choosing' || request?.phase === 'failed') this.finish()
     })
     ipcMain.handle('quick-input:copy', (event, id) => {
       const request = this.panelRequest(event, id)
@@ -77,7 +84,7 @@ export class QuickInputService {
   private panel(): BrowserWindow {
     if (this.window) return this.window
     const window = new BrowserWindow({
-      width: 460, height: 240, show: false, resizable: false, frame: false, skipTaskbar: true,
+      width: PANEL_WIDTH, height: PANEL_HEIGHT, show: false, resizable: false, frame: false, skipTaskbar: true,
       title: 'AtlasOS Quick Input', backgroundColor: '#010102',
       webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
     })
@@ -110,11 +117,12 @@ export class QuickInputService {
     const point = request.target?.point
     const display = screen.getDisplayNearestPoint(point ? screen.screenToDipPoint(point) : screen.getCursorScreenPoint())
     const { x, y, width, height } = display.workArea
-    const [w, h] = window.getSize()
-    window.setPosition(x + Math.max(0, Math.round((width - w) / 2)), y + Math.max(0, Math.round((height - h) / 3)))
+    const w = Math.min(PANEL_WIDTH, width)
+    const h = Math.min(request.state.failure ? 220 : PANEL_HEIGHT, height)
+    if (window.isMinimized()) window.restore()
+    window.setBounds({ x: x + Math.round((width - w) / 2), y: y + Math.round((height - h) / 3), width: w, height: h })
     request.phase = request.state.failure ? 'failed' : 'choosing'
     window.webContents.send('quick-input:changed', request.state)
-    if (window.isMinimized()) window.restore()
     window.show()
     window.focus()
   }
