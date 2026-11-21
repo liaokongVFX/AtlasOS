@@ -340,6 +340,13 @@ export class PtyService {
       return { ok: this.write(input) }
     })
 
+    handleValidated('terminal:quick-input', terminalWriteInputSchema, (_, { sessionId, data }) =>
+      new Promise(resolve => this.write({ sessionId, data }, written => {
+        if (written === undefined) resolve('unavailable')
+        else resolve(written ? 'inserted' : 'unknown')
+      }))
+    )
+
     handleValidated('terminal:resize', terminalResizeInputSchema, (_, input) => {
       return { ok: this.resize(input.sessionId, input.cols, input.rows) }
     })
@@ -616,11 +623,16 @@ export class PtyService {
     this.closeBySessionId(session.id)
   }
 
-  private write(input: TerminalWriteInput): boolean {
+  private write(input: TerminalWriteInput, finish?: (written?: boolean) => void): boolean {
     const session = this.sessionsById.get(input.sessionId)
-    if (!session) return false
-    if (session.activeAgent === 'codex' && session.codexStartupPaste?.defer(input)) return true
-    return this.writeToPty(session, input)
+    if (!session) {
+      finish?.()
+      return false
+    }
+    if (session.activeAgent === 'codex' && session.codexStartupPaste?.defer(input, finish)) return true
+    const written = this.writeToPty(session, input)
+    finish?.(written)
+    return written
   }
 
   private writeToPty(session: TerminalSession, input: TerminalWriteInput): boolean {

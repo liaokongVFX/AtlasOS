@@ -1,5 +1,5 @@
 export type EditorInsertionResult = 'inserted' | 'unavailable' | 'unknown'
-export type InsertIntoEditor = (text: string) => EditorInsertionResult
+export type InsertIntoEditor = (text: string) => EditorInsertionResult | Promise<EditorInsertionResult>
 
 // The port belongs to a single request and document. It is never exposed to a guest page.
 export function captureQuickInputEditor(port: MessagePort, customInsert?: InsertIntoEditor): void {
@@ -14,7 +14,7 @@ export function captureQuickInputEditor(port: MessagePort, customInsert?: Insert
   const focusOffset = selection?.focusOffset
   const url = location.href
   const current = () => document.hasFocus() && location.href === url && !!element?.isConnected && document.activeElement === element
-  function insert(text: string): EditorInsertionResult {
+  function insert(text: string): ReturnType<InsertIntoEditor> {
     if (!current() || !element?.checkVisibility()) return 'unavailable'
     if (field) {
       if (field.disabled || field.readOnly || field.selectionStart !== start || field.selectionEnd !== end) return 'unavailable'
@@ -35,10 +35,11 @@ export function captureQuickInputEditor(port: MessagePort, customInsert?: Insert
     return document.execCommand('insertText', false, text) ? 'inserted' : 'unavailable'
   }
 
-  port.onmessage = ({ data }) => {
+  port.onmessage = async ({ data }) => {
     if (data === 'current') port.postMessage(current())
     else if (typeof data?.text === 'string') {
-      try { port.postMessage(insert(data.text)) } catch { port.postMessage('unknown') }
+      port.onmessage = null
+      try { port.postMessage(await insert(data.text)) } catch { port.postMessage('unknown') }
       port.close()
     }
   }
