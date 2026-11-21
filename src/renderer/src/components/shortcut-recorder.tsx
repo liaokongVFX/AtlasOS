@@ -2,7 +2,6 @@ import { useEffect, useRef, type InputHTMLAttributes } from 'react'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { formatKeyboardShortcut, keyboardShortcutFromEvent, normalizeKeyboardShortcut } from '@shared/keyboard-shortcuts'
 import { useI18n } from '../i18n'
-import { readClipboardText } from '../lib/clipboard'
 
 type Props = Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange'> & {
   onChange: (shortcut: string) => void
@@ -58,7 +57,10 @@ export function ShortcutRecorder({ onChange, ...props }: Props): JSX.Element {
     <ContextMenu.Trigger asChild disabled={props.disabled}>{field}</ContextMenu.Trigger>
     <ContextMenu.Portal>
       <ContextMenu.Content className="menu-content">
-        <ContextMenu.Item className="menu-item" onSelect={() => { void readClipboardText()?.then(paste) }}>
+        <ContextMenu.Item className="menu-item" onSelect={async () => {
+          const key = await window.atlas.quickInput.readShortcutName()
+          if (key) onChange(key)
+        }}>
           {t('settings.pasteShortcutName')}
         </ContextMenu.Item>
       </ContextMenu.Content>

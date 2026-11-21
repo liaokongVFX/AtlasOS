@@ -109,13 +109,13 @@ export class QuickInputService {
     return window
   }
 
-  private async show(request: Request, verifyTarget: boolean): Promise<void> {
+  private async show(request: Request, verifyTarget: boolean, panelHandle = 0): Promise<void> {
     if (this.active !== request) return
     const window = this.panel()
     await this.loaded
     if (this.active !== request) return
     if (verifyTarget && request.target) {
-      const focus = await request.target.focusState()
+      const focus = await request.target.focusState(panelHandle)
       if (focus === 'switched' || (focus === 'unavailable' && !request.state.failure)) {
         if (this.active === request) this.finish()
         return
@@ -159,7 +159,7 @@ export class QuickInputService {
       // A fresh search may reuse the location, but must never repeat a possibly committed edit.
       if (result === 'unknown') request.target.insert = undefined
       request.state.failure = result
-      await this.show(request, !fromPanel)
+      await this.show(request, true, handle)
     }
   }
 

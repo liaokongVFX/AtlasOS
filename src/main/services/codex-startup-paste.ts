@@ -1,8 +1,8 @@
 import type { TerminalWriteInput } from '@shared/ipc'
 import type { EditorInsertionResult } from '@shared/quick-input-editor'
 
-export type QuickInputDelivery = { expiresAt: number; finish(result: EditorInsertionResult): void }
-type QueuedInput = { input: TerminalWriteInput; delivery?: QuickInputDelivery; expiry?: ReturnType<typeof setTimeout> }
+export type QuickInputDelivery = { expiresAt: number; signal: AbortSignal; finish(result: EditorInsertionResult): void }
+type QueuedInput = { input: TerminalWriteInput; delivery?: QuickInputDelivery }
 
 // Codex's Windows color probe reads and requeues console input. ConPTY can
 // append part of a paste between that read and replay, reordering the draft.
@@ -55,10 +55,17 @@ export class CodexStartupPaste {
     const entry: QueuedInput = { input, delivery }
     this.pending.push(entry)
     if (delivery) {
-      entry.expiry = setTimeout(() => {
+      const cancel = () => {
         this.pending = this.pending.filter(item => item !== entry)
-        delivery.finish('unavailable')
-      }, delivery.expiresAt - Date.now())
+        entry.delivery!.finish('unavailable')
+      }
+      const expiry = setTimeout(cancel, delivery.expiresAt - Date.now())
+      entry.delivery = { ...delivery, finish(result) {
+        clearTimeout(expiry)
+        delivery.signal.removeEventListener('abort', cancel)
+        delivery.finish(result)
+      } }
+      delivery.signal.addEventListener('abort', cancel, { once: true })
     }
     // Older clients may never query colors or use synchronized rendering.
     this.timeout ??= setTimeout(() => this.flush(), 5000)
@@ -73,19 +80,15 @@ export class CodexStartupPaste {
   private clearPending(): void {
     clearTimeout(this.timeout)
     this.timeout = undefined
-    for (const entry of this.pending.splice(0)) {
-      clearTimeout(entry.expiry)
-      entry.delivery?.finish('unavailable')
-    }
+    for (const entry of this.pending.splice(0)) entry.delivery?.finish('unavailable')
   }
 
   private flush(): void {
     const pending = this.pending.splice(0)
     this.clearPending()
     this.phase = 'ready'
-    for (const { input, delivery, expiry } of pending) {
-      clearTimeout(expiry)
-      if (delivery && Date.now() >= delivery.expiresAt) delivery.finish('unavailable')
+    for (const { input, delivery } of pending) {
+      if (delivery && (delivery.signal.aborted || Date.now() >= delivery.expiresAt)) delivery.finish('unavailable')
       else {
         const result = this.write(input)
         delivery?.finish(result)

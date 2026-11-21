@@ -163,7 +163,7 @@ export const terminalWriteInputSchema = z.object({
 
 export type TerminalWriteInput = z.infer<typeof terminalWriteInputSchema>
 export const terminalQuickInputSchema = terminalWriteInputSchema.pick({ sessionId: true, data: true })
-  .extend({ expiresAt: z.number().int() })
+  .extend({ deliveryId: z.uuid() })
 export type TerminalAltKey = NonNullable<TerminalWriteInput['altKey']>
 
 export const terminalResizeInputSchema = z.object({
