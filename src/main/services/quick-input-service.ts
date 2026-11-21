@@ -61,20 +61,23 @@ export class QuickInputService {
   }
 
   private async begin(snippetId: string | null): Promise<void> {
-    if (this.active) return
+    const previous = this.active
+    if (previous && (snippetId !== null || previous.phase !== 'choosing' || !this.isFocused())) return
     const request: Request = {
-      target: null, phase: 'opening',
+      target: previous?.target ?? null, phase: 'opening',
       state: { requestId: ++this.sequence, snippets: [], failure: null, selectedId: null }
     }
     this.active = request
     try {
-      request.target = await this.options.captureTarget()
-      if (this.active !== request) { request.target?.release(); return }
+      if (!previous) {
+        request.target = await this.options.captureTarget()
+        if (this.active !== request) { request.target?.release(); return }
+      }
       if (snippetId !== null) {
         await this.submit(request, snippetId, false)
       } else {
         request.state.snippets = await this.options.getSnippets()
-        await this.show(request, true)
+        await this.show(request, !previous)
       }
     } catch {
       if (this.active === request) this.finish()
