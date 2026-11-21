@@ -37,7 +37,7 @@ AtlasOS 运行期间，用户可以在本机应用设置中维护快捷语片段
 3. 用户选中后，窗口提交本次请求编号和片段 ID。主进程核对发送窗口与本次请求，从已保存设置取正文，消费请求并隐藏面板。恢复并核验原目标后才提交文字。确认和取消互斥，使面板主动隐藏引起的失焦不会误取消已确认请求。重复回车、旧窗口回调、已删除片段都不能产生第二次写入。
 4. 用户主动切向其他应用时取消本次选择。确认时才发现原窗口关闭、控件已变、恢复失败或目标不支持时，保留片段选择，提供「复制片段」。只在用户主动选择复制时写系统剪贴板。若底层已经提交了部分输入或结果未知，明确提示用户检查原目标，避免自动重试造成重复文字。
 
-Windows 对恢复前台窗口有明确限制。辅助进程应在实际提交前复核焦点，待触发键与修饰键释放，并区分“系统接收输入事件”和“目标应用按预期编辑了正文”。同一浏览器窗口的不同控件可借助 UI Automation 比对；若应用无法提供足够的目标信息，就走手动复制路径。[Windows 前台激活](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow) · [获取焦点控件](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation-getfocusedelement) · [SendInput 的限制](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)
+Windows 对恢复前台窗口有明确限制。辅助进程应在实际提交前复核焦点，待触发键与修饰键释放，并区分“系统接收输入事件”和“目标应用按预期编辑了正文”。外部 Edge 和 Chrome 采用手动复制。其他应用无法提供足够的目标信息时，也走手动复制路径。[Windows 前台激活](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow) · [获取焦点控件](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation-getfocusedelement) · [SendInput 的限制](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)
 
 ## 文本如何进入目标
 
@@ -46,15 +46,15 @@ Windows 对恢复前台窗口有明确限制。辅助进程应在实际提交前
 | Atlas 普通编辑区和内嵌网页 | 找回原编辑区域或 guest，再向对应的 `webContents` 调用 `insertText`。若编辑器需要自己的事务，沿用该编辑器的插入操作。 | 输入框中部插入、选区替换、受控组件状态、撤销，以及切换网页或编辑区域后的取消。 |
 | Atlas 终端 | 找回原终端会话，使用 xterm 的粘贴语义。多行片段（包括末尾有换行）只在当前会话启用 bracketed paste 时自动插入；其余情况提供复制。 | 用开启和关闭括号粘贴的会话分别验收。确认键留在搜索窗口，实际如何解释正文由终端前台程序决定。 |
 | Windows 标准可编辑控件 | Windows 助手对已验证的 Edit/RichEdit 控件尝试可撤销的 `EM_REPLACESEL`，让控件在自己的光标或选区上编辑。 | 中文、代理对表情、多行、首尾空白、单行控件的能力限制及原选区。 |
-| 其他 Windows 编辑控件 | 对可识别、可重新核验的目标验证 Unicode 文本输入。该路径与标准控件共享目标核验，独立于系统剪贴板。 | 先实测各类控件对文字、换行和制表符的处理。无法保持语义时提供复制；逐个模拟 Enter 或 Tab 可能提交表单或移动焦点。 |
+| 外部 Edge、Chrome 与其他尚未验证的控件 | 片段快捷键显示对应片段的「复制片段」，搜索窗口保留选中的片段。用户主动复制后自行粘贴。 | 提示出现和取消后，剪贴板与页面文字保持原内容。点击复制后，剪贴板包含完整原文。 |
 
 Windows 辅助进程只处理本次目标的捕获、核验和插入。复用仓库已有的隐藏子进程与标准输入输出模式，把片段编码成数据传输，正文不进入命令行或日志。主进程通过受限 IPC 支持窗口选择与取消，外部网页不能指定系统窗口或提交任意正文。避免每次热键启动 PowerShell 和编译 C# 造成焦点捕获延迟。首个技术验证须覆盖首次唤起和安装版启动。[Electron 文本插入](https://www.electronjs.org/docs/latest/api/web-contents#contentsinserttexttext) · [Windows 编辑控件文本替换](https://learn.microsoft.com/en-us/windows/win32/controls/em-replacesel) · [Windows Unicode 键盘输入](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput)
 
-Windows 的 `SendInput` 向系统前台输入流投递事件。先比对焦点再调用仍存在切窗的时间间隔，成功返回也无法证明某个网页输入框收到了原文。它只作为兼容性验证候选。若浏览器基线需要绑定到具体编辑上下文，可进一步评估 Windows Text Services Framework 的写编辑会话与选区插入接口。该方案依赖注册文本服务、取得目标编辑上下文和写权限，须另行验证安装、卸载及与中文输入法共存的成本。外部终端无法确认多行粘贴语义时只提供手动复制。[系统输入流](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput) · [请求 TSF 编辑会话](https://learn.microsoft.com/en-us/windows/win32/api/msctf/nf-msctf-itfcontext-requesteditsession) · [TSF 选区插入](https://learn.microsoft.com/en-us/windows/win32/api/msctf/nf-msctf-itfinsertatselection-inserttextatselection)
+真实 Edge 和 Chrome 的网页输入框可以通过辅助功能接口定位，但其整框写入会覆盖并发编辑。首版在外部浏览器提供手动复制，AtlasOS 内嵌网页走可核对原元素的编辑路径。外部终端无法确认多行粘贴语义时也提供手动复制。
 
 ## 实施顺序与验收
 
-1. **先验证 Windows 原目标回填。** 用一条固定片段和一个可聚焦的最小窗口跑通直达、弹窗回填两条路径。必测目标为 Windows 记事本、Edge 和 Chrome 的普通网页输入框，以及 AtlasOS 编辑器。分别覆盖已有选区、光标在文本中部、多行控件和两个输入框同处一个窗口。将光标或选区留在原处，确认正文只插入一次。输入助手能识别的只读、权限受限或已销毁目标进入失败路径。必要目标的正常可编辑场景必须实测自动插入通过，复制仅计入降级用例。
+1. **先验证 Windows 原目标回填。** 用一条固定片段和一个可聚焦的最小窗口跑通直达、弹窗回填两条路径。自动插入的必测目标为 Windows 记事本和 AtlasOS 编辑器（含内嵌网页）。外部 Edge、Chrome 的普通网页输入框单独验收显式复制。分别覆盖已有选区、光标在文本中部、多行控件和两个输入框同处一个窗口。将光标或选区留在原处，确认正文只插入一次。输入助手能识别的只读、权限受限或已销毁目标进入失败路径。记事本及 AtlasOS 必测编辑区必须实测自动插入。外部浏览器以选择复制后手动粘贴出原文为通过条件。
 2. **接入保存与热键生命周期。** 用同一套本地测试覆盖旧设置迁移、主动清除后重启、别名冲突、片段换键及删除、保存中注册失败或磁盘失败。真实 Windows 测试其他程序先占用窗口键、AtlasOS 隐藏至托盘、关闭翻译功能、退出后按键释放。
 3. **接入设置页与独立搜索窗口。** 核验新增、编辑、删除、快捷键录制，以及不同画布间共用同一套片段。确保打开面板时系统双 Ctrl 翻译的焦点判断覆盖新窗口。验证名称与正文命中、无结果、IME 候选词回车、按住快捷键、连续回车、Esc、主动切窗、多屏和关闭后再打开。
 4. **在安装版完成回归。** 用含中文、表情、制表符、前后空格、空行和末尾换行的片段检查可表示这些字符的编辑器。以文本、图片、文件列表和富文本分别作为原剪贴板内容，自动插入后回到另一应用粘贴验证。Atlas 内覆盖便签、Markdown、内嵌网页和终端两种粘贴模式。在确认与实际提交之间切窗、切标签页或关闭原控件，检查其他输入框未收到正文。记录实际通过的控件和失败方式。
