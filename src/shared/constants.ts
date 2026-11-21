@@ -1,6 +1,7 @@
 export const ATLAS_SCHEMA_VERSION = 1
 
 export const DEFAULT_LOCALE = 'zh-CN'
+export const DEFAULT_QUICK_INPUT_WINDOW_SHORTCUT = 'Ctrl+Alt+Space'
 export const LOCALES = ['zh-CN', 'en-US'] as const
 export type Locale = (typeof LOCALES)[number]
 

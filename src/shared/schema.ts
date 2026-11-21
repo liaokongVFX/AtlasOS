@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_LOCALE, DEFAULT_VIEWPORT, LOCALES } from './constants'
+import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_LOCALE, DEFAULT_QUICK_INPUT_WINDOW_SHORTCUT, DEFAULT_VIEWPORT, LOCALES } from './constants'
 import { aiSettingsSchema } from './ai'
 import { normalizeKeyboardShortcut } from './keyboard-shortcuts'
 import { petSettingsSchema } from './pet'
@@ -118,10 +118,28 @@ export const appShortcutSettingsSchema = z
     }
   })
 
+const quickInputSnippetSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1),
+  text: z.string().min(1),
+  shortcut: keyboardShortcutSchema.nullable().default(null)
+})
+
+const quickInputSettingsSchema = z.object({
+  windowShortcut: keyboardShortcutSchema.nullable(),
+  snippets: z.array(quickInputSnippetSchema).refine(
+    snippets => new Set(snippets.map(snippet => snippet.id)).size === snippets.length,
+    'Snippet IDs must be unique'
+  )
+})
+
+export type QuickInputSnippet = z.infer<typeof quickInputSnippetSchema>
+
 export const appSettingsSchema = z.object({
   schemaVersion: z.literal(ATLAS_SCHEMA_VERSION).default(ATLAS_SCHEMA_VERSION),
   locale: z.enum(LOCALES).default(DEFAULT_LOCALE),
   shortcuts: appShortcutSettingsSchema,
+  quickInput: quickInputSettingsSchema.default({ windowShortcut: DEFAULT_QUICK_INPUT_WINDOW_SHORTCUT, snippets: [] }),
   terminalCommands: terminalCommandLibrarySchema,
   terminalEnvironment: terminalEnvironmentSchema,
   terminalEnvironmentDisabledNames: terminalEnvironmentNamesSchema,
@@ -139,6 +157,7 @@ export const appSettingsPatchSchema = z
     schemaVersion: z.literal(ATLAS_SCHEMA_VERSION).optional(),
     locale: z.enum(LOCALES).optional(),
     shortcuts: appSettingsPatchField(appShortcutSettingsSchema),
+    quickInput: quickInputSettingsSchema.partial().optional(),
     terminalCommands: appSettingsPatchField(terminalCommandLibrarySchema),
     terminalEnvironment: appSettingsPatchField(terminalEnvironmentSchema),
     terminalEnvironmentDisabledNames: appSettingsPatchField(terminalEnvironmentNamesSchema),
@@ -147,7 +166,7 @@ export const appSettingsPatchSchema = z
     ai: appSettingsPatchField(aiSettingsSchema),
     remoteServers: appSettingsPatchField(remoteServerSettingsSchema)
   })
-  .transform((patch) => Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)))
+  .transform((patch) => Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as Partial<typeof patch>)
 
 export type FileEntry = {
   id: string
