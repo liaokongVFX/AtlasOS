@@ -6,6 +6,9 @@ export type { Locale }
 
 const zhCN = {
   'quickInputPanel.title': '快捷输入',
+  'quickInputPanel.search': '搜索快捷语片段',
+  'quickInputPanel.noMatch': '没有匹配的片段。',
+  'quickInputPanel.empty': '尚未保存快捷语片段。',
   'quickInputPanel.copy': '复制片段',
   'quickInputPanel.unavailable': '无法向原输入位置插入文字。',
   'quickInputPanel.unknown': '请检查原输入位置，文字可能已部分插入。',
@@ -711,6 +714,9 @@ const zhCN = {
 
 const enUS: Record<keyof typeof zhCN, string> = {
   'quickInputPanel.title': 'Quick input',
+  'quickInputPanel.search': 'Search snippets',
+  'quickInputPanel.noMatch': 'No matching snippets.',
+  'quickInputPanel.empty': 'No saved snippets yet.',
   'quickInputPanel.copy': 'Copy snippet',
   'quickInputPanel.unavailable': 'The original input could not accept this snippet.',
   'quickInputPanel.unknown': 'Check the original input. Some text may have been inserted.',
@@ -1431,7 +1437,7 @@ function isLocale(value: unknown): value is Locale {
   return typeof value === 'string' && LOCALES.includes(value as Locale)
 }
 
-function readStoredLocale(): Locale {
+export function readStoredLocale(): Locale {
   if (typeof window === 'undefined') return DEFAULT_LOCALE
 
   try {
