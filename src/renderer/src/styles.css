@@ -1685,6 +1685,13 @@ svg {
   white-space: nowrap;
 }
 
+.quick-input-settings__shortcut {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .quick-input-settings__toolbar,
 .quick-input-settings__row {
   display: flex;

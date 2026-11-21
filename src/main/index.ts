@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { mkdirSync, readFileSync } from 'node:fs'
-import { app, BrowserWindow, globalShortcut, Menu, nativeImage, session, shell, Tray, type NativeImage } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, session, shell, Tray, type NativeImage } from 'electron'
 import { DEFAULT_LOCALE, type Locale } from '@shared/constants'
 import { translateShared } from '@shared/locale-text'
 import { CanvasPersistence } from './services/canvas-persistence'
@@ -25,6 +25,8 @@ import { applyAtlasBrowserNetworkPolicy, applyAtlasBrowserWebPreferences } from 
 import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services/local-asset-protocol'
 import { createContentSecurityPolicy } from './security-policy'
 import { QuickInputService } from './services/quick-input-service'
+import { QuickInputHotkeys } from './services/quick-input-hotkeys'
+import { captureAtlasQuickInputTarget } from './services/atlas-quick-input'
 import { WindowsQuickInput } from './services/windows-quick-input'
 import type { PetAlertTarget } from '@shared/pet'
 
@@ -45,7 +47,7 @@ let trayLocale: Locale = DEFAULT_LOCALE
 let isQuitting = false
 let quickInput: QuickInputService | null = null
 let quickInputHelper: WindowsQuickInput | null = null
-const quickInputTestKeys: string[] = []
+let quickInputHotkeys: QuickInputHotkeys | undefined
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL)
 const forceSoftwareRendering = process.env.ATLAS_FORCE_SOFTWARE_RENDERING === '1'
@@ -257,26 +259,31 @@ async function waitForRendererDevServer(url: string, timeoutMs = 10_000): Promis
 
 type RendererView = 'pet' | 'translation' | 'capture' | 'update' | 'quick-input'
 
-async function startQuickInputTestMode(): Promise<void> {
-  if (process.platform !== 'win32' || !app.commandLine.hasSwitch('quick-input-test')) return
-  const snippet = { id: 'fixture', name: 'AtlasOS QA', text: '  中文😀\t\n\n尾  \n', shortcut: 'Ctrl+Alt+F9' }
+function startQuickInput(): void {
+  if (process.platform !== 'win32') return
   const helper = new WindowsQuickInput()
   quickInputHelper = helper
-  if (!await helper.ready) return
   const service = new QuickInputService({
-    getSnippets: async () => [snippet],
+    getSnippets: async () => (await appSettingsService!.getSettings()).quickInput.snippets,
     loadPanel: (window) => loadRenderer(window, 'quick-input'),
-    captureTarget: () => helper.capture(),
+    captureTarget: () => mainWindow?.isFocused() ? captureAtlasQuickInputTarget(mainWindow) : helper.capture(),
     waitForKeysReleased: () => helper.waitForKeysReleased()
   })
   quickInput = service
-  for (const [key, action] of [
-    ['Ctrl+Alt+Space', () => void service.open()],
-    [snippet.shortcut, () => void service.insertSnippet(snippet.id)]
-  ] as const) {
-    if (globalShortcut.register(key, action)) quickInputTestKeys.push(key)
-    else console.warn('Quick input test shortcut unavailable:', key)
-  }
+  let recording = false
+  ipcMain.on('quick-input:recording', (event, active: unknown) => {
+    if (event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame) recording = active === true
+  })
+  ipcMain.handle('quick-input:unavailable-keys', event =>
+    event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame ? quickInputHotkeys?.unavailableKeys() ?? [] : [])
+  quickInputHotkeys = new QuickInputHotkeys(globalShortcut,
+    id => { void (id === null ? service.open() : service.insertSnippet(id)) },
+    () => helper.waitForKeysReleased(),
+    key => {
+      if (!recording || !mainWindow?.isFocused()) return false
+      mainWindow.webContents.send('quick-input:recorded', key)
+      return true
+    })
 }
 
 async function loadRenderer(window: BrowserWindow, view?: RendererView): Promise<void> {
@@ -345,9 +352,10 @@ function installSecurityDefaults(): void {
 }
 
 async function createWindow(): Promise<void> {
-  appSettingsService = new AppSettingsService()
+  appSettingsService = new AppSettingsService(quickInputHotkeys)
   appDatabaseService = new AppDatabaseService()
   const settings = await appSettingsService.getSettings()
+  quickInputHotkeys?.start(settings)
   trayLocale = settings.locale
   updateTrayMenu()
 
@@ -508,7 +516,7 @@ if (!hasSingleInstanceLock) {
     installSecurityDefaults()
     registerLocalAssetProtocol()
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
-    await startQuickInputTestMode()
+    startQuickInput()
     await createWindow()
     ensureTray()
 
@@ -534,7 +542,7 @@ if (!hasSingleInstanceLock) {
   })
 
   app.on('will-quit', () => {
-    for (const key of quickInputTestKeys) globalShortcut.unregister(key)
+    quickInputHotkeys?.dispose()
     quickInput?.dispose()
     quickInputHelper?.dispose()
     tray?.destroy()

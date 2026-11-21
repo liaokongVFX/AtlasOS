@@ -91,12 +91,16 @@ internal static class QuickInputHelper {
         return String.Format("captured {0} {1} {2} {3}", bounds.left, bounds.top, bounds.right, bounds.bottom);
     }
 
+    private static bool KeysReleased() {
+        for (int key = 8; key <= 254; ++key)
+            if (GetAsyncKeyState(key) < 0) return false;
+        return true;
+    }
+
     private static bool WaitForKeysReleased() {
         var timer = System.Diagnostics.Stopwatch.StartNew();
         do {
-            int key = 8;
-            while (key <= 254 && GetAsyncKeyState(key) >= 0) ++key;
-            if (key > 254) return true;
+            if (KeysReleased()) return true;
             Thread.Sleep(10);
         } while (timer.ElapsedMilliseconds < 5000);
         return false;
@@ -143,7 +147,7 @@ internal static class QuickInputHelper {
                 var args = line.Split(new char[] {' '}, 4);
                 string result = "unavailable";
                 try {
-                    if (args[0] == "release-keys") result = WaitForKeysReleased() ? "released" : "unavailable";
+                    if (args[0] == "release-keys") result = KeysReleased() ? "released" : "held";
                     else if (args[0] == "capture") result = Capture(args[1]);
                     else if (args[1] == request) {
                         if (args[0] == "current") result = IsCurrent() ? "current" : "unavailable";
