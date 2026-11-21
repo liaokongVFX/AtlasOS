@@ -31,6 +31,10 @@ import type { QuickInputPanelState } from '@shared/quick-input-panel'
 
 type Listener<T> = (payload: T) => void
 
+ipcRenderer.on('quick-input:capture-editor', (event) => {
+  window.postMessage('atlas:quick-input-editor', window.location.origin, event.ports)
+})
+
 const AI_SCREENSHOT_CAPTURE_SESSION_CHANNEL = 'ai:screenshot-capture-session'
 const BROWSER_WEBVIEW_CANVAS_ZOOM_REQUESTED_CHANNEL = 'browser:webview-canvas-zoom-requested'
 

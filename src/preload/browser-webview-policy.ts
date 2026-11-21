@@ -1,4 +1,5 @@
 import { ipcRenderer, webFrame } from 'electron'
+import { captureQuickInputEditor } from '@shared/quick-input-editor'
 import {
   BROWSER_WEBVIEW_SCREENSHOT_CAPTURE_REQUEST_CHANNEL,
   BROWSER_WEBVIEW_TRANSLATION_REQUEST_CHANNEL,
@@ -7,6 +8,8 @@ import {
 } from '@shared/browser'
 
 const AI_DOUBLE_CTRL_INTERVAL_MS = 450
+
+ipcRenderer.on('quick-input:capture-editor', (event) => captureQuickInputEditor(event.ports[0]))
 
 const disableBrowserWebRtc = `
 (() => {

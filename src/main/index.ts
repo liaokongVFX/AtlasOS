@@ -26,6 +26,7 @@ import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services
 import { createContentSecurityPolicy } from './security-policy'
 import { QuickInputService } from './services/quick-input-service'
 import { QuickInputHotkeys } from './services/quick-input-hotkeys'
+import { captureAtlasQuickInputTarget } from './services/atlas-quick-input'
 import { WindowsQuickInput } from './services/windows-quick-input'
 import type { PetAlertTarget } from '@shared/pet'
 
@@ -265,7 +266,7 @@ function startQuickInput(): void {
   const service = new QuickInputService({
     getSnippets: async () => (await appSettingsService!.getSettings()).quickInput.snippets,
     loadPanel: (window) => loadRenderer(window, 'quick-input'),
-    captureTarget: () => helper.capture(),
+    captureTarget: () => mainWindow?.isFocused() ? captureAtlasQuickInputTarget(mainWindow) : helper.capture(),
     waitForKeysReleased: () => helper.waitForKeysReleased()
   })
   quickInput = service
