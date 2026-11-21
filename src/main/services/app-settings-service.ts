@@ -6,6 +6,8 @@ import { z } from 'zod'
 import { patchAppSettingsInputSchema, updateAppSettingsInputSchema } from '@shared/ipc'
 import { appSettingsPatchSchema, appSettingsSchema, type AppSettings, type AppSettingsPatch } from '@shared/schema'
 import { handleValidated } from './ipc-helpers'
+import type { QuickInputHotkeys } from './quick-input-hotkeys'
+import { shortcutBindings, shortcutProblem } from '@shared/quick-input-shortcuts'
 
 const APP_SETTINGS_DIR = 'app-settings'
 const APP_SETTINGS_FILE = 'settings.json'
@@ -61,6 +63,8 @@ export class AppSettingsService {
   private readonly stateDir = join(app.getPath('userData'), APP_SETTINGS_DIR)
   private readonly settingsPath = join(this.stateDir, APP_SETTINGS_FILE)
 
+  constructor(private readonly hotkeys?: QuickInputHotkeys) {}
+
   registerIpc(onSettingsUpdated?: (settings: AppSettings) => void): void {
     handleValidated('app-settings:get', z.object({}), () => this.getSettings())
     handleValidated('app-settings:update', updateAppSettingsInputSchema, async (_, input) => {
@@ -86,9 +90,7 @@ export class AppSettingsService {
   }
 
   async updateSettings(settings: AppSettings): Promise<AppSettings> {
-    const parsed = appSettingsSchema.parse(settings)
-    await this.writeSettings(parsed)
-    return parsed
+    return this.updateSettingsWith(() => settings)
   }
 
   async patchSettings(patch: AppSettingsPatch): Promise<AppSettings> {
@@ -106,16 +108,21 @@ export class AppSettingsService {
       const saved = await this.readSettings()
       const currentSettings = saved?.settings ?? appSettingsSchema.parse({})
       const savedSettings = appSettingsSchema.parse(await update(currentSettings))
-      await this.writeSettingsFile(savedSettings)
+      const previous = new Map(shortcutBindings(currentSettings).map(binding => [binding.owner, binding.key]))
+      for (const binding of shortcutBindings(savedSettings)) {
+        if (!binding.key || previous.get(binding.owner) === binding.key) continue
+        const error = shortcutProblem(savedSettings, binding.owner, binding.key)
+        if (error) throw new Error(error)
+      }
+      const registration = this.hotkeys?.prepare(savedSettings)
+      try {
+        await this.writeSettingsFile(savedSettings)
+      } catch (error) {
+        registration?.rollback()
+        throw error
+      }
+      registration?.commit()
       return savedSettings
-    })
-  }
-
-  private async writeSettings(settings: AppSettings): Promise<void> {
-    const parsed = appSettingsSchema.parse(settings)
-    await writeJsonQueued(this.settingsPath, async () => {
-      await mkdir(this.stateDir, { recursive: true })
-      await this.writeSettingsFile(parsed)
     })
   }
 

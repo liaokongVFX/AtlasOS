@@ -66,6 +66,10 @@ function on<T>(channel: string, listener: Listener<T>): () => void {
 
 const atlasApi = {
   quickInput: {
+    systemShortcuts: process.platform === 'win32',
+    setRecording: (active: boolean) => ipcRenderer.send('quick-input:recording', active),
+    onRecorded: (listener: Listener<string>) => on('quick-input:recorded', listener),
+    unavailableKeys: () => ipcRenderer.invoke('quick-input:unavailable-keys') as Promise<string[]>,
     get: () => ipcRenderer.invoke('quick-input:get') as Promise<QuickInputPanelState | null>,
     onChanged: (listener: Listener<QuickInputPanelState>) => on('quick-input:changed', listener),
     choose: (requestId: number, snippetId: string) => ipcRenderer.invoke('quick-input:choose', requestId, snippetId),

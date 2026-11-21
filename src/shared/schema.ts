@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { ATLAS_SCHEMA_VERSION, DEFAULT_APP_SHORTCUTS, DEFAULT_CANVAS_BACKGROUND, DEFAULT_LOCALE, DEFAULT_QUICK_INPUT_WINDOW_SHORTCUT, DEFAULT_VIEWPORT, LOCALES } from './constants'
 import { aiSettingsSchema } from './ai'
 import { normalizeKeyboardShortcut } from './keyboard-shortcuts'
+import { windowsShortcutIdentity } from './quick-input-shortcuts'
 import { petSettingsSchema } from './pet'
 import { remoteServerSettingsSchema } from './remote-servers'
 import { terminalCommandLibrarySchema } from './terminal-commands'
@@ -122,11 +123,11 @@ const quickInputSnippetSchema = z.object({
   id: z.string().min(1),
   name: z.string().trim().min(1),
   text: z.string().min(1),
-  shortcut: keyboardShortcutSchema.nullable().default(null)
+  shortcut: keyboardShortcutSchema.transform(windowsShortcutIdentity).nullable().default(null)
 })
 
 const quickInputSettingsSchema = z.object({
-  windowShortcut: keyboardShortcutSchema.nullable(),
+  windowShortcut: keyboardShortcutSchema.transform(windowsShortcutIdentity).nullable(),
   snippets: z.array(quickInputSnippetSchema).refine(
     snippets => new Set(snippets.map(snippet => snippet.id)).size === snippets.length,
     'Snippet IDs must be unique'
