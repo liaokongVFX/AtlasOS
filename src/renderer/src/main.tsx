@@ -14,6 +14,7 @@ import { PetApp } from './PetApp'
 import { ScreenshotCaptureApp } from './ScreenshotCaptureApp'
 import { TranslationPanelApp } from './TranslationPanelApp'
 import { UpdateApp } from './UpdateApp'
+import { QuickInputApp } from './QuickInputApp'
 import { I18nProvider } from './i18n'
 import { registerBuiltInComponentDefinitions } from './components/register-builtins'
 
@@ -29,7 +30,9 @@ registerBuiltInComponentDefinitions()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {isPetView ? (
+    {rendererView === 'quick-input' ? (
+      <I18nProvider><QuickInputApp /></I18nProvider>
+    ) : isPetView ? (
       <PetApp />
     ) : isTranslationView ? (
       <I18nProvider>

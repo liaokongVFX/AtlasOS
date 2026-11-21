@@ -5,6 +5,10 @@ export { DEFAULT_LOCALE, LOCALES }
 export type { Locale }
 
 const zhCN = {
+  'quickInputPanel.title': '快捷输入',
+  'quickInputPanel.copy': '复制片段',
+  'quickInputPanel.unavailable': '无法向原输入位置插入文字。',
+  'quickInputPanel.unknown': '请检查原输入位置，文字可能已部分插入。',
   'app.error.loadWorkspace': '加载工作区失败',
   'app.error.reorderCanvases': '画布排序失败',
   'app.error.saveCanvas': '保存画布失败',
@@ -702,6 +706,10 @@ const zhCN = {
 } as const
 
 const enUS: Record<keyof typeof zhCN, string> = {
+  'quickInputPanel.title': 'Quick input',
+  'quickInputPanel.copy': 'Copy snippet',
+  'quickInputPanel.unavailable': 'The original input could not accept this snippet.',
+  'quickInputPanel.unknown': 'Check the original input. Some text may have been inserted.',
   'app.error.loadWorkspace': 'Failed to load workspace',
   'app.error.reorderCanvases': 'Failed to reorder canvases',
   'app.error.saveCanvas': 'Failed to save canvas',
