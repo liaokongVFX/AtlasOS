@@ -1,4 +1,4 @@
-export const DEFAULT_RENDERER_DEV_PORT = 0
+export const DEFAULT_RENDERER_DEV_PORT = 15173
 
 export function resolveRendererDevPort(input: string | undefined): number {
   const value = input?.trim()
