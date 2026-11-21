@@ -28,6 +28,7 @@ import {
 import { fileExtension, fileName } from '../../lib/file-types'
 import { useI18n, type TFunction } from '../../i18n'
 import { writeClipboardText } from '../../lib/clipboard'
+import { registerQuickInputEditor } from '../../lib/quick-input-editor'
 import { TERMINAL_LOCKED_STATE_KEY, isTerminalComponentLocked } from '../../lib/terminal-lock'
 import { installTerminalScrollCompatibility } from '../../lib/terminal-scroll'
 import { installTerminalResizeHistory } from '../../lib/terminal-resize-history'
@@ -1294,6 +1295,8 @@ export function TerminalComponent({
     let disposeData: () => void = () => undefined
     let disposeExit: () => void = () => undefined
     let unregisterTranslationSelectionProvider: () => void = () => undefined
+    let unregisterQuickInputEditor: () => void = () => undefined
+    let collectQuickInputPaste: ((data: string) => void) | undefined
     let removeDomListeners: () => void = () => undefined
     let shortcutPasteFallbackTimer: number | null = null
     let lastPtySize: ITerminalDimensions | null = null
@@ -1479,6 +1482,10 @@ export function TerminalComponent({
         })
       }
       dataDisposable = instance.onData((data) => {
+        if (collectQuickInputPaste) {
+          collectQuickInputPaste(data)
+          return
+        }
         const event = altStroke?.key === data ? altStroke.event : undefined
         altStroke = undefined
         const sessionId = sessionIdRef.current
@@ -1520,6 +1527,28 @@ export function TerminalComponent({
           }
 
           sessionIdRef.current = session.sessionId
+          if (instance.textarea) {
+            unregisterQuickInputEditor = registerQuickInputEditor(instance.textarea, (text) => {
+              if (sessionIdRef.current !== session.sessionId || instance.options.disableStdin) return 'unavailable'
+              // Tabs and line endings can act as keys outside bracketed paste. Other control
+              // characters can even terminate a bracketed paste or signal the foreground process.
+              if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(text)) return 'unavailable'
+              const needsBrackets = /[\r\n\t]/.test(text)
+              if (needsBrackets && (!instance.modes?.bracketedPasteMode || instance.options.ignoreBracketedPasteMode)) return 'unavailable'
+              let data = ''
+              collectQuickInputPaste = (paste) => { data = paste }
+              try {
+                instance.paste(text)
+              } finally {
+                collectQuickInputPaste = undefined
+              }
+              if (data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~')) {
+                // xterm frames the paste but normalizes LF and CRLF to CR. Keep the saved line endings.
+                data = `\x1b[200~${text}\x1b[201~`
+              } else if (data !== text || needsBrackets) return 'unavailable'
+              return window.atlas.terminal.writeQuickInput(session.sessionId, data)
+            })
+          }
           setSessionReady(true)
           const startupStatePatch: Record<string, unknown> = {}
           if (session.cwd !== cwdRef.current) {
@@ -1595,6 +1624,7 @@ export function TerminalComponent({
       clearPendingShortcutPasteFallback()
       removeDomListeners()
       unregisterTranslationSelectionProvider()
+      unregisterQuickInputEditor()
       disposeData()
       disposeExit()
       dataDisposable?.dispose()

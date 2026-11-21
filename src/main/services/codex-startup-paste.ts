@@ -4,10 +4,10 @@ import type { TerminalWriteInput } from '@shared/ipc'
 // append part of a paste between that read and replay, reordering the draft.
 export class CodexStartupPaste {
   private phase: 'idle' | 'starting' | 'probing' | 'ready' = 'idle'
-  private pending: TerminalWriteInput[] = []
+  private pending: { input: TerminalWriteInput; finish?: (written?: boolean) => void }[] = []
   private timeout?: ReturnType<typeof setTimeout>
 
-  constructor(private readonly write: (input: TerminalWriteInput) => void) {}
+  constructor(private readonly write: (input: TerminalWriteInput) => boolean) {}
 
   begin(): void {
     if (this.phase === 'idle') this.phase = 'starting'
@@ -38,7 +38,7 @@ export class CodexStartupPaste {
     if (this.phase === 'ready' && this.pending.length) this.flush()
   }
 
-  defer(input: TerminalWriteInput): boolean {
+  defer(input: TerminalWriteInput, finish?: (written?: boolean) => void): boolean {
     if (this.phase === 'idle' || this.phase === 'ready') return false
     const { data } = input
     if (data === '\x03') {
@@ -48,7 +48,7 @@ export class CodexStartupPaste {
     // Let terminal replies reach the color probe while user input is queued.
     if (data.startsWith('\x1b]') || /^\x1b\[[?>\d;]*[cRn]$/.test(data)) return false
     if (!this.pending.length && !(data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~'))) return false
-    this.pending.push(input)
+    this.pending.push({ input, finish })
     // Older clients may never query colors or use synchronized rendering.
     this.timeout ??= setTimeout(() => this.flush(), 5000)
     return true
@@ -62,13 +62,16 @@ export class CodexStartupPaste {
   private clearPending(): void {
     clearTimeout(this.timeout)
     this.timeout = undefined
-    this.pending = []
+    for (const entry of this.pending.splice(0)) entry.finish?.()
   }
 
   private flush(): void {
-    const pending = this.pending
+    const pending = this.pending.splice(0)
     this.clearPending()
     this.phase = 'ready'
-    for (const input of pending) this.write(input)
+    for (const { input, finish } of pending) {
+      const written = this.write(input)
+      finish?.(written)
+    }
   }
 }
