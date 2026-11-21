@@ -1,5 +1,6 @@
 export type EditorInsertionResult = 'inserted' | 'unavailable' | 'unknown'
-export type InsertIntoEditor = (text: string) => EditorInsertionResult | Promise<EditorInsertionResult>
+export type QuickInputFocus = 'current' | 'switched' | 'unavailable'
+export type InsertIntoEditor = (text: string, expiresAt: number) => EditorInsertionResult | Promise<EditorInsertionResult>
 
 // The port belongs to a single request and document. It is never exposed to a guest page.
 export function captureQuickInputEditor(port: MessagePort, customInsert?: InsertIntoEditor): void {
@@ -13,9 +14,12 @@ export function captureQuickInputEditor(port: MessagePort, customInsert?: Insert
   const anchorOffset = selection?.anchorOffset
   const focusOffset = selection?.focusOffset
   const url = location.href
-  const current = () => document.hasFocus() && location.href === url && !!element?.isConnected && document.activeElement === element
-  function insert(text: string): ReturnType<InsertIntoEditor> {
-    if (!current() || !element?.checkVisibility()) return 'unavailable'
+  function focusState(): QuickInputFocus {
+    if (location.href !== url || !element?.isConnected) return 'unavailable'
+    return document.hasFocus() && document.activeElement === element ? 'current' : 'switched'
+  }
+  function insert(text: string, expiresAt: number): ReturnType<InsertIntoEditor> {
+    if (!(Date.now() < expiresAt) || focusState() !== 'current' || !element?.checkVisibility()) return 'unavailable'
     if (field) {
       if (field.disabled || field.readOnly || field.selectionStart !== start || field.selectionEnd !== end) return 'unavailable'
     } else if (!anchor || !focus || !element.contains(anchor) || !element.contains(focus) ||
@@ -23,25 +27,34 @@ export function captureQuickInputEditor(port: MessagePort, customInsert?: Insert
       selection?.anchorOffset !== anchorOffset || selection?.focusOffset !== focusOffset) {
       return 'unavailable'
     }
-    if (customInsert) return customInsert(text)
+    if (customInsert) return customInsert(text, expiresAt)
     if (!field && !(element instanceof HTMLElement && element.isContentEditable)) return 'unavailable'
     if (text.includes('\r')) return 'unavailable'
     if (field) {
       if (start == null || end == null) return 'unavailable'
       if (field instanceof HTMLInputElement && (text.includes('\n') || !['text', 'search', 'tel', 'password'].includes(field.type))) return 'unavailable'
       if (field.maxLength >= 0 && field.value.length - (end - start) + text.length > field.maxLength) return 'unavailable'
+      const before = field.value
+      const expected = before.slice(0, start) + text + before.slice(end)
+      const accepted = document.execCommand('insertText', false, text)
+      if (!field.isConnected) return 'unknown'
+      if (!accepted && field.value === before) return 'unavailable'
+      return accepted && field.value === expected ? 'inserted' : 'unknown'
     }
     // Chromium applies this command synchronously to the checked selection and records one undo edit.
     return document.execCommand('insertText', false, text) ? 'inserted' : 'unavailable'
   }
 
+  let consumed = false
   port.onmessage = async ({ data }) => {
-    if (data === 'current') port.postMessage(current())
-    else if (typeof data?.text === 'string') {
-      port.onmessage = null
-      try { port.postMessage(await insert(data.text)) } catch { port.postMessage('unknown') }
-      port.close()
+    if (data === 'current') port.postMessage(focusState())
+    else if (typeof data?.text === 'string' && !consumed) {
+      consumed = true
+      let result: EditorInsertionResult
+      try { result = await insert(data.text, data.expiresAt) } catch { result = 'unknown' }
+      consumed = result !== 'unavailable'
+      port.postMessage(result)
     }
   }
-  port.postMessage(current())
+  port.postMessage(focusState() === 'current')
 }

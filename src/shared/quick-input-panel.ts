@@ -1,13 +1,8 @@
-export type QuickInputPanelSnippet = {
-  id: string
-  name: string
-  text: string
-  shortcut: string | null
-}
+import type { QuickInputSnippet } from './schema'
 
 export type QuickInputPanelState = {
   requestId: number
-  snippets: QuickInputPanelSnippet[]
+  snippets: QuickInputSnippet[]
   selectedId: string | null
   failure: 'unavailable' | 'unknown' | null
 }

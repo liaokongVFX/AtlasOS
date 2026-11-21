@@ -1,16 +1,9 @@
+import { canvasShortcutLabels } from './canvas-shortcut-labels'
 import { formatKeyboardShortcut, normalizeKeyboardShortcut, parseKeyboardShortcut } from './keyboard-shortcuts'
 import type { AppSettings, AppShortcutSettings } from './schema'
 
 export type ShortcutOwner = 'window' | `snippet:${string}` | keyof AppShortcutSettings
 type ShortcutBinding = { owner: ShortcutOwner; key: string | null; label: string }
-
-const canvasLabels: Record<keyof AppShortcutSettings, [string, string]> = {
-  canvasDeselect: ['取消选择节点', 'Deselect nodes'],
-  canvasFind: ['查找节点', 'Find nodes'],
-  canvasCreateComponent: ['创建组件菜单', 'Open create menu'],
-  canvasGroupSelection: ['打组选中节点', 'Group selected nodes'],
-  canvasUngroupSelection: ['取消选中组', 'Ungroup selected groups']
-}
 
 // Electron translates shifted punctuation to a base virtual key plus Shift on Windows.
 const shiftedKeys: Record<string, string> = {
@@ -29,7 +22,7 @@ export function shortcutBindings(settings: AppSettings): ShortcutBinding[] {
   return [
     ...Object.entries(settings.shortcuts).map(([key, shortcut]) => {
       const owner = key as keyof AppShortcutSettings
-      return { owner, key: shortcut, label: canvasLabels[owner][english ? 1 : 0] }
+      return { owner, key: shortcut, label: canvasShortcutLabels[owner][settings.locale] }
     }),
     { owner: 'window', key: settings.quickInput.windowShortcut, label: english ? 'Window shortcut' : '窗口快捷键' },
     ...settings.quickInput.snippets.map(snippet => ({

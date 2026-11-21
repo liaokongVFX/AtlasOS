@@ -1,13 +1,17 @@
 import type { TerminalWriteInput } from '@shared/ipc'
+import type { EditorInsertionResult } from '@shared/quick-input-editor'
+
+export type QuickInputDelivery = { expiresAt: number; finish(result: EditorInsertionResult): void }
+type QueuedInput = { input: TerminalWriteInput; delivery?: QuickInputDelivery; expiry?: ReturnType<typeof setTimeout> }
 
 // Codex's Windows color probe reads and requeues console input. ConPTY can
 // append part of a paste between that read and replay, reordering the draft.
 export class CodexStartupPaste {
   private phase: 'idle' | 'starting' | 'probing' | 'ready' = 'idle'
-  private pending: { input: TerminalWriteInput; finish?: (written?: boolean) => void }[] = []
+  private pending: QueuedInput[] = []
   private timeout?: ReturnType<typeof setTimeout>
 
-  constructor(private readonly write: (input: TerminalWriteInput) => boolean) {}
+  constructor(private readonly write: (input: TerminalWriteInput) => EditorInsertionResult) {}
 
   begin(): void {
     if (this.phase === 'idle') this.phase = 'starting'
@@ -38,7 +42,7 @@ export class CodexStartupPaste {
     if (this.phase === 'ready' && this.pending.length) this.flush()
   }
 
-  defer(input: TerminalWriteInput, finish?: (written?: boolean) => void): boolean {
+  defer(input: TerminalWriteInput, delivery?: QuickInputDelivery): boolean {
     if (this.phase === 'idle' || this.phase === 'ready') return false
     const { data } = input
     if (data === '\x03') {
@@ -48,7 +52,14 @@ export class CodexStartupPaste {
     // Let terminal replies reach the color probe while user input is queued.
     if (data.startsWith('\x1b]') || /^\x1b\[[?>\d;]*[cRn]$/.test(data)) return false
     if (!this.pending.length && !(data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~'))) return false
-    this.pending.push({ input, finish })
+    const entry: QueuedInput = { input, delivery }
+    this.pending.push(entry)
+    if (delivery) {
+      entry.expiry = setTimeout(() => {
+        this.pending = this.pending.filter(item => item !== entry)
+        delivery.finish('unavailable')
+      }, delivery.expiresAt - Date.now())
+    }
     // Older clients may never query colors or use synchronized rendering.
     this.timeout ??= setTimeout(() => this.flush(), 5000)
     return true
@@ -62,16 +73,23 @@ export class CodexStartupPaste {
   private clearPending(): void {
     clearTimeout(this.timeout)
     this.timeout = undefined
-    for (const entry of this.pending.splice(0)) entry.finish?.()
+    for (const entry of this.pending.splice(0)) {
+      clearTimeout(entry.expiry)
+      entry.delivery?.finish('unavailable')
+    }
   }
 
   private flush(): void {
     const pending = this.pending.splice(0)
     this.clearPending()
     this.phase = 'ready'
-    for (const { input, finish } of pending) {
-      const written = this.write(input)
-      finish?.(written)
+    for (const { input, delivery, expiry } of pending) {
+      clearTimeout(expiry)
+      if (delivery && Date.now() >= delivery.expiresAt) delivery.finish('unavailable')
+      else {
+        const result = this.write(input)
+        delivery?.finish(result)
+      }
     }
   }
 }

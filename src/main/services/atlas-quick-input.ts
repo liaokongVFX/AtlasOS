@@ -1,7 +1,12 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { MessageChannelMain, screen, webContents, type BrowserWindow } from 'electron'
-import type { QuickInputResult, QuickInputTarget } from './windows-quick-input'
+import type { EditorInsertionResult, QuickInputFocus } from '@shared/quick-input-editor'
+import type { QuickInputTarget } from './windows-quick-input'
+
+const REPLY_TIMEOUT_MS = 1500
+// Codex can hold a paste through a five-second startup probe and refresh that wait.
+const DELIVERY_TIMEOUT_MS = 10000
 
 async function focusedEditorContents(window: BrowserWindow) {
   if (window.isDestroyed() || !window.isFocused()) return null
@@ -25,13 +30,15 @@ export async function captureAtlasQuickInputTarget(window: BrowserWindow): Promi
   if (!contents) return null
 
   const { port1, port2 } = new MessageChannelMain()
+  let live = true
   let pending: ((reply: unknown) => void) | undefined
-  const receive = () => new Promise<unknown>((resolve) => {
-    const timer = setTimeout(() => { pending = undefined; resolve(null) }, 1500)
+  const invalidate = () => { live = false; pending?.(null); port1.close() }
+  const receive = (timeout = REPLY_TIMEOUT_MS) => new Promise<unknown>((resolve) => {
+    const timer = setTimeout(invalidate, timeout)
     pending = (reply) => { clearTimeout(timer); pending = undefined; resolve(reply) }
   })
   port1.on('message', ({ data }) => pending?.(data))
-  port1.on('close', () => pending?.(null))
+  port1.on('close', () => { live = false; pending?.(null) })
   port1.start()
   const captured = receive()
   contents.postMessage('quick-input:capture-editor', null, [port2])
@@ -40,30 +47,35 @@ export async function captureAtlasQuickInputTarget(window: BrowserWindow): Promi
     return null
   }
 
-  let live = true
-  const invalidate = () => { live = false; port1.close() }
   const navigate = (details: Electron.WebContentsDidStartNavigationEventParams) => {
     if (details.isMainFrame) invalidate()
   }
   contents.on('did-start-navigation', navigate)
   contents.once('destroyed', invalidate)
-  const current = async () => live && await focusedEditorContents(window) === contents
-  const ask = (message: unknown) => {
-    const response = receive()
+  const current = async () => await focusedEditorContents(window) === contents && live && window.isFocused()
+  const ask = (message: unknown, timeout = REPLY_TIMEOUT_MS) => {
+    const response = receive(timeout)
     port1.postMessage(message)
     return response
   }
   const bounds = window.getBounds()
   return {
     point: screen.dipToScreenPoint({ x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) }),
-    isCurrent: async () => await current() && await ask('current') === true,
-    insert: async (text, panelHandle): Promise<QuickInputResult> => {
+    focusState: async (): Promise<QuickInputFocus> => {
+      if (window.isDestroyed()) return 'unavailable'
+      if (!window.isFocused()) return 'switched'
+      if (!live || contents.isDestroyed()) return 'unavailable'
+      if (!await current()) return 'switched'
+      const state = await ask('current')
+      return state === 'current' || state === 'switched' ? state : 'unavailable'
+    },
+    insert: async (text, panelHandle): Promise<EditorInsertionResult> => {
       if (panelHandle) {
         // Minimizing the Quick Input window lets Windows reactivate the original window.
         for (let i = 0; live && !window.isDestroyed() && !window.isFocused() && i < 20; i++) await new Promise(resolve => setTimeout(resolve, 10))
       }
       if (!await current()) return 'unavailable'
-      const result = await ask({ text })
+      const result = await ask({ text, expiresAt: Date.now() + DELIVERY_TIMEOUT_MS }, DELIVERY_TIMEOUT_MS + REPLY_TIMEOUT_MS)
       return result === 'inserted' || result === 'unavailable' ? result : 'unknown'
     },
     release: () => {

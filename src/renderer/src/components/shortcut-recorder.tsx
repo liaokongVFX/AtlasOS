@@ -1,11 +1,15 @@
 import { useEffect, useRef, type InputHTMLAttributes } from 'react'
+import * as ContextMenu from '@radix-ui/react-context-menu'
 import { formatKeyboardShortcut, keyboardShortcutFromEvent, normalizeKeyboardShortcut } from '@shared/keyboard-shortcuts'
+import { useI18n } from '../i18n'
+import { readClipboardText } from '../lib/clipboard'
 
 type Props = Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange'> & {
   onChange: (shortcut: string) => void
 }
 
 export function ShortcutRecorder({ onChange, ...props }: Props): JSX.Element {
+  const { t } = useI18n()
   const unsubscribe = useRef<(() => void) | null>(null)
   const change = useRef(onChange)
   change.current = onChange
@@ -18,13 +22,17 @@ export function ShortcutRecorder({ onChange, ...props }: Props): JSX.Element {
   }
 
   useEffect(() => stopRecording, [])
-  return <input {...props} className="general-settings__shortcut-input" inputMode="none"
+  function paste(text: string): void {
+    const key = text.trim()
+    if (key) onChange(normalizeKeyboardShortcut(key) ?? key)
+  }
+
+  const field = <input {...props} className="general-settings__shortcut-input" inputMode="none"
     autoComplete="off" spellCheck={false}
     onChange={event => onChange(normalizeKeyboardShortcut(event.target.value) ?? event.target.value)}
     onPaste={event => {
       event.preventDefault()
-      const text = event.clipboardData.getData('text/plain').trim()
-      onChange(normalizeKeyboardShortcut(text) ?? text)
+      paste(event.clipboardData.getData('text/plain'))
     }}
     onFocus={event => {
       event.currentTarget.select()
@@ -35,8 +43,7 @@ export function ShortcutRecorder({ onChange, ...props }: Props): JSX.Element {
     onBlur={stopRecording}
     onKeyDownCapture={event => {
       event.stopPropagation()
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'v') return
-      if (event.shiftKey && !event.ctrlKey && !event.altKey && event.key === 'Insert') return
+      if (event.key === 'ContextMenu') return
       event.preventDefault()
       if (event.nativeEvent.isComposing || event.repeat) return
       if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
@@ -47,4 +54,14 @@ export function ShortcutRecorder({ onChange, ...props }: Props): JSX.Element {
       if (shortcut) onChange(formatKeyboardShortcut(shortcut))
     }}
   />
+  return <ContextMenu.Root>
+    <ContextMenu.Trigger asChild disabled={props.disabled}>{field}</ContextMenu.Trigger>
+    <ContextMenu.Portal>
+      <ContextMenu.Content className="menu-content">
+        <ContextMenu.Item className="menu-item" onSelect={() => { void readClipboardText()?.then(paste) }}>
+          {t('settings.pasteShortcutName')}
+        </ContextMenu.Item>
+      </ContextMenu.Content>
+    </ContextMenu.Portal>
+  </ContextMenu.Root>
 }

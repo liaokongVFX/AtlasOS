@@ -1,13 +1,12 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
-
-export type QuickInputResult = 'inserted' | 'unavailable' | 'unknown'
+import type { EditorInsertionResult, QuickInputFocus } from '@shared/quick-input-editor'
 
 export type QuickInputTarget = {
   point: { x: number; y: number } | null
-  isCurrent(): Promise<boolean>
-  insert?(text: string, panelHandle: number): Promise<QuickInputResult>
+  focusState(): Promise<QuickInputFocus>
+  insert?(text: string, panelHandle: number): Promise<EditorInsertionResult>
   release(): void
 }
 
@@ -49,7 +48,10 @@ export class WindowsQuickInput {
     if (status !== 'captured') return null
     return {
       point: { x: Math.round((Number(left) + Number(right)) / 2), y: Math.round((Number(top) + Number(bottom)) / 2) },
-      isCurrent: async () => await this.command(`current ${id}`) === 'current',
+      focusState: async () => {
+        const state = await this.command(`current ${id}`)
+        return state === 'current' || state === 'switched' ? state : 'unavailable'
+      },
       insert: mode === 'edit' ? async (text, panelHandle) => {
         const encoded = Buffer.from(text, 'utf16le').toString('base64')
         const result = await this.command(`insert ${id} ${panelHandle} ${encoded}`)

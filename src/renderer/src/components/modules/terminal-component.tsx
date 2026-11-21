@@ -1528,7 +1528,7 @@ export function TerminalComponent({
 
           sessionIdRef.current = session.sessionId
           if (instance.textarea) {
-            unregisterQuickInputEditor = registerQuickInputEditor(instance.textarea, (text) => {
+            unregisterQuickInputEditor = registerQuickInputEditor(instance.textarea, (text, expiresAt) => {
               if (sessionIdRef.current !== session.sessionId || instance.options.disableStdin) return 'unavailable'
               // Tabs and line endings can act as keys outside bracketed paste. Other control
               // characters can even terminate a bracketed paste or signal the foreground process.
@@ -1546,7 +1546,7 @@ export function TerminalComponent({
                 // xterm frames the paste but normalizes LF and CRLF to CR. Keep the saved line endings.
                 data = `\x1b[200~${text}\x1b[201~`
               } else if (data !== text || needsBrackets) return 'unavailable'
-              return window.atlas.terminal.writeQuickInput(session.sessionId, data)
+              return window.atlas.terminal.writeQuickInput(session.sessionId, data, expiresAt)
             })
           }
           setSessionReady(true)
