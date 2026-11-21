@@ -1,0 +1,62 @@
+# Windows 快捷输入设计
+
+AtlasOS 运行期间，用户可以在本机应用设置中维护快捷语片段，供所有画布共用。片段快捷键直接插入文字。窗口快捷键允许用户先搜索、再将选中的正文插回唤起前的输入位置。两条路径都保留原文，确认选择的回车只由快捷输入窗口消费。
+
+## 现有代码与复用边界
+
+| 现有入口 | 设计中的用途 |
+| --- | --- |
+| [快捷键规范化](../../../src/shared/keyboard-shortcuts.ts)、[设置页录制](../../../src/renderer/src/components/settings-dialog.tsx) | 沿用录制、标准化和错误展示。现有五个画布键在主渲染窗口内生效，系统键需要主进程注册，并单独校验可用键。 |
+| [应用设置模型](../../../src/shared/schema.ts)、[设置存储](../../../src/main/services/app-settings-service.ts) | 扩展应用级设置，使用已有的串行读改写机制。终端命令库会裁掉首尾空白，快捷语需要独立保存原文。 |
+| [独立窗口入口](../../../src/main/index.ts)、[翻译面板](../../../src/main/services/ai-translation-service.ts)、[视图分派](../../../src/renderer/src/main.tsx) | 沿用单例面板和开发版、安装版共用的视图加载方式。翻译面板显示时会获得焦点，原目标须在此之前捕获。 |
+| [Windows 选区读取](../../../src/main/services/windows-selection-capture.ts)、[双 Ctrl 监听](../../../src/main/services/windows-double-ctrl-hook.ts) | 现有助手随翻译开关启动，只处理双 Ctrl 和复制。读取选区的代码只恢复剪贴板中的纯文本，图片、文件和富文本不能靠它还原。 |
+| [终端插入](../../../src/renderer/src/components/modules/terminal-component.tsx)、[浏览器节点](../../../src/renderer/src/components/modules/browser-component.tsx) | 终端区分插入和执行，浏览器节点持有独立 guest。两者都需要识别实际取得焦点的实例。 |
+
+## 设置与快捷键
+
+在现有设置导航中增加「快捷输入」。面板顶部录制或清除窗口快捷键，下面按列表维护片段。每条仅含稳定 ID、名称、原文和可选快捷键。列表顺序就是用户看到的顺序。名称可清理首尾空白，正文按原样存储和插入，包括缩进、空行、制表符和末尾换行。复制出的片段文字与保存的内容一致。
+
+建议在 `AppSettings` 增加 `quickInput: { windowShortcut, snippets }`，同步更新完整设置、设置补丁和 renderer 初始值。窗口键预设为 `Ctrl+Alt+Space`。旧配置缺字段时补入这个预设和空列表；用户显式清除后保存为 `null`，下次启动继续保留未绑定状态。每条片段的快捷键初始为 `null`。仅设置页编辑片段，搜索窗口只选择片段 ID。保存基于最新的应用设置修改对应字段，避免覆盖同时修改的语言或终端配置。
+
+主进程在 Electron ready 后为窗口键和片段键注册 `globalShortcut`，关闭主窗口到托盘时继续工作，真正退出时释放本功能拥有的绑定。只允许可用的单个功能键或带修饰键的组合。沿用已有键名解析，同时转换为当前平台的 Electron accelerator；对系统保留键和会打断正常打字的绑定给出具体原因，包括 Windows 为调试器保留的 F12。普通全局注册独立于翻译开关。[Electron 全局快捷键](https://www.electronjs.org/docs/latest/api/global-shortcut) · [Windows 热键限制](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey)
+
+设置页与主进程都检查窗口键、全部片段键和画布自定义键。发生内部冲突时指出具体动作；外部占用以系统注册结果为准。录制时将 Atlas 已注册快捷键的回调转交录制框，避免编辑某个快捷键时运行旧动作。窗口键按住不反复开关，片段键按住只插入一次。
+
+保存与注册串行处理。先保留现有绑定，对新增键尝试注册，再持久化设置并切换按键到动作的映射，最后释放已删除的键。提交前失败只撤回本次新注册的键。两个片段交换快捷键只需更新映射。启动时若另一个应用先占用了其中一个键，保留用户配置，让其他可用绑定照常生效，在设置里注明哪项当前不可用。现有设置 IPC 的回调发生在写盘之后，单在该回调里重新注册无法实现上述保存语义。
+
+## 搜索与选择
+
+每次打开窗口都清空搜索、聚焦搜索框并选中首条结果。空查询按设置中的列表顺序展示，输入后优先匹配名称，再展示仅正文命中的片段，同级保持原顺序。每行显示名称、单行正文预览和已绑定的快捷键。预览可以省略字符，插入始终使用完整原文。
+
+↑ / ↓ 移动选择，Enter 确认，Esc 取消。中文输入法正在组词或确认候选时，方向键和回车交由输入法处理。无搜索结果时回车不执行操作。使用可访问的搜索框与选项列表，将当前选择告知读屏软件，键盘焦点留在搜索框。按仓库深色规范使用 `#010102` 底色、1px 边框和淡紫色焦点环，界面文案接入现有中英翻译。[视觉规范](../../DESIGN.md)
+
+## 窗口与一次插入
+
+1. 收到用户快捷键时，主进程先记录原输入目标。外部窗口保存本次前台窗口、进程身份和能重新比对的输入控件；Atlas 内保存实际编辑目标，区分主 renderer、浏览器 guest 和终端实例。此时不读取用户已输入的内容。只按应用名或顶层窗口判断，会混淆同一浏览器里的两个输入框。
+2. 片段快捷键从这里直接进入插入。窗口快捷键则按需创建或复用 `?view=quick-input` 窗口，在原目标的显示器工作区内显示并聚焦搜索框。主画布隐藏时也走这条路径。每次唤起创建一个新的请求编号。
+3. 用户选中后，窗口提交本次请求编号和片段 ID。主进程核对发送窗口与本次请求，从已保存设置取正文，消费请求并隐藏面板。恢复并核验原目标后才提交文字。确认和取消互斥，使面板主动隐藏引起的失焦不会误取消已确认请求。重复回车、旧窗口回调、已删除片段都不能产生第二次写入。
+4. 用户主动切向其他应用时取消本次选择。确认时才发现原窗口关闭、控件已变、恢复失败或目标不支持时，保留片段选择，提供「复制片段」。只在用户主动选择复制时写系统剪贴板。若底层已经提交了部分输入或结果未知，明确提示用户检查原目标，避免自动重试造成重复文字。
+
+Windows 对恢复前台窗口有明确限制。辅助进程应在实际提交前复核焦点，待触发键与修饰键释放，并区分“系统接收输入事件”和“目标应用按预期编辑了正文”。同一浏览器窗口的不同控件可借助 UI Automation 比对；若应用无法提供足够的目标信息，就走手动复制路径。[Windows 前台激活](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow) · [获取焦点控件](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation-getfocusedelement) · [SendInput 的限制](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)
+
+## 文本如何进入目标
+
+| 目标 | 首选插入路径 | 需要验证的行为 |
+| --- | --- | --- |
+| Atlas 普通编辑区和内嵌网页 | 找回原编辑区域或 guest，再向对应的 `webContents` 调用 `insertText`。若编辑器需要自己的事务，沿用该编辑器的插入操作。 | 输入框中部插入、选区替换、受控组件状态、撤销，以及切换网页或编辑区域后的取消。 |
+| Atlas 终端 | 找回原终端会话，使用 xterm 的粘贴语义。多行片段（包括末尾有换行）只在当前会话启用 bracketed paste 时自动插入；其余情况提供复制。 | 用开启和关闭括号粘贴的会话分别验收。确认键留在搜索窗口，实际如何解释正文由终端前台程序决定。 |
+| Windows 标准可编辑控件 | Windows 助手对已验证的 Edit/RichEdit 控件尝试可撤销的 `EM_REPLACESEL`，让控件在自己的光标或选区上编辑。 | 中文、代理对表情、多行、首尾空白、单行控件的能力限制及原选区。 |
+| 其他 Windows 编辑控件 | 对可识别、可重新核验的目标验证 Unicode 文本输入。该路径与标准控件共享目标核验，独立于系统剪贴板。 | 先实测各类控件对文字、换行和制表符的处理。无法保持语义时提供复制；逐个模拟 Enter 或 Tab 可能提交表单或移动焦点。 |
+
+Windows 辅助进程只处理本次目标的捕获、核验和插入。复用仓库已有的隐藏子进程与标准输入输出模式，把片段编码成数据传输，正文不进入命令行或日志。主进程通过受限 IPC 支持窗口选择与取消，外部网页不能指定系统窗口或提交任意正文。避免每次热键启动 PowerShell 和编译 C# 造成焦点捕获延迟。首个技术验证须覆盖首次唤起和安装版启动。[Electron 文本插入](https://www.electronjs.org/docs/latest/api/web-contents#contentsinserttexttext) · [Windows 编辑控件文本替换](https://learn.microsoft.com/en-us/windows/win32/controls/em-replacesel) · [Windows Unicode 键盘输入](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput)
+
+Windows 的 `SendInput` 向系统前台输入流投递事件。先比对焦点再调用仍存在切窗的时间间隔，成功返回也无法证明某个网页输入框收到了原文。它只作为兼容性验证候选。若浏览器基线需要绑定到具体编辑上下文，可进一步评估 Windows Text Services Framework 的写编辑会话与选区插入接口。该方案依赖注册文本服务、取得目标编辑上下文和写权限，须另行验证安装、卸载及与中文输入法共存的成本。外部终端无法确认多行粘贴语义时只提供手动复制。[系统输入流](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput) · [请求 TSF 编辑会话](https://learn.microsoft.com/en-us/windows/win32/api/msctf/nf-msctf-itfcontext-requesteditsession) · [TSF 选区插入](https://learn.microsoft.com/en-us/windows/win32/api/msctf/nf-msctf-itfinsertatselection-inserttextatselection)
+
+## 实施顺序与验收
+
+1. **先验证 Windows 原目标回填。** 用一条固定片段和一个可聚焦的最小窗口跑通直达、弹窗回填两条路径。必测目标为 Windows 记事本、Edge 和 Chrome 的普通网页输入框，以及 AtlasOS 编辑器。分别覆盖已有选区、光标在文本中部、多行控件和两个输入框同处一个窗口。将光标或选区留在原处，确认正文只插入一次。输入助手能识别的只读、权限受限或已销毁目标进入失败路径。必要目标的正常可编辑场景必须实测自动插入通过，复制仅计入降级用例。
+2. **接入保存与热键生命周期。** 用同一套本地测试覆盖旧设置迁移、主动清除后重启、别名冲突、片段换键及删除、保存中注册失败或磁盘失败。真实 Windows 测试其他程序先占用窗口键、AtlasOS 隐藏至托盘、关闭翻译功能、退出后按键释放。
+3. **接入设置页与独立搜索窗口。** 核验新增、编辑、删除、快捷键录制，以及不同画布间共用同一套片段。确保打开面板时系统双 Ctrl 翻译的焦点判断覆盖新窗口。验证名称与正文命中、无结果、IME 候选词回车、按住快捷键、连续回车、Esc、主动切窗、多屏和关闭后再打开。
+4. **在安装版完成回归。** 用含中文、表情、制表符、前后空格、空行和末尾换行的片段检查可表示这些字符的编辑器。以文本、图片、文件列表和富文本分别作为原剪贴板内容，自动插入后回到另一应用粘贴验证。Atlas 内覆盖便签、Markdown、内嵌网页和终端两种粘贴模式。在确认与实际提交之间切窗、切标签页或关闭原控件，检查其他输入框未收到正文。记录实际通过的控件和失败方式。
+
+实现时运行本地针对性测试、`npm.cmd run build` 和 Windows 安装包验证。仓库的 CI 要求测试文件仅保留在本地。本文是实施与验收设计，以上真实应用兼容性尚待原型和安装版验证。[CI 校验](../../../.github/workflows/ci.yml) · [剪贴板与原目标取舍](../../adr/0001-preserve-clipboard-during-quick-input.md)
