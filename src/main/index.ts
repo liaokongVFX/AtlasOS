@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { mkdirSync, readFileSync } from 'node:fs'
-import { app, BrowserWindow, Menu, nativeImage, session, shell, Tray, type NativeImage } from 'electron'
+import { app, BrowserWindow, globalShortcut, Menu, nativeImage, session, shell, Tray, type NativeImage } from 'electron'
 import { DEFAULT_LOCALE, type Locale } from '@shared/constants'
 import { translateShared } from '@shared/locale-text'
 import { CanvasPersistence } from './services/canvas-persistence'
@@ -24,6 +24,8 @@ import { UpdateService } from './services/update-service'
 import { applyAtlasBrowserNetworkPolicy, applyAtlasBrowserWebPreferences } from './services/browser-network-policy'
 import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services/local-asset-protocol'
 import { createContentSecurityPolicy } from './security-policy'
+import { QuickInputService } from './services/quick-input-service'
+import { WindowsQuickInput } from './services/windows-quick-input'
 import type { PetAlertTarget } from '@shared/pet'
 
 let mainWindow: BrowserWindow | null = null
@@ -41,6 +43,9 @@ let petService: PetService | null = null
 let updateService: UpdateService | null = null
 let trayLocale: Locale = DEFAULT_LOCALE
 let isQuitting = false
+let quickInput: QuickInputService | null = null
+let quickInputHelper: WindowsQuickInput | null = null
+const quickInputTestKeys: string[] = []
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL)
 const forceSoftwareRendering = process.env.ATLAS_FORCE_SOFTWARE_RENDERING === '1'
@@ -250,7 +255,29 @@ async function waitForRendererDevServer(url: string, timeoutMs = 10_000): Promis
   throw new Error(`Timed out waiting for renderer dev server: ${url}`)
 }
 
-type RendererView = 'pet' | 'translation' | 'capture' | 'update'
+type RendererView = 'pet' | 'translation' | 'capture' | 'update' | 'quick-input'
+
+async function startQuickInputTestMode(): Promise<void> {
+  if (process.platform !== 'win32' || !app.commandLine.hasSwitch('quick-input-test')) return
+  const snippet = { id: 'fixture', name: 'AtlasOS QA', text: '  中文😀\t\n\n尾  \n', shortcut: 'Ctrl+Alt+F9' }
+  const helper = new WindowsQuickInput()
+  quickInputHelper = helper
+  if (!await helper.ready) return
+  const service = new QuickInputService({
+    getSnippets: async () => [snippet],
+    loadPanel: (window) => loadRenderer(window, 'quick-input'),
+    captureTarget: () => helper.capture(),
+    waitForKeysReleased: () => helper.waitForKeysReleased()
+  })
+  quickInput = service
+  for (const [key, action] of [
+    ['Ctrl+Alt+Space', () => void service.open()],
+    [snippet.shortcut, () => void service.insertSnippet(snippet.id)]
+  ] as const) {
+    if (globalShortcut.register(key, action)) quickInputTestKeys.push(key)
+    else console.warn('Quick input test shortcut unavailable:', key)
+  }
+}
 
 async function loadRenderer(window: BrowserWindow, view?: RendererView): Promise<void> {
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -480,6 +507,7 @@ if (!hasSingleInstanceLock) {
     installSecurityDefaults()
     registerLocalAssetProtocol()
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+    await startQuickInputTestMode()
     await createWindow()
     ensureTray()
 
@@ -505,6 +533,9 @@ if (!hasSingleInstanceLock) {
   })
 
   app.on('will-quit', () => {
+    for (const key of quickInputTestKeys) globalShortcut.unregister(key)
+    quickInput?.dispose()
+    quickInputHelper?.dispose()
     tray?.destroy()
     tray = null
   })

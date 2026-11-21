@@ -111,6 +111,7 @@
       "output": "release"
     },
     "asarUnpack": [
+      "out/main/quick-input-helper.exe",
       "node_modules/node-pty/**/*",
       "node_modules/node-screenshots*/**/*"
     ],

@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
@@ -7,6 +8,22 @@ import { createExcalidrawAssetPlugin } from './src/build/excalidraw-asset-plugin
 import { resolveRendererDevPort } from './src/build/dev-server-port'
 
 const rendererDevPort = resolveRendererDevPort(process.env.ATLAS_RENDERER_PORT)
+
+function windowsQuickInputHelper(): Plugin {
+  const source = resolve(__dirname, 'src/main/services/quick-input-helper.cs')
+  return {
+    name: 'windows-quick-input-helper',
+    buildStart() {
+      if (process.platform === 'win32') this.addWatchFile(source)
+    },
+    writeBundle({ dir }) {
+      if (process.platform !== 'win32' || !dir) return
+      const csc = resolve(process.env.SystemRoot!, 'Microsoft.NET/Framework/v4.0.30319/csc.exe')
+      execFileSync(csc, ['/nologo', '/optimize+', '/target:exe', '/platform:anycpu',
+        '/out:' + resolve(dir, 'quick-input-helper.exe'), source], { windowsHide: true, stdio: 'inherit' })
+    }
+  }
+}
 
 function sandboxedPreloadSingleFileGuard(): Plugin {
   return {
@@ -28,7 +45,7 @@ function sandboxedPreloadSingleFileGuard(): Plugin {
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin(), windowsQuickInputHelper()],
     resolve: {
       alias: {
         '@shared': resolve('src/shared')

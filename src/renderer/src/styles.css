@@ -100,6 +100,22 @@ html[data-atlas-view="update"] #root {
   background: var(--color-canvas);
 }
 
+.quick-input-panel {
+  background: var(--color-canvas);
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 16px;
+  height: 100%;
+  border: 1px solid var(--color-hairline);
+}
+
+.quick-input-panel h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
 html[data-atlas-view="translation"],
 html[data-atlas-view="translation"] body,
 html[data-atlas-view="translation"] #root {

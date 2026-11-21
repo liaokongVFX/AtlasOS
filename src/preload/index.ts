@@ -27,6 +27,7 @@ import type { ClaudeHistoryListResult, ClaudeHistorySessionDetail } from '@share
 import type { CodexHistoryListResult, CodexHistorySessionDetail } from '@shared/codex-history'
 import type { GitBranchSummary, GitCommitSummary, GitDiffResult, GitOperationResult, GitStashEntry, GitStatusSnapshot, GitSummary } from '@shared/git'
 import type { BrowserWebviewCanvasZoomRequest } from '@shared/browser'
+import type { QuickInputPanelState } from '@shared/quick-input-panel'
 
 type Listener<T> = (payload: T) => void
 
@@ -64,6 +65,13 @@ function on<T>(channel: string, listener: Listener<T>): () => void {
 }
 
 const atlasApi = {
+  quickInput: {
+    get: () => ipcRenderer.invoke('quick-input:get') as Promise<QuickInputPanelState | null>,
+    onChanged: (listener: Listener<QuickInputPanelState>) => on('quick-input:changed', listener),
+    choose: (requestId: number, snippetId: string) => ipcRenderer.invoke('quick-input:choose', requestId, snippetId),
+    cancel: (requestId: number) => ipcRenderer.invoke('quick-input:cancel', requestId),
+    copy: (requestId: number) => ipcRenderer.invoke('quick-input:copy', requestId)
+  },
   app: {
     onOpenSettings: (listener: Listener<OpenSettingsRequest | undefined>) => on('app:open-settings', listener),
     onOpenTarget: (listener: Listener<PetAlertTarget>) => on('app:open-target', listener)
