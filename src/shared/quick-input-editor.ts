@@ -1,6 +1,6 @@
 export type EditorInsertionResult = 'inserted' | 'unavailable' | 'unknown'
 export type QuickInputFocus = 'current' | 'switched' | 'unavailable'
-export type InsertIntoEditor = (text: string, expiresAt: number) => EditorInsertionResult | Promise<EditorInsertionResult>
+export type InsertIntoEditor = (text: string, deliveryId: string) => EditorInsertionResult | Promise<EditorInsertionResult>
 
 // The port belongs to a single request and document. It is never exposed to a guest page.
 export function captureQuickInputEditor(port: MessagePort, customInsert?: InsertIntoEditor): void {
@@ -18,7 +18,7 @@ export function captureQuickInputEditor(port: MessagePort, customInsert?: Insert
     if (location.href !== url || !element?.isConnected) return 'unavailable'
     return document.hasFocus() && document.activeElement === element ? 'current' : 'switched'
   }
-  function insert(text: string, expiresAt: number): ReturnType<InsertIntoEditor> {
+  function insert(text: string, expiresAt: number, deliveryId: string): ReturnType<InsertIntoEditor> {
     if (!(Date.now() < expiresAt) || focusState() !== 'current' || !element?.checkVisibility()) return 'unavailable'
     if (field) {
       if (field.disabled || field.readOnly || field.selectionStart !== start || field.selectionEnd !== end) return 'unavailable'
@@ -27,7 +27,7 @@ export function captureQuickInputEditor(port: MessagePort, customInsert?: Insert
       selection?.anchorOffset !== anchorOffset || selection?.focusOffset !== focusOffset) {
       return 'unavailable'
     }
-    if (customInsert) return customInsert(text, expiresAt)
+    if (customInsert) return customInsert(text, deliveryId)
     if (!field && !(element instanceof HTMLElement && element.isContentEditable)) return 'unavailable'
     if (text.includes('\r')) return 'unavailable'
     if (field) {
@@ -51,7 +51,10 @@ export function captureQuickInputEditor(port: MessagePort, customInsert?: Insert
     else if (typeof data?.text === 'string' && !consumed) {
       consumed = true
       let result: EditorInsertionResult
-      try { result = await insert(data.text, data.expiresAt) } catch { result = 'unknown' }
+      const cancel = () => port.postMessage('cancel-delivery')
+      if (customInsert) element?.addEventListener('blur', cancel)
+      try { result = await insert(data.text, data.expiresAt, data.deliveryId) } catch { result = 'unknown' }
+      finally { if (customInsert) element?.removeEventListener('blur', cancel) }
       consumed = result !== 'unavailable'
       port.postMessage(result)
     }

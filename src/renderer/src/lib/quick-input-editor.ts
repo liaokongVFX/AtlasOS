@@ -12,8 +12,8 @@ window.addEventListener('message', (event) => {
   const element = document.activeElement
   const handler = element && editors.get(element)
   if (element && (handler || element.classList.contains('xterm-helper-textarea'))) {
-    captureQuickInputEditor(event.ports[0], (text, expiresAt) =>
-      handler && editors.get(element) === handler ? handler(text, expiresAt) : 'unavailable')
+    captureQuickInputEditor(event.ports[0], (text, deliveryId) =>
+      handler && editors.get(element) === handler ? handler(text, deliveryId) : 'unavailable')
   } else {
     captureQuickInputEditor(event.ports[0])
   }

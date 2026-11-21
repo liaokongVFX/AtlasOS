@@ -59,12 +59,18 @@ internal static class QuickInputHelper {
         return threadId != 0 && GetGUIThreadInfo(threadId, ref info) ? info.focus : IntPtr.Zero;
     }
 
-    private static string FocusState() {
+    private static bool HasOtherForeground(IntPtr original, IntPtr panel) {
+        var foreground = GetForegroundWindow();
+        return foreground != IntPtr.Zero && foreground != original && foreground != panel;
+    }
+
+    private static string FocusState(IntPtr panel) {
         uint pid;
         if (root == IntPtr.Zero || GetWindowThreadProcessId(root, out pid) != threadId || pid != processId) return "unavailable";
-        if (GetForegroundWindow() != root) return "switched";
+        if (GetForegroundWindow() != root) return panel == IntPtr.Zero || HasOtherForeground(root, panel) ? "switched" : "unavailable";
         if (edit != IntPtr.Zero && GetProp(edit, marker) == IntPtr.Zero) return "unavailable";
-        return Focus() == focus ? "current" : "switched";
+        if (Focus() == focus) return "current";
+        return panel == IntPtr.Zero ? "switched" : "unavailable";
     }
 
     private static bool Selection(out int start, out int end) {
@@ -124,13 +130,13 @@ internal static class QuickInputHelper {
         if (edit == IntPtr.Zero || text.IndexOf('\0') >= 0 || !WaitForKeysReleased()) return "unavailable";
         // Minimizing the palette lets Windows reactivate its previous foreground window.
         if (panel != IntPtr.Zero) {
-            for (int i = 0; i < 25 && FocusState() != "current"; ++i) {
+            for (int i = 0; i < 25 && FocusState(panel) != "current"; ++i) {
                 var foreground = GetForegroundWindow();
                 if (foreground != IntPtr.Zero && foreground != panel && foreground != root) break;
                 Thread.Sleep(10);
             }
         }
-        if (FocusState() != "current" || !IsWindowEnabled(edit) || !IsWindowVisible(edit)) return "unavailable";
+        if (FocusState(panel) != "current" || !IsWindowEnabled(edit) || !IsWindowVisible(edit)) return "unavailable";
         int style = GetWindowLong(edit, -16);
         // Unsupported transforms, numeric fields, password fields and read-only controls.
         if ((style & (0x8 | 0x10 | 0x20 | 0x800 | 0x2000)) != 0) return "unavailable";
@@ -143,7 +149,7 @@ internal static class QuickInputHelper {
             SendNumber(edit, 14, IntPtr.Zero, IntPtr.Zero, SendFlags, Timeout, out length) == IntPtr.Zero ||
             SendNumber(edit, 0xd5, IntPtr.Zero, IntPtr.Zero, SendFlags, Timeout, out limit) == IntPtr.Zero ||
             length.ToInt64() - (end - start) + native.Length > limit.ToInt64()) return "unavailable";
-        if (FocusState() != "current") return "unavailable";
+        if (FocusState(panel) != "current") return "unavailable";
         if (ReplaceSelection(edit, 0xc2, (IntPtr)1, native, SendFlags, Timeout, out unused) == IntPtr.Zero) {
             return Marshal.GetLastWin32Error() == 5 ? "unavailable" : "unknown";
         }
@@ -162,9 +168,10 @@ internal static class QuickInputHelper {
                 string result = "unavailable";
                 try {
                     if (args[0] == "release-keys") result = KeysReleased() ? "released" : "held";
+                    else if (args[0] == "foreground") result = HasOtherForeground(new IntPtr(Int64.Parse(args[1])), new IntPtr(Int64.Parse(args[2]))) ? "switched" : "unavailable";
                     else if (args[0] == "capture") result = Capture(args[1]);
                     else if (args[1] == request) {
-                        if (args[0] == "current") result = FocusState();
+                        if (args[0] == "current") result = FocusState(new IntPtr(Int64.Parse(args[2])));
                         if (args[0] == "insert" && !consumed) {
                             consumed = true;
                             result = Insert(new IntPtr(Int64.Parse(args[2])), Encoding.Unicode.GetString(Convert.FromBase64String(args[3])));

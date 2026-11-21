@@ -5,7 +5,7 @@ import type { EditorInsertionResult, QuickInputFocus } from '@shared/quick-input
 
 export type QuickInputTarget = {
   point: { x: number; y: number } | null
-  focusState(): Promise<QuickInputFocus>
+  focusState(panelHandle?: number): Promise<QuickInputFocus>
   insert?(text: string, panelHandle: number): Promise<EditorInsertionResult>
   release(): void
 }
@@ -48,8 +48,8 @@ export class WindowsQuickInput {
     if (status !== 'captured') return null
     return {
       point: { x: Math.round((Number(left) + Number(right)) / 2), y: Math.round((Number(top) + Number(bottom)) / 2) },
-      focusState: async () => {
-        const state = await this.command(`current ${id}`)
+      focusState: async (panelHandle = 0) => {
+        const state = await this.command(`current ${id} ${panelHandle}`)
         return state === 'current' || state === 'switched' ? state : 'unavailable'
       },
       insert: mode === 'edit' ? async (text, panelHandle) => {
@@ -67,6 +67,10 @@ export class WindowsQuickInput {
       if (result !== 'held') return result === 'released'
       await new Promise(resolve => setTimeout(resolve, 15))
     }
+  }
+
+  async hasOtherForeground(original: number, panel: number): Promise<boolean> {
+    return await this.command(`foreground ${original} ${panel}`) === 'switched'
   }
 
   dispose(): void {

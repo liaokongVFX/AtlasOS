@@ -73,6 +73,7 @@ const atlasApi = {
   quickInput: {
     systemShortcuts: process.platform === 'win32',
     setRecording: (active: boolean) => ipcRenderer.send('quick-input:recording', active),
+    readShortcutName: () => ipcRenderer.invoke('quick-input:read-shortcut-name') as Promise<string | null>,
     onRecorded: (listener: Listener<string>) => on('quick-input:recorded', listener),
     unavailableKeys: () => ipcRenderer.invoke('quick-input:unavailable-keys') as Promise<string[]>,
     get: () => ipcRenderer.invoke('quick-input:get') as Promise<QuickInputPanelState | null>,
@@ -159,8 +160,8 @@ const atlasApi = {
     create: (input: { componentId: string; canvasId?: string; title?: string; cwd?: string; shell?: string; initialCommand?: string; environment?: TerminalEnvironment; autoConfirmWorkspaceTrust?: boolean; cols?: number; rows?: number }) =>
       ipcRenderer.invoke('terminal:create', input) as Promise<{ sessionId: string; cwd: string; shell: string; didRunInitialCommand?: boolean }>,
     write: (sessionId: string, data: string, altKey?: TerminalAltKey) => ipcRenderer.invoke('terminal:write', { sessionId, data, altKey }),
-    writeQuickInput: (sessionId: string, data: string, expiresAt: number) =>
-      ipcRenderer.invoke('terminal:quick-input', { sessionId, data, expiresAt }) as Promise<EditorInsertionResult>,
+    writeQuickInput: (sessionId: string, data: string, deliveryId: string) =>
+      ipcRenderer.invoke('terminal:quick-input', { sessionId, data, deliveryId }) as Promise<EditorInsertionResult>,
     writeClipboardPaste: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', { sessionId, data, fromClipboard: true }),
     resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { sessionId, cols, rows }),
     updateTitle: (sessionId: string, title: string) => ipcRenderer.invoke('terminal:update-title', { sessionId, title }),

@@ -31,6 +31,7 @@ import {
 import type { TerminalEnvironment } from '@shared/terminal-environment'
 import { parseFileUriListPaths, readClipboardFilePathsFromNativeFormats } from './clipboard-files'
 import { CodexStartupPaste, type QuickInputDelivery } from './codex-startup-paste'
+import { claimQuickInputDelivery } from './atlas-quick-input'
 import { handleValidated } from './ipc-helpers'
 import { buildPowerShellBootstrapScript, CODEX_COMMAND_MARKER, codexTerminalArgs, extractCwdMarkers } from './pty-cwd'
 import { readWindowsClipboardFileDropPaths } from './windows-clipboard-files'
@@ -342,9 +343,11 @@ export class PtyService {
       return { ok: this.write(input) }
     })
 
-    handleValidated('terminal:quick-input', terminalQuickInputSchema, (event, { sessionId, data, expiresAt }) => {
-      if (this.sessionsById.get(sessionId)?.ownerId !== event.sender.id || Date.now() >= expiresAt) return 'unavailable'
-      return new Promise<EditorInsertionResult>(finish => this.write({ sessionId, data }, { expiresAt, finish }))
+    handleValidated('terminal:quick-input', terminalQuickInputSchema, (event, { sessionId, data, deliveryId }) => {
+      if (this.sessionsById.get(sessionId)?.ownerId !== event.sender.id || event.senderFrame !== event.sender.mainFrame) return 'unavailable'
+      const delivery = claimQuickInputDelivery(event.sender, deliveryId)
+      if (!delivery) return 'unavailable'
+      return new Promise<EditorInsertionResult>(finish => this.write({ sessionId, data }, { ...delivery, finish }))
     })
 
     handleValidated('terminal:resize', terminalResizeInputSchema, (_, input) => {

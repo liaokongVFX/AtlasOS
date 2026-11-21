@@ -1,7 +1,8 @@
 import { join } from 'node:path'
 import { mkdirSync, readFileSync } from 'node:fs'
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, session, shell, Tray, type NativeImage } from 'electron'
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, session, shell, Tray, type NativeImage } from 'electron'
 import { DEFAULT_LOCALE, type Locale } from '@shared/constants'
+import { normalizeKeyboardShortcut } from '@shared/keyboard-shortcuts'
 import { translateShared } from '@shared/locale-text'
 import { CanvasPersistence } from './services/canvas-persistence'
 import { FileSystemService } from './services/ipc-filesystem'
@@ -26,7 +27,7 @@ import { registerLocalAssetProtocol, registerLocalAssetScheme } from './services
 import { createContentSecurityPolicy } from './security-policy'
 import { QuickInputService } from './services/quick-input-service'
 import { QuickInputHotkeys } from './services/quick-input-hotkeys'
-import { captureAtlasQuickInputTarget } from './services/atlas-quick-input'
+import { captureAtlasQuickInputTarget, isAtlasCanvasUrl } from './services/atlas-quick-input'
 import { WindowsQuickInput } from './services/windows-quick-input'
 import type { PetAlertTarget } from '@shared/pet'
 
@@ -260,13 +261,20 @@ async function waitForRendererDevServer(url: string, timeoutMs = 10_000): Promis
 type RendererView = 'pet' | 'translation' | 'capture' | 'update' | 'quick-input'
 
 function startQuickInput(): void {
+  ipcMain.handle('quick-input:read-shortcut-name', event => {
+    if (!mainWindow?.isFocused() || event.sender !== mainWindow.webContents ||
+      event.senderFrame !== event.sender.mainFrame || !isAtlasCanvasUrl(event.sender.getURL())) return null
+    return normalizeKeyboardShortcut(clipboard.readText().trim())
+  })
   if (process.platform !== 'win32') return
   const helper = new WindowsQuickInput()
   quickInputHelper = helper
   const service = new QuickInputService({
     getSnippets: async () => (await appSettingsService!.getSettings()).quickInput.snippets,
     loadPanel: (window) => loadRenderer(window, 'quick-input'),
-    captureTarget: () => mainWindow?.isFocused() ? captureAtlasQuickInputTarget(mainWindow) : helper.capture(),
+    captureTarget: () => mainWindow?.isFocused()
+      ? captureAtlasQuickInputTarget(mainWindow, (original, panel) => helper.hasOtherForeground(original, panel))
+      : helper.capture(),
     waitForKeysReleased: () => helper.waitForKeysReleased()
   })
   quickInput = service
