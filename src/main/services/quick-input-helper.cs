@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -67,6 +68,14 @@ internal static class QuickInputHelper {
         return GetSelection(edit, 0xb0, out start, out end, SendFlags, Timeout, out unused) != IntPtr.Zero;
     }
 
+    private static bool AllowsNativeEdit() {
+        using (var process = Process.GetProcessById((int)processId)) {
+            var name = process.ProcessName;
+            return !String.Equals(name, "chrome", StringComparison.OrdinalIgnoreCase) &&
+                !String.Equals(name, "msedge", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     private static string Capture(string id) {
         Clear();
         request = id;
@@ -78,7 +87,7 @@ internal static class QuickInputHelper {
         GetClassName(focus, name, name.Capacity);
         var cls = name.ToString().ToUpperInvariant();
         rich = cls == "RICHEDIT20W" || cls == "RICHEDIT50W" || cls == "RICHEDITD2DPT";
-        if ((cls == "EDIT" || rich) && IsWindowUnicode(focus) && GetAncestor(focus, 2) == root &&
+        if ((cls == "EDIT" || rich) && AllowsNativeEdit() && IsWindowUnicode(focus) && GetAncestor(focus, 2) == root &&
             SetProp(focus, marker, (IntPtr)1)) {
             edit = focus;
             if (!Selection(out selectionStart, out selectionEnd)) {
@@ -88,7 +97,8 @@ internal static class QuickInputHelper {
         }
         Rect bounds;
         GetWindowRect(root, out bounds);
-        return String.Format("captured {0} {1} {2} {3}", bounds.left, bounds.top, bounds.right, bounds.bottom);
+        return String.Format("captured {0} {1} {2} {3} {4}", bounds.left, bounds.top, bounds.right, bounds.bottom,
+            edit == IntPtr.Zero ? "copy" : "edit");
     }
 
     private static bool KeysReleased() {
